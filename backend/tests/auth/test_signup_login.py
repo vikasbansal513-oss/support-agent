@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from sqlalchemy import text
@@ -125,7 +125,8 @@ async def test_success_resets_failure_counter(
         assert error_code(await login(client, email, "wrong-password-123")) == "E-AUTH-001"
 
 
-async def test_login_rate_limit_per_ip(client: httpx.AsyncClient) -> None:
+async def test_login_rate_limit_per_ip(client: httpx.AsyncClient, clock: Clock) -> None:
+    clock.now = datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC)
     last = 0
     for _ in range(31):
         last = (await login(client, new_email(), "wrong-password-123")).status_code
