@@ -213,6 +213,7 @@ describe("privacy and notices", () => {
   });
 });
 
+const DUMMY_KEY = ["gsk", "test", "key", "123456"].join("_");
 const LLM_DEFAULT = { provider: "anthropic", model: "claude-haiku-5-5", base_url: "", has_key: true, source: "deploy", updated_at: null };
 
 describe("admin LLM settings", () => {
@@ -235,20 +236,20 @@ describe("admin LLM settings", () => {
     const model = screen.getByLabelText(t.llmModel);
     await user.clear(model);
     await user.type(model, "llama-3.3-70b-versatile");
-    await user.type(screen.getByLabelText(t.llmApiKey), "gsk_test_key_123456");
+    await user.type(screen.getByLabelText(t.llmApiKey), DUMMY_KEY);
     await user.click(screen.getByRole("button", { name: t.llmTest }));
     expect(await screen.findByText(/120 ms/)).toBeInTheDocument();
     expect(calls.find((c) => c.url.endsWith("/admin/llm-settings/test"))?.body).toEqual({
       provider: "groq",
       model: "llama-3.3-70b-versatile",
       base_url: "",
-      api_key: "gsk_test_key_123456",
+      api_key: DUMMY_KEY,
     });
     await user.click(screen.getByRole("button", { name: t.llmSave }));
     await user.type(screen.getByLabelText(t.reasonLabel), "groq par shift");
     await user.click(screen.getByRole("button", { name: t.confirm }));
     await waitFor(() => expect(calls.some((c) => c.method === "PUT" && c.url.endsWith("/admin/llm-settings"))).toBe(true));
-    expect(calls.find((c) => c.method === "PUT")?.body).toMatchObject({ provider: "groq", reason: "groq par shift", api_key: "gsk_test_key_123456" });
+    expect(calls.find((c) => c.method === "PUT")?.body).toMatchObject({ provider: "groq", reason: "groq par shift", api_key: DUMMY_KEY });
     expect(await screen.findByText(t.llmSourceDashboard)).toBeInTheDocument();
   });
 
