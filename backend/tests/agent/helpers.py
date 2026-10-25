@@ -141,6 +141,8 @@ async def build_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> AsyncIterator[AgentEnv]:
     wa = await setup_wa_tenant(client, mailer, runtime_factory, monkeypatch)
+    async with session_scope(owner_factory, super_admin=True) as session:
+        await session.execute(text("DELETE FROM jobs WHERE tenant_id <> :t"), {"t": wa.tenant_id})
     provider = FakeProvider()
     sender = FakeGupshupSender()
     tools = FakeToolBox(orders={"#1001": order()})
