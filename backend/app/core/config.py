@@ -28,9 +28,12 @@ class Settings(BaseSettings):
     trusted_proxy_hops: int = Field(default=1, ge=0, le=5)
     mail_from: str = ""
     brevo_api_key: str = ""
-    llm_provider: Literal["anthropic"] = "anthropic"
+    llm_provider: Literal["anthropic", "openai", "groq", "openrouter", "openai_compatible"] = (
+        "anthropic"
+    )
     llm_model: str = "claude-haiku-5-5"
     llm_api_key: str = ""
+    llm_base_url: str = ""
     llm_timeout_seconds: float = Field(default=20.0, ge=1, le=120)
     llm_p95_target_ms: int = Field(default=4000, ge=100, le=60000)
     classify_min_confidence: float = Field(default=0.7, ge=0, le=1)
@@ -72,6 +75,14 @@ class Settings(BaseSettings):
     def _separate_admin_secret(self) -> "Settings":
         if self.jwt_secret and self.admin_jwt_secret and self.jwt_secret == self.admin_jwt_secret:
             raise ValueError("ADMIN_JWT_SECRET must differ from JWT_SECRET")
+        return self
+
+    @model_validator(mode="after")
+    def _llm_provider_settings(self) -> "Settings":
+        if self.llm_provider != "anthropic" and self.llm_model.startswith("claude"):
+            raise ValueError("LLM_MODEL must be set to a model of the chosen LLM_PROVIDER")
+        if self.llm_provider == "openai_compatible" and not self.llm_base_url.strip():
+            raise ValueError("LLM_BASE_URL is required when LLM_PROVIDER is openai_compatible")
         return self
 
     def allowed_origins(self) -> list[str]:
