@@ -10,7 +10,7 @@ COPY constraints.txt pyproject.toml ./
 COPY app ./app
 COPY migrations ./migrations
 COPY alembic.ini ./
-RUN pip install -c constraints.txt .
+RUN pip install -c constraints.txt . && pip uninstall -y pip
 
 RUN useradd --system --uid 10001 appuser
 USER appuser
