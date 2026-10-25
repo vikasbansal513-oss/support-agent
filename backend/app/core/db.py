@@ -26,6 +26,7 @@ GLOBAL_TABLE_ALLOWLIST = (
     "llm_model_prices",
     "heartbeats",
     "platform_flags",
+    "platform_llm_settings",
 )
 
 _engine: AsyncEngine | None = None

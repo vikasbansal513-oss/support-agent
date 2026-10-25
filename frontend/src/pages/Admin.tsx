@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api } from "../api/client";
-import type { WriteTool, Level, GlobalState, Job, LlmUsageRow, Mode, Page, Tenant } from "../api/types";
-import { Async, Chip, Empty, ReasonDialog, Screen } from "../components/common";
+import type { WriteTool, Level, GlobalState, Job, LlmProvider, LlmSettings, LlmTestResult, LlmUsageRow, Mode, Page, Tenant } from "../api/types";
+import { Async, Chip, Empty, Field, ReasonDialog, Screen } from "../components/common";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
 import { formatIst } from "../format";
@@ -182,6 +182,7 @@ export function AdminOps() {
   return (
     <Screen title={t.opsTitle}>
       <GlobalPauseButton />
+      <LlmSettingsPanel />
       <h2>{t.jobs}</h2>
       <Async value={jobs} reload={reloadJobs}>
         {(page) =>
@@ -253,5 +254,98 @@ export function AdminOps() {
         }
       </Async>
     </Screen>
+  );
+}
+
+const LLM_PROVIDERS: [LlmProvider, string][] = [
+  ["anthropic", "Anthropic (Claude)"],
+  ["groq", "Groq"],
+  ["openai", "OpenAI"],
+  ["openrouter", "OpenRouter"],
+  ["openai_compatible", "Custom (OpenAI-compatible)"],
+];
+
+function LlmSettingsPanel() {
+  const [state, reload] = useApi(() => api.get<LlmSettings>("/admin/llm-settings"));
+  return (
+    <Async value={state} reload={reload}>
+      {(current) => <LlmSettingsForm key={`${current.provider}-${current.model}-${current.updated_at ?? ""}`} current={current} onSaved={reload} />}
+    </Async>
+  );
+}
+
+function LlmSettingsForm({ current, onSaved }: { current: LlmSettings; onSaved: () => void }) {
+  const toast = useToast();
+  const [provider, setProvider] = useState<LlmProvider>(current.provider);
+  const [model, setModel] = useState(current.model);
+  const [baseUrl, setBaseUrl] = useState(current.base_url);
+  const [apiKey, setApiKey] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [testResult, setTestResult] = useState<LlmTestResult | null>(null);
+
+  const choice = () => ({
+    provider,
+    model: model.trim(),
+    base_url: baseUrl.trim(),
+    ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
+  });
+
+  const runTest = async () => {
+    setTestResult(null);
+    try {
+      setTestResult(await api.post<LlmTestResult>("/admin/llm-settings/test", choice()));
+    } catch (err) {
+      toast.error(err);
+    }
+  };
+
+  const save = async (reason: string) => {
+    try {
+      await api.put<LlmSettings>("/admin/llm-settings", { ...choice(), reason });
+      setAsking(false);
+      setApiKey("");
+      toast.info(t.llmSaved);
+      onSaved();
+    } catch (err) {
+      toast.error(err);
+      setAsking(false);
+    }
+  };
+
+  return (
+    <section className="card">
+      <h2>{t.llmSettingsTitle}</h2>
+      <p>
+        <Chip tone={current.source === "dashboard" ? "ok" : undefined}>{current.source === "dashboard" ? t.llmSourceDashboard : t.llmSourceDeploy}</Chip>{" "}
+        <Chip tone={current.has_key ? "ok" : "warn"}>{current.has_key ? t.llmKeySet : t.llmKeyMissing}</Chip>
+      </p>
+      <label className="field">
+        <span>{t.llmProvider}</span>
+        <select aria-label={t.llmProvider} value={provider} onChange={(event) => setProvider(event.target.value as LlmProvider)}>
+          {LLM_PROVIDERS.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <Field label={t.llmModel} value={model} onChange={setModel} />
+      <Field label={t.llmBaseUrl} value={baseUrl} onChange={setBaseUrl} placeholder="https://api.example.com/v1" />
+      <Field label={t.llmApiKey} value={apiKey} onChange={setApiKey} type="password" autoComplete="off" placeholder={t.llmKeyKeep} />
+      <div className="row">
+        <button type="button" className="secondary" onClick={() => void runTest()} disabled={model.trim() === ""}>
+          {t.llmTest}
+        </button>
+        <button type="button" onClick={() => setAsking(true)} disabled={model.trim() === ""}>
+          {t.llmSave}
+        </button>
+      </div>
+      {testResult && (
+        <p role="status">
+          <Chip tone={testResult.ok ? "ok" : "urgent"}>{testResult.ok ? `${t.llmTestOk} (${testResult.latency_ms} ms)` : `${t.llmTestFail}: ${testResult.error ?? ""}`}</Chip>
+        </p>
+      )}
+      {asking && <ReasonDialog title={t.llmSave} onConfirm={(reason) => void save(reason)} onCancel={() => setAsking(false)} />}
+    </section>
   );
 }

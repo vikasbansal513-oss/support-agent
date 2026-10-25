@@ -158,16 +158,28 @@ class FakeProvider:
         return RawCompletion(item, *self.tokens)
 
 
-def build_provider(http: ExternalHttp) -> LlmProvider:
-    settings = get_settings()
-    if settings.llm_provider == "anthropic":
-        return AnthropicProvider(http, settings.llm_api_key, settings.llm_model)
-    base_url = settings.llm_base_url.strip() or OPENAI_COMPAT_BASE_URLS[settings.llm_provider]
+def make_provider(
+    http: ExternalHttp, provider: str, model: str, api_key: str, base_url: str
+) -> LlmProvider:
+    if provider == "anthropic":
+        return AnthropicProvider(http, api_key, model)
+    url = base_url.strip() or OPENAI_COMPAT_BASE_URLS[provider]
     return OpenAICompatProvider(
         http,
-        settings.llm_api_key,
-        settings.llm_model,
-        base_url,
+        api_key,
+        model,
+        url,
+        provider,
+        "max_completion_tokens" if provider == "openai" else "max_tokens",
+    )
+
+
+def build_provider(http: ExternalHttp) -> LlmProvider:
+    settings = get_settings()
+    return make_provider(
+        http,
         settings.llm_provider,
-        "max_completion_tokens" if settings.llm_provider == "openai" else "max_tokens",
+        settings.llm_model,
+        settings.llm_api_key,
+        settings.llm_base_url,
     )

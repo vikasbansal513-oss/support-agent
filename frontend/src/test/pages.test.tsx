@@ -201,6 +201,7 @@ describe("privacy and notices", () => {
       if (call.url.endsWith("/admin/global-pause") && call.method === "GET") return { body: { status: "running" } };
       if (call.url.endsWith("/admin/global-pause")) return { body: { status: "paused" } };
       if (call.url.endsWith("/admin/llm-usage")) return { body: [] };
+      if (call.url.endsWith("/admin/llm-settings")) return { body: LLM_DEFAULT };
       return { body: { items: [], next_cursor: null } };
     });
     renderApp(<AdminOps />, "/admin/ops");
@@ -209,6 +210,61 @@ describe("privacy and notices", () => {
     await user.type(screen.getByLabelText(t.reasonLabel), "incident test");
     await user.click(screen.getByRole("button", { name: t.confirm }));
     await waitFor(() => expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/admin/global-pause"))).toBe(true));
+  });
+});
+
+const LLM_DEFAULT = { provider: "anthropic", model: "claude-haiku-5-5", base_url: "", has_key: true, source: "deploy", updated_at: null };
+
+describe("admin LLM settings", () => {
+  it("tests and saves a different provider with a reason", async () => {
+    let saved: object = LLM_DEFAULT;
+    const calls = mockFetch((call) => {
+      if (call.url.endsWith("/admin/llm-settings/test")) return { body: { ok: true, latency_ms: 120, error: null } };
+      if (call.url.endsWith("/admin/llm-settings") && call.method === "PUT") {
+        saved = { ...LLM_DEFAULT, provider: "groq", model: "llama-3.3-70b-versatile", source: "dashboard", updated_at: "2026-01-01T00:00:00Z" };
+        return { body: saved };
+      }
+      if (call.url.endsWith("/admin/llm-settings")) return { body: saved };
+      if (call.url.endsWith("/admin/global-pause")) return { body: { status: "running" } };
+      if (call.url.endsWith("/admin/llm-usage")) return { body: [] };
+      return { body: { items: [], next_cursor: null } };
+    });
+    renderApp(<AdminOps />, "/admin/ops");
+    const user = userEvent.setup();
+    await user.selectOptions(await screen.findByLabelText(t.llmProvider), "groq");
+    const model = screen.getByLabelText(t.llmModel);
+    await user.clear(model);
+    await user.type(model, "llama-3.3-70b-versatile");
+    await user.type(screen.getByLabelText(t.llmApiKey), "gsk_test_key_123456");
+    await user.click(screen.getByRole("button", { name: t.llmTest }));
+    expect(await screen.findByText(/120 ms/)).toBeInTheDocument();
+    expect(calls.find((c) => c.url.endsWith("/admin/llm-settings/test"))?.body).toEqual({
+      provider: "groq",
+      model: "llama-3.3-70b-versatile",
+      base_url: "",
+      api_key: "gsk_test_key_123456",
+    });
+    await user.click(screen.getByRole("button", { name: t.llmSave }));
+    await user.type(screen.getByLabelText(t.reasonLabel), "groq par shift");
+    await user.click(screen.getByRole("button", { name: t.confirm }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PUT" && c.url.endsWith("/admin/llm-settings"))).toBe(true));
+    expect(calls.find((c) => c.method === "PUT")?.body).toMatchObject({ provider: "groq", reason: "groq par shift", api_key: "gsk_test_key_123456" });
+    expect(await screen.findByText(t.llmSourceDashboard)).toBeInTheDocument();
+  });
+
+  it("does not send an empty api key", async () => {
+    const calls = mockFetch((call) => {
+      if (call.url.endsWith("/admin/llm-settings/test")) return { body: { ok: false, latency_ms: 5, error: "auth_error" } };
+      if (call.url.endsWith("/admin/llm-settings")) return { body: LLM_DEFAULT };
+      if (call.url.endsWith("/admin/global-pause")) return { body: { status: "running" } };
+      if (call.url.endsWith("/admin/llm-usage")) return { body: [] };
+      return { body: { items: [], next_cursor: null } };
+    });
+    renderApp(<AdminOps />, "/admin/ops");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: t.llmTest }));
+    expect(await screen.findByText(/auth_error/)).toBeInTheDocument();
+    expect(calls.find((c) => c.url.endsWith("/admin/llm-settings/test"))?.body).not.toHaveProperty("api_key");
   });
 });
 

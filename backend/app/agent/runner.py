@@ -25,7 +25,8 @@ from app.integrations.http import DbCallRecorder, ExternalHttp
 from app.jobs import handlers
 from app.llm.client import DbCallRecorder as LlmRecorder
 from app.llm.client import LlmClient
-from app.llm.provider import build_provider
+from app.llm.provider import make_provider
+from app.llm.runtime import load_effective
 from app.v1.policy import AnyPolicy, PolicyV2, parse_any
 from app.v1.toolbox import LiveV1ToolBox
 
@@ -78,17 +79,19 @@ async def _tool_box(factory: Factory, tenant_id: uuid.UUID, transport: Any) -> T
     return LiveV1ToolBox(tenant_id=tenant_id, shopify=shopify, couriers=couriers)
 
 
-def _llm(
+async def _llm(
     factory: Factory, tenant_id: uuid.UUID, transport: httpx.AsyncBaseTransport | None
 ) -> LlmClient:
     if overrides.llm is not None:
         return overrides.llm
+    chosen = await load_effective(factory)
     http = ExternalHttp(
-        get_settings().llm_provider,
+        chosen.provider,
         recorder=DbCallRecorder(factory, tenant_id),
         transport=transport,
     )
-    return LlmClient(build_provider(http), LlmRecorder(factory))
+    provider = make_provider(http, chosen.provider, chosen.model, chosen.api_key, chosen.base_url)
+    return LlmClient(provider, LlmRecorder(factory))
 
 
 def _label(policy: AnyPolicy | None, tz: str) -> tuple[bool, str | None]:
@@ -282,7 +285,7 @@ async def run_inbound(
             policy=parsed,
             policy_version=policy_version,
             mode=mode,
-            llm=_llm(factory, tenant_id, ctx.transport),
+            llm=await _llm(factory, tenant_id, ctx.transport),
             toolbox=toolbox,
             senders=ctx.senders
             or overrides.senders
@@ -293,7 +296,7 @@ async def run_inbound(
         return
     graph = build_graph(
         GraphDeps(
-            llm=_llm(factory, tenant_id, ctx.transport),
+            llm=await _llm(factory, tenant_id, ctx.transport),
             tools=toolbox,
             classify_min_confidence=settings.classify_min_confidence,
         )

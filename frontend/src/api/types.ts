@@ -274,6 +274,23 @@ export interface PublicNotice {
   html: string;
 }
 
+export type LlmProvider = "anthropic" | "openai" | "groq" | "openrouter" | "openai_compatible";
+
+export interface LlmSettings {
+  provider: LlmProvider;
+  model: string;
+  base_url: string;
+  has_key: boolean;
+  source: "dashboard" | "deploy";
+  updated_at: string | null;
+}
+
+export interface LlmTestResult {
+  ok: boolean;
+  latency_ms: number;
+  error: string | null;
+}
+
 export interface GlobalState {
   status: "paused" | "running";
 }
