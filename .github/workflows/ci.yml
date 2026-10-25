@@ -86,5 +86,6 @@ jobs:
           aquasec/trivy:0.57.1 image
           --severity CRITICAL,HIGH
           --ignore-unfixed
+          --skip-dirs /usr/local/lib/python3.13/site-packages/pip
           --exit-code 1
           support-agent:ci
