@@ -1,0 +1,37 @@
+"""Frontend design as data (single source for TDD Section 15 and the consistency test)."""
+# (route, role, screen, api_calls [(method, path)], states, components)
+ROUTES = [
+ ("/login", "public", "Login", [("POST","/auth/login"),("POST","/auth/mfa/verify")], "idle|submitting|error(E-AUTH-001/002/006)|mfa_required", "LoginForm, MfaCodeInput"),
+ ("/signup", "public", "Signup", [("POST","/auth/signup")], "idle|submitting|sent|error(E-AUTH-012/011)", "SignupForm"),
+ ("/verify-email?token=", "public", "Verify email", [("POST","/auth/verify-email"),("POST","/auth/resend-verification")], "verifying|ok|expired(E-AUTH-008)", "StatusCard"),
+ ("/forgot-password", "public", "Forgot password", [("POST","/auth/forgot-password")], "idle|sent", "EmailForm"),
+ ("/reset-password?token=", "public", "Reset password", [("POST","/auth/reset-password")], "idle|ok|expired(E-AUTH-008)", "PasswordForm"),
+ ("/pending", "user", "Awaiting approval", [("GET","/auth/me")], "pending_approval|active->redirect", "StatusCard"),
+ ("/", "user", "Dashboard", [("GET","/dashboard/stats"),("GET","/usage"),("GET","/agent/status"),("POST","/agent/pause"),("POST","/agent/resume")], "loading|data|empty(no messages yet)|error", "StatCard, ModeBadge, UsageBar, PauseButton"),
+ ("/onboarding", "owner", "Onboarding checklist", [("GET","/integrations"),("PUT","/integrations/shopify"),("PUT","/integrations/gupshup"),("POST","/integrations/{kind}/test"),("GET","/policies")], "step pending|testing|ok|error(code)", "Checklist, IntegrationForm, TestButton, WebhookUrlBox"),
+ ("/conversations", "user", "Conversations", [("GET","/conversations")], "loading|list|empty|error; filter status; cursor paging", "ConversationList, StatusChip, MaskedPhone"),
+ ("/conversations/:id", "user", "Conversation", [("GET","/conversations/{id}"),("POST","/conversations/{id}/reply"),("POST","/conversations/{id}/resolve"),("POST","/messages/{id}/report")], "loading|thread|sending|error(E-ACT-002/003/004)|window_closed", "MessageBubble, ReplyBox, ReportButton, HumanActiveBanner"),
+ ("/handoffs", "user", "Handoffs", [("GET","/handoffs"),("POST","/handoffs/{id}/claim"),("POST","/handoffs/{id}/resolve")], "loading|list(urgent first, SLA timer)|empty|error(E-HO-001)", "HandoffCard, SlaTimer, ReasonChip"),
+ ("/review", "user", "Shadow review", [("GET","/actions"),("POST","/actions/{id}/verdict"),("POST","/actions/{id}/approve"),("POST","/actions/{id}/reject")], "loading|card(customer msg + agent draft)|empty(all reviewed)|error(E-ACT-001); approve only in draft mode", "ReviewCard, VerdictButtons, NoteInput"),
+ ("/settings/integrations", "owner", "Integrations", [("GET","/integrations"),("PUT","/integrations/shopify"),("PUT","/integrations/gupshup"),("PUT","/integrations/{shiprocket|delhivery}"),("POST","/integrations/{kind}/test")], "masked secret_hint|editing|testing|error(E-INT-001)", "IntegrationCard, SecretField(write-only)"),
+ ("/settings/policy", "owner", "Policy", [("GET","/policies"),("POST","/policies"),("PUT","/policies/{id}"),("POST","/policies/{id}/publish"),("GET","/policies/{id}/regression")], "draft|dirty|validating|regression_running|passed|failed(list)|published; E-POL-001/002/003", "PolicyForm, VersionList, RegressionResult, PublishDialog"),
+ ("/settings/notifications", "owner", "Notifications", [("GET","/settings/notifications"),("PUT","/settings/notifications")], "idle|saving|saved|error", "NotificationForm"),
+ ("/settings/security", "user", "Security / MFA", [("GET","/auth/mfa"),("POST","/auth/mfa/setup"),("POST","/auth/mfa/confirm"),("POST","/auth/mfa/recovery-codes"),("POST","/auth/change-password")], "off|setup(qr)|confirm|on|codes_shown_once", "QrBlock, CodeInput, RecoveryCodesDialog"),
+ ("/privacy", "owner", "Privacy requests", [("GET","/privacy/requests"),("POST","/privacy/requests"),("GET","/privacy/export")], "list|creating|error(E-PRV-001)", "RequestTable"),
+ ("/privacy-notice, /terms", "public", "Legal pages", [("GET","/public/privacy-notice"),("GET","/public/terms")], "draft banner shown while draft=true", "NoticePage"),
+ ("/admin/login", "public", "Admin login", [("POST","/admin/auth/login"),("POST","/admin/auth/mfa/verify")], "same as /login; separate cookie/secret", "LoginForm"),
+ ("/admin/tenants", "admin", "Tenants", [("GET","/admin/tenants"),("POST","/admin/tenants/{id}/approve"),("POST","/admin/tenants/{id}/pause"),("POST","/admin/tenants/{id}/resume"),("PUT","/admin/tenants/{id}/mode"),("PUT","/admin/tenants/{id}/usage-limit")], "list|reason dialog (mandatory)|error(E-ADM-001/002)", "TenantTable, ReasonDialog, ModeSelect"),
+ ("/admin/ops", "admin", "Jobs and LLM usage", [("GET","/admin/jobs"),("GET","/admin/llm-usage"),("POST","/admin/global-pause"),("POST","/admin/global-resume")], "list|empty|error", "JobTable, UsageTable, GlobalPauseButton"),
+]
+GLOBAL_RULES = [
+ "Access token only in memory (React context). Silent refresh via httpOnly cookie on 401 E-AUTH-004; one retry; then redirect to /login.",
+ "Every state-changing call sends X-CSRF-Token (value from login/refresh response body, kept in memory).",
+ "Every error toast shows message + error_id; critical severity also shows a copy button for error_id.",
+ "Every list screen has loading, empty and error states; empty states say what to do next.",
+ "Times shown in IST (Intl.DateTimeFormat timeZone Asia/Kolkata); money shown from paise.",
+ "Phones and emails render masked as received; the UI never has raw customer contact details.",
+ "Secret fields are write-only: after save the UI shows secret_hint only.",
+ "Role-gated routes: owner-only screens hidden for agent role; admin routes only with admin token realm.",
+ "Mobile first: single-column under 640px; handoff and review screens usable one-handed.",
+ "Plain Hindi-English labels (Hinglish) for brand UI strings are kept in one i18n file; no string literals in components.",
+]

@@ -1,0 +1,74 @@
+from collections.abc import AsyncIterator
+
+from fastapi import Depends, Request
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.auth import service
+from app.auth.service import Principal
+from app.auth.tokens import Realm, decode_access_token
+from app.core.config import get_settings
+from app.core.db import get_session_factory, session_scope
+from app.core.errors import AppError
+
+COOKIE_NAMES: dict[Realm, tuple[str, str]] = {
+    "brand": ("sa_refresh", "/auth"),
+    "admin": ("sa_admin_refresh", "/admin/auth"),
+}
+
+
+def client_ip(request: Request) -> str:
+    hops = get_settings().trusted_proxy_hops
+    forwarded = [
+        p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()
+    ]
+    if hops and len(forwarded) >= hops:
+        return forwarded[-hops]
+    return request.client.host if request.client else "unknown"
+
+
+def _bearer(request: Request) -> str:
+    header = request.headers.get("authorization", "")
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise AppError("E-AUTH-004")
+    return token.strip()
+
+
+async def current_principal(
+    request: Request,
+    factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),  # noqa: B008
+) -> Principal:
+    claims = decode_access_token(_bearer(request))
+    return await service.load_principal(factory, claims)
+
+
+async def require_user(principal: Principal = Depends(current_principal)) -> Principal:  # noqa: B008
+    if principal.realm != "brand":
+        raise AppError("E-AUTH-007")
+    if not principal.mfa_ok:
+        raise AppError("E-AUTH-005")
+    return principal
+
+
+async def require_owner(principal: Principal = Depends(require_user)) -> Principal:  # noqa: B008
+    if principal.role != "owner":
+        raise AppError("E-AUTH-007")
+    return principal
+
+
+async def require_admin(principal: Principal = Depends(current_principal)) -> Principal:  # noqa: B008
+    if principal.realm != "admin":
+        raise AppError("E-ADM-001")
+    if not principal.mfa_ok:
+        raise AppError("E-AUTH-005")
+    return principal
+
+
+async def tenant_session(
+    principal: Principal = Depends(require_user),  # noqa: B008
+    factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),  # noqa: B008
+) -> AsyncIterator[AsyncSession]:
+    async with session_scope(
+        factory, tenant_id=principal.tenant_id, user_id=principal.user_id
+    ) as session:
+        yield session

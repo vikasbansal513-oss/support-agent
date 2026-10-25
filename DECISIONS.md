@@ -1,0 +1,192 @@
+# DECISIONS
+
+Jo faisla Claude Code ne khud liya, ek line me kaaran ke saath. Jo verify nahi hua uske aage VERIFY likho.
+
+Format: Part | Faisla | Kaaran
+P0 | Python 3.13 (pyproject requires >=3.13,<3.14, Docker python:3.13-slim, CI 3.13) | Spec pack 3.13 par bana hai; user ne 3.13 chuna
+P0 | constraints.txt me runtime + dev dono pinned (pip freeze), langgraph==1.2.17 | TDD D2: unpinned versions se code toot sakta hai; 1.2.17 par test hua tha
+P0 | Frontend CI job tab chalta hai jab frontend/package.json ho | Frontend P6 me banega; tab tak CI green rahe
+P0 | deploy.yml skeleton me GCP values repo Variables (vars.*) se, secret nahi | WIF me JSON key nahi; project/region git me hardcode nahi
+P0 | /ready endpoint P0 me nahi, sirf /health | /ready DB aur RLS role check karta hai, P1 me aayega
+P0 | alembic.ini aur migrations/ P1 me | Pehli migration P1 hai
+VERIFY P0 | ci.yml aur deploy.yml GitHub Actions par abhi chale nahi; action versions (v4/v5/v2, trivy 0.28.0) pehli run par dekhna | Yahan sandbox me workflow run nahi ho sakta
+P1 | Spec contracts.py/errors.py app/contracts/ me bina badle copy; ruff exclude + mypy ignore_errors sirf in par | Spec ko badalna mana hai, par uski style hamare lint se alag hai
+P1 | Alembic version table schema alembic_meta me | Spec ka rls_tests.sql public ke har tenant_id-less table ko allowlist se match karta hai; alembic_version public me hota to fail hota
+P1 | Spec test imports (from contracts import *) badal kar app.contracts.* kiye | Package me copy hone par import path badalna padta hai; test logic same
+P1 | audit_log insert bina tenant context ke allowed (tenant_id NULL), sirf super admin padh sakta hai | Spec policy IS NOT DISTINCT FROM aisa hi rakhti hai; system/pre-login events ke liye
+P1 | error_id format ERR-XXXXXXXXXXXX (12 hex upper) | contracts.ErrorBody ka pattern yahi hai
+P1 | Unhandled exception logs me sirf type, redacted 300-char message aur frame locations | SQLAlchemy errors me bound parameters (customer data) ho sakte hain
+P1 | Tests ke liye TEST_ADMIN_DATABASE_URL (superuser) se har run me naya DB, roles sa_test_owner/sa_test_app | CLAUDE.md: asli Postgres, runtime role non-owner NOBYPASSRLS
+P1 | /ready P1 me: DB connect + check_rls_safety (superuser/BYPASSRLS, owns tables, RLS missing, allowlist); fail par 503 E-SYS-002, kaaran sirf logs me | TDD FR-ISO-05; body me internals nahi
+P1 | Dockerfile me migrations/ aur alembic.ini jode | P8 me migrate Cloud Run Job isi image se chalega
+P1 | Sentry/monitoring.py aur csrf.py P1 me nahi | TDD ke hisaab se S2 (CSRF) aur S8 (monitoring) me aate hain
+P2 | Access JWT me token_version nahi; har request par DB me user.is_active, tenant status (active), membership aur password_changed_at (iat se) check | schema.sql me token_version column nahi; TDD FR-AUTH-06 ke "ya" wala raasta; paused/suspended/password-change par token turant reject
+P2 | iat ko password_changed_at ke second tak truncate kar ke compare | microsecond compare se password badalne ke turant baad ka naya token galat reject hota
+P2 | JWT exp/iat ka check PyJWT ki asli clock ki jagah timeutil.utc_now() se | ek hi clock, aur tests me samay aage badhana sambhav
+P2 | Admin MFA zaroori: bina MFA wale admin ko mfa_ok=false token milta hai jo sirf /auth/mfa/* chalata hai, /admin/* par E-AUTH-005; brand user ke liye MFA optional (enable karne par login par challenge) | TDD FR-AUTH-04 "kam se kam admin ke liye zaroori"; UserOut.mfa_ok contract me tha
+P2 | MFA confirm par us user ke saare refresh token revoke | MFA se pehle bane session MFA ke bina refresh se mfa_ok=true na ho jaye
+P2 | Refresh par mfa_ok DB se: admin ke liye user_mfa.confirmed, brand ke liye true | refresh_tokens me mfa_ok column nahi; MFA ke bina refresh token tab hi banta hai jab MFA confirmed na ho ya challenge pass ho chuka ho
+P2 | /auth/mfa/* aur /auth/me, change-password dono realm ke token lete hain (har token apne secret se verify); baaki brand routes sirf realm=brand, /admin sirf realm=admin | TDD me admin ke liye alag mfa endpoint nahi; admin ko wahi chahiye
+P2 | CSRF stateless: X-CSRF-Token = HMAC(realm secret, refresh token), refresh/logout par Origin (zaroori, FRONTEND_URL/CORS_ORIGINS me) + CSRF | Frontend (Vercel) aur API alag domain hain, double-submit cookie JS se padhi nahi ja sakti
+P2 | Refresh cookie sa_refresh path /auth, admin ke liye sa_admin_refresh path /admin/auth, httpOnly, Secure, SameSite=None (env se) | TDD FR-AUTH-03, FR-WEB-05
+P2 | Signup par duplicate email E-AUTH-012 (409) | Error catalog me hai; rate limit (email 5/ghanta, IP 10/ghanta) enumeration roke
+P2 | Rate limit counters alag transaction me (request fail ho tab bhi bachte hain); bucket = sha256(kind:value) | Raw email/IP DB me nahi; failed login par rollback se counter na ghate
+P2 | Lockout: 5 galat par 15 min, lock lagte hi failed_attempts 0; lock ke dauran sahi password bhi E-AUTH-002 | TDD FR-AUTH-01
+P2 | Client IP: X-Forwarded-For ka right-se TRUSTED_PROXY_HOPS-vaan element (default 1), 0 ho to socket IP | Left side client spoof kar sakta hai; VERIFY Cloud Run par
+P2 | Mail: Mailer interface + BrevoMailer (POST https://api.brevo.com/v3/smtp/email, api-key header); mail fail ho to request nahi tootti, sirf error class log hoti hai | VERIFY: Brevo ka asli request shape docs se verify nahi hua; tests me httpx MockTransport
+P2 | Email token 32 byte urlsafe, DB me sha256, single-use UPDATE ... RETURNING; naya token aane par purane unused token used mark | Race me double use nahi; verify 24h, reset 1h
+P2 | Admin tenant pause/resume tenants.status (paused/active) badalta hai, agent_paused nahi | Status se login/token turant band hota hai (E-AUTH-009); agent_paused P3+ ka agent-level flag hai
+P2 | Auth service ka DB kaam super_admin context me (users/tenants/memberships cross-tenant), audit tenant_id ke saath | tenants RLS signup par naya tenant banane ke liye super admin maangti hai
+P2 | create_app() factory, CORS sirf FRONTEND_URL/CORS_ORIGINS, methods GET/POST/PUT/PATCH/DELETE, limited headers | FR-WEB-04; tests ko naye env ke saath app banane do
+P2 | Config: ADMIN_JWT_SECRET JWT_SECRET se alag zaroori, fallback nahi; 32 se chhota secret par token banana fail | FR-WEB-05
+P2 | Test emails @example.com | EmailStr .test domain reject karta hai
+
+P3 | eval_runs table migration 0004 me policies ke saath (spec ka 0009 nahi) | policies.regression_run_id FK ko eval_runs chahiye
+P3 | Policy regression = policy_engine par generated boundary scenarios; eval_subset_passed abhi True (P7 me asli subset) | evals dataset P7 ka kaam
+P3 | Publish: regression dobara chalta hai, purana published archive, naya publish ek tx me; fail par E-POL-001 aur audit alag tx me | fail tx rollback me audit na kho
+P3 | /policies* ke body errors E-POL-002 (E-VAL-001 nahi); stale base_version E-CONF-001; non-draft edit E-POL-003 | spec error catalog
+P3 | Integration secrets Fernet JSON secret_enc me; API sirf "Set hai (...abcd)" hint deti hai | FR secrets never returned
+P3 | Gupshup PUT wa_numbers banata hai, webhook_url sirf naye number / rotate_webhook=true par ek baar; token sirf sha256 hash me | hash-only token
+P3 | Doosre tenant ka source_number E-CONF-001 | wa_numbers PK
+P3 | Customer match fail-closed: phone last-10-digits ya email lowercase; pehchaan na ho to mismatch | privacy
+P3 | ExternalHttp: 429 Retry-After, 5xx aur network par 3 attempts; har attempt external_calls me, body redacted <=2048 sirf status>=400 par | FR-OBS
+P3 | Integration auth_error par tenants.agent_paused=true + audit agent.auto_paused; resume owner karta hai | agent galat creds par na chale
+P3 | Shiprocket token cache (tenant_id, provider), 401 par ek baar re-login | token expiry
+P3 | VERIFY: Shopify orders.json?name=, Shiprocket/Delhivery tracking response shapes asli account se confirm karne baaki | docs se verify nahi
+P3 | spec copies (policy_engine, gupshup_parse, tests/spec) ruff/mypy se exclude, bytes spec jaisi | spec unchanged rakhna
+
+P4 | opt_outs table migration 0006 me (spec ke privacy section se aage laayi) | STOP/START handling P4 ka hissa hai; consents/privacy_requests P8 me
+P4 | Webhook: galat token 404 E-WEB-001; andar ki galti par 500 {"error":"internal","error_id"} (200 nahi) | 200 se message chupchap kho jata; idempotency duplicate retry safe karti hai
+P4 | Skipped events (status/echo/bad json/app mismatch/oversize>256KB) 200 + inbound_events skipped (external_id skip:<sha256>) | Gupshup ko 2xx chahiye; oversize store nahi hota
+P4 | raw_payload = {"normalized":..., "raw":...} | worker normalized padhta hai; raw debugging ke liye, retention P8
+P4 | messages.created_at = ingest time (Gupshup timestamp nahi); conversations.last_inbound_at = min(provider time, now) | flood check aur 24h window galat clock se na bigde
+P4 | Customer flood: ek minute me CUSTOMER_FLOOD_PER_MINUTE (10) se zyada inbound -> baaki skipped CUSTOMER_FLOOD | TDD 7.6; handoff P5 me
+P4 | Jobs: claim FOR UPDATE SKIP LOCKED + tenant_limit 2 + lease 120s; claim par attempts+1; fail par backoff 30s*2^n (cap 30m); max_attempts khatam par needs_review + brand notification; reap_expired lease khatam par | TDD 11
+P4 | Periodic jobs (fetch_gmail har minute, integration_health har 15 min) worker start par idempotency key = time bucket se enqueue | alag scheduler process nahi chahiye; Cloud Scheduler sirf worker chalata hai
+P4 | process_inbound exhausted par event needs_review/PROCESSING_FAILED | FR-ACT-07
+P4 | Gmail: query "in:inbox newer_than:2d -from:me", dedupe inbound_events.external_id se, apna address skipped OWN_ADDRESS | label-processed ki zarurat nahi
+P4 | Gmail connect OAuth UI nahi (contracts me endpoint nahi); scripts/connect_gmail.py refresh token encrypt karke rakhta hai | invent API nahi
+P4 | Gupshup test endpoint: config poora ho to ok=True + detail "asli delivery pehle message par verify" | asli probe API verify nahi
+P4 | VERIFY: Gupshup enterprise GatewayAPI SendMessage request/response; Gmail REST list/get/token; Gupshup inbound inner payload
+P4 | ruff E501 ignore (lambi SQL strings), format 100 col rehta hai | string literal wrap nahi hoti
+P4 | integrations.service._store ka naam store_secret (scripts use karti hain) | public use
+
+P5 | LLM default provider Anthropic Messages API (ExternalHttp), model LLM_MODEL=claude-haiku-5-5, FakeProvider tests ke liye; 1 repair retry phir LlmInvalid | TDD 7.4/7.5; accuracy VERIFY
+P5 | Prompt classify.v1.md system/user me split; customer text pehle redact_for_llm phir wrap_untrusted (tag breakout neutralize) | injection rule
+P5 | Saare customer replies templates se; LLM kabhi text nahi likhta; validate_reply banned phrases + facts-only tokens check | CLAUDE.md agent niyam
+P5 | Greeting-only / "kya tum bot ho" precheck par bina LLM template reply | cost + safety
+P5 | Tool hard failure (upstream/auth/not_configured) -> TOOL_FAILED handoff; not_found/customer_mismatch -> re-ask, 3 attempts par IDENTITY_FAILED | FR-INT
+P5 | AGENT_PAUSED par silent handoff (customer ko ack nahi); OPTED_OUT/HUMAN_ACTIVE par run skipped | pause ka matlab customer ko kuch nahi jana
+P5 | Runner ab commit ke baad (ingest transaction ke bahar) chalta hai, signature (ctx, tenant, event, conv, message, inbound); agent_runs UNIQUE(inbound_event) se double-run safe | actions engine apne sessions use karta hai, FK ke liye run commit hona chahiye
+P5 | LLM_UNAVAILABLE par job retry (RetryLater) jab tak aakhri attempt na ho; aakhri attempt par handoff + tool_unavailable_ack | outage me message na khoye
+P5 | Actions engine: claim INSERT ON CONFLICT DO NOTHING, key {run_id}:reply_customer:1; failed (known not-sent) attempts<3 reclaim; unknown outcome (timeout) claim rakhta hai (ActionDeferred), stale 10 min par needs_review | duplicate send nahi
+P5 | Guards send se pehle dobara: AGENT_PAUSED, OPTED_OUT, WINDOW_CLOSED (WhatsApp 24h), CAP_REACHED (customer/brand IST din, sent+claimed) -> status suppressed | FR-ACT
+P5 | Modes: shadow = agent_actions 'shadow' + out message save, bhejna nahi; draft = 'draft', approve par bhejna; auto = bhejna | rollout
+P5 | Shadow handoff would_handoff=true, status resolved (open slot nahi leta), alert/notification nahi | real handoff baad me ban sake
+P5 | Handoff sla_due_at = (office hours me abhi ya agla open) + handoff_sla_minutes; notification row + email (tenant_settings) + optional WhatsApp alert, best-effort | TDD 7.9
+P5 | REPEAT_COMPLAINT: pichle 24h me isi conversation ke 'reply' runs ke verified order_ref dobara aaye to handoff | FR-INT-05
+P5 | tool_call audit rows agent_actions me (key {run}:tool:n) | traceability
+P5 | llm_model_prices me seed nahi (price invent nahi); runtime role ko INSERT/UPDATE/DELETE revoke | cost NULL jab tak ops price daale
+P5 | Email reply Gmail messages.send (threadId + In-Reply-To), EmailSender protocol | VERIFY asli account
+P5 | tests helper wa_message timestamp ab abhi ka (24h window guard purane fixed timestamp par band dikhata) | guard sahi kaam kare
+
+P6 | Mode gate: shadow se draft/auto jaane ke liye >= SHADOW_MIN_REVIEWED (20) verdicts aur >= SHADOW_MIN_CORRECT_PCT (90%) sahi, warna E-ADM-002; neeche (auto->draft/shadow) hamesha allowed | TDD "1-2 haft shadow" ka measurable roop
+P6 | approve/reject sirf draft action par (shadow par E-ACT-001): shadow me approve se asli message chala jata | shadow ka matlab bhejna nahi
+P6 | Human reply engine.submit_reply(human=True) se: AGENT_PAUSED aur daily caps skip, window/opt-out guard lagu; reply ke baad conversation.human_active=true (agent chup); resolve par false | FR-HO-03
+P6 | Handoff claim par human_active=true, resolve par false aur conversation handoff->open; doosre user ka claim E-HO-001 | FR-HO-03
+P6 | Handoffs list sirf real (would_handoff=false); order urgent pehle phir sla_due_at; paging offset cursor | chhoti queue, keyset zaruri nahi
+P6 | "Galat jawab" report: answer_reports + CUSTOMER_REPORT handoff (real, mode auto) + human_active; sirf agent ke out message par | FR-HO-06
+P6 | Dashboard stats din IST se; shadow counts verdicts se; usage limit = usage_override_limit ya included_conversations | FR-DASH
+P6 | Frontend: access token memory me, CSRF token login/refresh body se memory me; page reload par dobara login (CSRF refresh token se derive hota hai, storage me rakhna spec ke khilaf) | GLOBAL_RULES
+P6 | Frontend strings ek i18n.ts me (Hinglish); route table src/routes.ts spec ROUTES se test me match | spec GLOBAL_RULES
+P6 | Policy editor form PolicyV1 ke saare editable fields cover karta hai; save par backend validation errors toast me | E-POL-002
+P6 | Privacy aur legal screens, global pause buttons P8 me (backend endpoints wahin ban rahe) | scope
+P7 | Evals backend/app/evals me (top-level evals/ nahi) taaki Docker image me jaye aur regression gate import kar sake | scope
+P7 | Offline eval oracle classifier se chalta hai (graph/rules/validate asli); asli LLM accuracy `--llm` se, key nahi hone se NOT RUN, VERIFY | CLAUDE.md
+P7 | greeting_elongated ("hellooooooo") GREETING_ONLY regex se match nahi hota (spec keywords.py copy, edit nahi) to UNSUPPORTED_INTENT handoff expected; known gap | spec precedence
+P7 | 51 table-driven policy scenarios publish regression gate me table_<name> ban kar judte hain; eval_subset_passed = dataset code checks | FR-POL
+P7 | Allowlist guard: delivery par action.recipient customer ke current phone/email se na mile to RECIPIENT_MISMATCH se suppress | safety
+P7 | Final split sirf `--llm` ke saath chalta hai (release check), warna exit 2 | RELEASE_TARGETS
+P8 | Migration 0008 = consents + privacy_requests + platform_flags + tenants.legal_hold (opt_outs 0006 me pehle se); V1 migrations ab 0009 se, spec ke 0008-0012 ko +1 renumber | spec/db/schema.sql
+P8 | Global pause platform_flags (global table, allowlist me) me; runner aur actions engine dono check karte hain, human replies chalte hain | FR-OPS
+P8 | Privacy delete: owner request banata hai, daily retention job customer ke conversations, events, opt_outs, customer row hata deta hai; consents append-only rehte hain (sirf internal uuid); legal_hold par dono ruk jaate hain | FR-PRV-03
+P8 | Opt-out list delete ke saath hat jaati hai (erasure ko priority); customer dobara likhe to naya customer ban jaata hai | FR-PRV
+P8 | Retention: conversations 30 din last activity se (open handoff wali nahi), technical rows 14 din, expired tokens/rate_limits global | FR-PRV-03
+P8 | Retention aur privacy_due, sla_check, llm_latency_check, unanswered_alert har active tenant ke liye per-tenant jobs; scheduler bucket idempotency se | TDD V0 section 11
+P8 | Notifications dedupe: same title ek window me ek baar (notify_once) | alert fatigue
+P8 | scripts/ backend/scripts me (importable, tests ke liye); evals ki tarah Docker image me nahi | scope
+P8 | Sentry: send_default_pii=False, body/headers/cookies/vars strip, redact_text; DSN khali ho to off | FR-LOG-03
+P8 | deploy.yml: test+frontend -> image -> migrate Run Job -> service -> worker Run Job -> Scheduler -> smoke+sweep -> fail par pichli revision par traffic. VERIFY: asli GCP par nahi chala | CLAUDE.md
+P8 | Public notices abhi DRAFT (NOTICE_PUBLISHED=false); legal text placeholder nahi, par legal review baaki | FR-PRV
+P8 | LLM provider terms NOT CONFIRMED; docs/LLM_PROVIDER_TERMS.md me checklist, tab tak shadow mode | O1
+P9 | V1 migrations 0009-0012: action state columns, conversation_state, action_usage, tool_kill + plan columns (spec 0008-0012 ka +1 renumber) | spec/db
+P9 | PolicyV2 (schema_version 2): write tools default "off", order_status hamesha auto; PolicyV1 chalta rehta hai, runtime parse_any se dono padhta hai | TDD V1 section 5
+P9 | Publish ke baad V2 se V1 par downgrade E-POL-002 (schema_downgrade) | safety
+P9 | Owner kisi tool ko "auto" par nahi le ja sakta (E-POL-002 auto_needs_admin:<tool>); auto sirf admin enable karega (P14, tenants.auto_enabled_by/at) | TDD V1 autonomy
+P9 | Plan/ReplyDraft extra field ignore: LLM ke diye amount/order id drop ho jaate hain; amount sirf order facts se | CLAUDE.md
+P9 | Customer step-up identity nahi: identity channel-exact hai (WhatsApp number = order ka phone), recipient allowlist guard engine me | TDD V1
+P9 | Privacy delete ab conversation_state aur action_usage bhi hatata hai | FR-PRV-03
+P10 | Shopify write interface + DisabledShopifyWriter (production default) + FakeShopify. VERIFY: asli Shopify write scopes aur mutations (orderUpdate, orderCancel, refundCreate, exchange) abhi verify nahi; asli client tab tak nahi | CLAUDE.md
+P10 | Write ke baad hamesha order dobara padhkar verify_effect; timeout par "applied hua ya nahi" re-read se tay | TDD V1 verify
+P11 | Ek conversation me ek hi active write action (ux_actions_one_active_write) | TDD V1 concurrency
+P11 | Confirm token random, sirf hash DB me (confirm_token_hash); plaintext conversation_state.context me customer ke jawab tak rehta hai, single-use + expiry | TDD V1 confirm
+P11 | Limits (per-tool cap, brand/customer daily) action_usage par tenant row lock ke saath reserve; fail par release | TDD V1 limits
+P11 | Approve par gate dobara taaza facts se, limits enforce nahi (human ne dekh liya); order badla to E-ACT-006 | TDD V1 approval
+P11 | Approve par gate taaza facts se (regate); order amount badla to ORDER_CHANGED se reject, kuch execute nahi | TDD V1 approval
+P11 | Default gate facts sirf write client ke read_order se; delivery date/tags/dispute nahi, isliye return/refund eligibility tab tak band jab tak P12 ka richer GateFacts provider set na ho. VERIFY: Shopify delivered_at source | CLAUDE.md
+P11 | Kill: owner kar sakta hai aur restore bhi (reason ke saath, audit); anomaly kill system role se, auto execute ke baad threshold par | TDD V1 kill switch
+P11 | write_upkeep job (2 min bucket, sirf awaiting_customer/needs_review wale tenants par): confirm expiry + needs_review reconcile | ops
+P11 | /approvals list sab V1 write statuses dikhata hai; approve/reject/reconcile owner-only | FR-APR
+P12 | Understand + Plan ek hi LLM call (purpose "plan", Plan JSON) — TDD ke do step ek me: kam latency/cost, ek schema; classify.v1 V0 ke liye rehta hai | TDD V1 section 4
+P12 | V1 graph pure: DB commit/send nahi; DecisionV1 (intent/confirm/conv update) runner_v1 execute karta hai; V0 DecisionOut me V1 reason codes nahi aate isliye alag DecisionV1/HandoffSummaryV1 | CLAUDE.md
+P12 | Confirm haan/na LLM nahi, code parse karta hai (parse_confirmation); unclear 2 baar = CONFIRM_UNCLEAR handoff | TDD V1 section 5
+P12 | Runner PolicyV2 publish hone par V1 graph chalata hai, warna V0 (PolicyV1 tenants unchanged) | rollout
+P12 | Shadow/draft mode me V1 koi write action nahi banata (sirf reply record); write sirf mode=auto me | safety
+P12 | Confirm ke waqt gate dobara taaza facts se (regate); order badla to action reject + handoff, Shopify call nahi | TDD V1 section 5
+P12 | Customer ko result sirf stored status dekhkar (outcome.notify): confirmed -> done, pending_approval -> team, failed/needs_review -> handoff ACTION_FAILED; key act-result:{id}:{status} | TDD V1 step 6
+P12 | write_upkeep ab 2 min se purane 'approved' (confirm ke baad crash) bhi execute karta hai; claim atomic hai isliye double nahi | TDD V1 step 5
+P12 | policy_question abhi UNSUPPORTED_INTENT handoff; facts-based policy jawab P13 reply layer ke saath | scope
+P12 | Delivery date / dispute / refund transactions Shopify REST shape se (fulfillment shipment_status, tags dispute|chargeback, refunds.transactions). VERIFY: asli response se match nahi kiya | CLAUDE.md
+P13 | LLM reply sirf T0 jawab (order status, tracking) aur policy_question par; confirm, done, awaiting-team aur handoff ack template hi rehte hain kyunki unme paisa/wada hai | TDD V1 section 6
+P13 | validate_reply_v1: banned phrases, internal words, unconfirmed promise (T0 me promises hamesha khali), har #order/number/AWB facts ya customer ke apne message me, language match, 600 char limit | TDD V1 section 6
+P13 | Fail par ek retry (reasons ke saath), phir V0 template; policy_question ka template nahi isliye REPLY_VALIDATION_FAILED handoff; needs_human = UNSUPPORTED_INTENT handoff | TDD V1 section 6
+P13 | Disclosure line LLM nahi, code pehle message par jodta hai (FR-AI-13); "kya aap insaan ho" precheck me template se | FR-AI-13
+P13 | tone_notes sirf style ke liye prompt me (redact ke baad); policy facts: return_window_days, final_sale_tags, support_hours, handoff SLA | TDD V1 section 6
+P13 | agent_runs.reply_attempts aur prompt_versions.reply me reply.v1 | observability
+P13 | VERIFY: reply ki asli LLM quality/Hinglish tone bina key ke jaanchi nahi (P15 --llm eval) | CLAUDE.md
+P14 | auto level sirf platform admin chalu kar sakta hai (naya policy version + audit admin.autonomy_changed); auto ke liye tenant mode=auto zaroori (E-ADM-003) | TDD V1 section 10
+P14 | owner auto ya limits under-auto badha nahi sakta (E-POL-002 auto_needs_admin / limit_raise_needs_admin); owner sirf off/approval aur limits ghata sakta hai | safety
+P14 | approval SLA 60 min (approval_sla_minutes), job har 10 min, notify_once 4 ghante dedupe | ops
+P14 | ledger = GET /approvals (status filter); detail me audit timeline | TDD V1
+P14 | Autonomy page: V1 policy par V2 upgrade button (sab write tools off se shuru); tool level badalne par enabled_tools sync | UX
+P14 | VERIFY: npm audit me react-router moderate (SSR hydration / open redirect advisories); app SPA hai, SSR nahi, redirect targets fixed; v7 upgrade breaking hai, baad me alag se | CLAUDE.md
+P15 | gate scenarios expected values hand-written in tables (not computed by gate) so a gate regression shows up; wrong_money_auto = gate said auto where table says not auto, target 0 | TDD V1 section 10
+P15 | multi-turn evals run through the real webhook->worker->DB flow with FakeV1Tools+FakeShopify (150 convos); anomaly threshold raised to 1000 inside those tests only | safety stays on in prod
+P15 | FIX: approve API re-gate used writer facts (no delivery date) so refund/exchange approvals always failed DELIVERY_DATE_UNKNOWN; now ReadFirstFacts (read integration via tool box, fallback to writer facts = closed) | found by multi-turn eval
+P15 | FIX: reply validator INTERNAL words ("policy engine", "prompt", "JSON") now case-insensitive; UPPER_SNAKE codes stay case-sensitive | leak found by v1_safety case
+P15 | confirm parser stays conservative: "mat karo", "ruk jao", "nahi chahiye" = unclear (asks again), never an accidental yes; "stop" is a channel opt-out keyword so it is not used as a decline | safety
+P15 | VERIFY: --llm plan accuracy, handoff recall on real model, shadow precision >=99% and 100-proposal volume need real key and pilot data; gates listed in docs/RELEASE_GATES_V1.md | CLAUDE.md
+P16 | rollback drill is an executable test on the fake writer (4 levers, each stops a pending write); the real-infra drills (Cloud Run traffic, Neon restore) stay quarterly manual items in RUNBOOK | no GCP access here
+P16 | after the kill switch fires, the conversation goes to a human (handoff) and the agent stays quiet there; restoring the tool does not resume that conversation | safety
+P16 | final zip = project tree without node_modules, dist, caches, .git, venvs; parts/ zips kept out of the final zip | size
+P16 | VERIFY before any brand goes auto: Shopify write API, Shopify read fields, Gupshup callback, LLM --llm evals, LLM provider terms, privacy notice legal review, first staging deploy | CLAUDE.md
+P17 | voice ek provider-neutral turn-based webhook hai (POST /webhooks/voice/{token}: start, turn, end; reply = say + continue/transfer/hangup); telephony provider ko STT/TTS karne dete hain, hum sirf text lete aur dete hain | provider abhi tay nahi
+P17 | VERIFY: asli provider (Exotel/Knowlarity/Twilio) ka payload mapping, STT/TTS quality Hindi/Hinglish par, TRAI/DLT aur call recording ke niyam, DPDP notice call par, latency <2s per turn real LLM ke saath
+P17 | audio store nahi hota, sirf transcript messages me (retention aur privacy erase usi se chalte hain) | kam data = kam risk
+P17 | voice turn API process me inline chalta hai (worker job har minute chalta hai, call ke liye bahut dheema); runner ko attempts=max_attempts dete hain taaki LLM down par retry-later na ho | live call
+P17 | voice sirf tab bolta hai jab tenant mode auto ho, agent paused na ho, policy V2 ho; warna call transfer ya callback par | shadow/pause me customer se asli baat nahi
+P17 | voice par refund kabhi auto nahi: gate VOICE_REFUND se approval me bhejta hai; address badalna POLICY_EXCEPTION handoff (bol kar pata galat sunne ka risk) | galat sunne ka nuksan paise/pata me
+P17 | confirm ("haan") ke liye STT confidence >= 0.8, baaki turn >= 0.55; do lagataar kam confidence turn par CONFUSED handoff; 2 khamosh turn par call khatam | galat confirm se write nahi
+P17 | call khatam hone ke baad approve hui action ka customer message bheja nahi ja sakta: VOICE_CALL_ENDED se suppress aur owner ko "Customer ko call karke batayein" notification | voice par baad me message nahi
+P17 | bola jaane wala text speakable() se: emoji/markup hataya, "Rs 400" -> "400 rupaye", "#1001" -> "1 0 0 1", "likhein" -> "bolein", 400 char tak | TTS saaf bole
+P17 | conversation channel 'voice' (migration 0013 CHECK badle, consent purpose voice_contact); NormalizedInbound spec contract nahi badla, runner ko whatsapp-shim milta hai | spec/ source of truth
+P18 | telephony provider adapter (parse+render) per number: abhi `generic` (hamara neutral JSON) aur test-only `fake_ivr`; asli Exotel/Knowlarity/Twilio payload invent nahi kiya, mapping aane par ek adapter class jodni hai | VERIFY: asli provider payload, signature check, DTMF/transfer syntax
+P18 | greeting me AI hone aur transcript save hone ka notice, aur greeting par barge_in=false taaki poora suna jaye; baaki jawab par provider caller ko beech me rok sakta hai (barge_in=true) | disclosure poora sunna zaroori
+P18 | har turn ka latency (ms) voice_calls me; voice_slow_ms=2000 se zyada turn "slow" ginta hai. Runner par timeout nahi lagaya (beech me kata to action half ho sakta hai); sirf napta aur dashboard par dikhata hai | VERIFY: asli LLM ke saath p95 < 2s
+P18 | caller ke purane order ko yaad rakhna: usi customer ki kisi bhi purani conversation ka active_order_ref (voice_order_memory_days=30) call shuru par seed hota hai; Shopify lookup phir bhi phone match se verify karta hai aur jawab me order number bola jata hai, to galat order customer sun leta hai | naya Shopify "orders by phone" API invent nahi kiya; VERIFY: Shopify se phone ke orders list
+P18 | voice par exchange bhi kabhi auto nahi (VOICE_EXCHANGE -> approval), kyunki size/variant bol kar galat sunna asaan hai; cancel auto reh sakta hai | refund jaisa hi risk
+P18 | handoff summary me order, customer ke asli (redacted) shabd, call par hui baatein aur kaam; transfer par provider ko `briefing` (<=300 char) milta hai jo team member ko dikhana/sunana hai | team ko context
+P18 | transfer lag nahi paya (end reason no_answer/busy/failed/transfer_failed) -> status callback, handoff urgent, notification aur email/WhatsApp alert | customer ka call rukna nahi chahiye
+P18 | call ke baad summary sirf WhatsApp par jab customer ne pichle 24h me WhatsApp kiya ho; warna skipped (voice_calls.summary_status). Email me bhejne ka thread context nahi hota | VERIFY: bina window ke bhejne ke liye Gupshup approved template (HSM) aur WhatsApp consent ka kanooni jawab
+P18 | owner feedback (sahi/galat) har call par aur 7-din stats (calls, agent ne khud sambhale %, callback, latency, slow, feedback) /voice/stats | agent ki quality napne ke liye
+P18 | voice eval suite (app/evals/voice_safety.py: gate 36 + speech cases) eval CLI aur release check me; asli LLM/awaaz ki accuracy ab bhi pilot se hi pata chalegi | VERIFY: pilot data

@@ -1,0 +1,71 @@
+import re
+from typing import Any
+
+from app.agent import templates as T
+from app.contracts.contracts import Language
+
+BANNED = re.compile(
+    r"(refund (ho|kar|will|approved|processed)|refund ho jayega|will be refunded|cancel ho gaya"
+    r"|cancelled for you|order cancel ho|guarantee|guaranteed|pakka|100%|promise|compensation"
+    r"|replacement bhej|we will replace|paise wapas|money back|रिफंड हो जाएगा|गारंटी)",
+    re.IGNORECASE,
+)
+_HASH_REF = re.compile(r"#[A-Za-z0-9-]+")
+_LONG_NUMBER = re.compile(r"(?<![A-Za-z0-9])[0-9][0-9,.]{3,}(?![A-Za-z0-9])")
+FACT_TEMPLATES = {"order_status", "tracking_status"}
+
+
+def allowed_tokens(facts: dict[str, Any]) -> set[str]:
+    tokens: set[str] = set()
+    order = facts.get("order")
+    if order:
+        tokens.add(order["order_name"])
+        tokens.add(T.paise_to_rs(int(order["total_paise"])))
+        for line in order["lines"]:
+            tokens.add(str(line["quantity"]))
+            tokens.update(t.rstrip(".,") for t in _LONG_NUMBER.findall(line["title"]))
+            tokens.update(_HASH_REF.findall(line["title"]))
+        tokens.update(order.get("tracking_numbers") or [])
+    tracking = facts.get("tracking")
+    if tracking:
+        tokens.add(tracking["awb"])
+    return tokens
+
+
+def validate_reply(
+    template_id: str, text: str, facts: dict[str, Any], disclosure_texts: set[str]
+) -> str | None:
+    body = text
+    for disclosure in disclosure_texts:
+        body = body.replace(disclosure, "")
+    if BANNED.search(body):
+        return "banned_phrase"
+    if template_id in FACT_TEMPLATES:
+        allowed = allowed_tokens(facts)
+        for token in _HASH_REF.findall(body):
+            if token not in allowed:
+                return "unknown_order_ref"
+        for token in _LONG_NUMBER.findall(_HASH_REF.sub(" ", body)):
+            cleaned = token.rstrip(".,")
+            if cleaned not in allowed:
+                return "unknown_number"
+        if not facts.get("order"):
+            return "no_order_facts"
+    return None
+
+
+def disclosure_variants(
+    policy_disclosure: dict[str, str] | None, default: dict[str, str]
+) -> set[str]:
+    variants = set(default.values())
+    if policy_disclosure:
+        variants.update(policy_disclosure.values())
+    return variants
+
+
+def pick_language(value: str | None) -> Language:
+    if value == "hi":
+        return "hi"
+    if value == "en":
+        return "en"
+    return "hinglish"

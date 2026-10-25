@@ -1,0 +1,11 @@
+title = "support-agent gitleaks"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "non-secret files"
+paths = [
+  '''\.env\.example$''',
+  '''constraints\.txt$''',
+]

@@ -1,0 +1,71 @@
+[project]
+name = "support-agent"
+version = "0.1.0"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "sqlalchemy[asyncio]",
+  "asyncpg",
+  "alembic",
+  "pydantic",
+  "pydantic-settings",
+  "email-validator",
+  "langgraph",
+  "httpx",
+  "cryptography",
+  "tzdata",
+  "argon2-cffi",
+  "PyJWT",
+  "pyotp",
+  "sentry-sdk",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "pytest-asyncio",
+  "ruff",
+  "mypy",
+  "pip-audit",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = ["app/contracts", "tests/contracts", "tests/spec", "app/agent/policy_engine.py", "app/channels/gupshup_parse.py", "app/agent/keywords.py", "app/agent/templates.py", "app/evals/cases.py", "migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "ASYNC"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S608"]
+"app/policy/service.py" = ["S608"]
+"app/api/conversations.py" = ["S608"]
+"app/api/handoffs.py" = ["S608"]
+"app/api/dashboard.py" = ["S608"]
+"app/api/actions.py" = ["S608"]
+"app/actions/writes.py" = ["S608"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+plugins = ["pydantic.mypy"]
+files = ["app", "tests", "migrations", "scripts"]
+
+[[tool.mypy.overrides]]
+module = ["app.contracts.*", "tests.contracts.*", "tests.spec.*", "app.agent.policy_engine", "app.channels.gupshup_parse", "app.agent.keywords", "app.agent.templates", "app.evals.cases"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = ["asyncpg", "asyncpg.*"]
+ignore_missing_imports = true
