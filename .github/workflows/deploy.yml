@@ -12,9 +12,13 @@ on:
         required: true
         type: choice
         options: [staging, production]
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
 
 concurrency:
-  group: deploy-${{ inputs.environment }}
+  group: deploy-${{ inputs.environment || 'production' }}
   cancel-in-progress: false
 
 permissions:
@@ -24,8 +28,12 @@ permissions:
 jobs:
   guard:
     runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     steps:
-      - run: |
+      - if: github.event_name == 'workflow_dispatch'
+        run: |
           if [ "${{ inputs.confirm }}" != "DEPLOY" ]; then
             echo "confirm must be DEPLOY"
             exit 1
@@ -33,6 +41,7 @@ jobs:
 
   test:
     needs: guard
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -69,6 +78,7 @@ jobs:
 
   frontend:
     needs: guard
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -87,9 +97,13 @@ jobs:
       - run: npm run build
 
   deploy:
-    needs: [test, frontend]
+    needs: [guard, test, frontend]
+    if: >-
+      always() && needs.guard.result == 'success' &&
+      (needs.test.result == 'success' || needs.test.result == 'skipped') &&
+      (needs.frontend.result == 'success' || needs.frontend.result == 'skipped')
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    environment: ${{ inputs.environment || 'production' }}
     env:
       REGION: ${{ vars.GCP_REGION }}
       PROJECT: ${{ vars.GCP_PROJECT_ID }}
@@ -99,12 +113,14 @@ jobs:
       SERVICE: support-agent
       WORKER_JOB: support-agent-worker
       MIGRATE_JOB: support-agent-migrate
-      IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/support-agent:${{ github.sha }}
-      APP_ENV: ${{ inputs.environment }}
-      COMMON_ENV: APP_ENV=${{ inputs.environment }},APP_RELEASE=${{ github.sha }},FRONTEND_URL=${{ vars.FRONTEND_URL }},PUBLIC_BASE_URL=${{ vars.PUBLIC_BASE_URL }},MAIL_FROM=${{ vars.MAIL_FROM }},GRIEVANCE_EMAIL=${{ vars.GRIEVANCE_EMAIL }},LLM_MODEL=${{ vars.LLM_MODEL }},LLM_PROVIDER=${{ vars.LLM_PROVIDER || 'anthropic' }}${{ vars.LLM_BASE_URL && format(',LLM_BASE_URL={0}', vars.LLM_BASE_URL) || '' }}
+      IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/support-agent:${{ github.event.workflow_run.head_sha || github.sha }}
+      APP_ENV: ${{ inputs.environment || 'production' }}
+      COMMON_ENV: APP_ENV=${{ inputs.environment || 'production' }},APP_RELEASE=${{ github.event.workflow_run.head_sha || github.sha }},FRONTEND_URL=${{ vars.FRONTEND_URL }},PUBLIC_BASE_URL=${{ vars.PUBLIC_BASE_URL }},MAIL_FROM=${{ vars.MAIL_FROM }},GRIEVANCE_EMAIL=${{ vars.GRIEVANCE_EMAIL }},LLM_MODEL=${{ vars.LLM_MODEL }},LLM_PROVIDER=${{ vars.LLM_PROVIDER || 'anthropic' }}${{ vars.LLM_BASE_URL && format(',LLM_BASE_URL={0}', vars.LLM_BASE_URL) || '' }}
       APP_SECRETS: DATABASE_URL=database-url:latest,ENCRYPTION_KEY=encryption-key:latest,JWT_SECRET=jwt-secret:latest,ADMIN_JWT_SECRET=admin-jwt-secret:latest,LLM_API_KEY=llm-api-key:latest,BREVO_API_KEY=brevo-api-key:latest,GOOGLE_CLIENT_ID=google-client-id:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest,SENTRY_DSN=sentry-dsn:latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
@@ -130,7 +146,7 @@ jobs:
             --command alembic --args upgrade,head \
             --max-retries 0 --task-timeout 300
           gcloud run jobs execute "$MIGRATE_JOB" --region "$REGION" --project "$PROJECT" --wait
-      - name: Deploy API service
+      - name: Deploy API service (no traffic yet)
         run: |
           gcloud run deploy "$SERVICE" \
             --image "$IMAGE" --region "$REGION" --project "$PROJECT" \
@@ -138,7 +154,25 @@ jobs:
             --service-account "$RUNTIME_SA" \
             --set-secrets "$APP_SECRETS" \
             --set-env-vars "$COMMON_ENV" \
-            --allow-unauthenticated
+            --allow-unauthenticated \
+            --no-traffic --tag candidate
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Smoke and API sweep on candidate revision
+        working-directory: backend
+        run: |
+          CANDIDATE=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT" --format=json \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print([t['url'] for t in d['status']['traffic'] if t.get('tag')=='candidate'][0])")
+          echo "candidate: $CANDIDATE"
+          pip install -c constraints.txt .
+          curl --fail --silent --show-error --retry 5 --retry-delay 5 "$CANDIDATE/health"
+          SMOKE_BASE_URL="$CANDIDATE" python -m scripts.smoke
+          SMOKE_BASE_URL="$CANDIDATE" python -m scripts.api_sweep
+      - name: Send traffic to the new revision
+        run: |
+          gcloud run services update-traffic "$SERVICE" --region "$REGION" --project "$PROJECT" --to-latest
+          gcloud run services update-traffic "$SERVICE" --region "$REGION" --project "$PROJECT" --remove-tags candidate
       - name: Deploy worker job
         run: |
           gcloud run jobs deploy "$WORKER_JOB" \
@@ -155,19 +189,8 @@ jobs:
                 --uri "$URI" --http-method POST --oauth-service-account-email "$SCHEDULER_SA")
           gcloud scheduler jobs update http "${WORKER_JOB}-tick" "${ARGS[@]}" \
             || gcloud scheduler jobs create http "${WORKER_JOB}-tick" "${ARGS[@]}"
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - name: Smoke and API sweep
-        working-directory: backend
+      - name: Final health check
         run: |
           URL=$(gcloud run services describe "$SERVICE" --region "$REGION" --project "$PROJECT" --format 'value(status.url)')
-          pip install -c constraints.txt .
           curl --fail --silent --show-error --retry 5 --retry-delay 5 "$URL/health"
-          SMOKE_BASE_URL="$URL" python -m scripts.smoke
-          SMOKE_BASE_URL="$URL" python -m scripts.api_sweep
-      - name: Roll back on failure
-        if: failure() && env.PREV_REVISION != ''
-        run: |
-          gcloud run services update-traffic "$SERVICE" --region "$REGION" --project "$PROJECT" \
-            --to-revisions "${PREV_REVISION}=100"
+          curl --fail --silent --show-error --retry 5 --retry-delay 5 "$URL/ready"
