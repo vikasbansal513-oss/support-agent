@@ -10,6 +10,7 @@ export function Layout() {
       ? [
           ["/admin/tenants", t.navTenants],
           ["/admin/ops", t.navOps],
+          ["/admin/billing", t.navBilling],
         ]
       : [
           ["/", t.navDashboard],

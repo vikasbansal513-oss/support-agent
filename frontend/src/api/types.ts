@@ -395,3 +395,151 @@ export interface VoiceTurn {
 export interface VoiceCallDetail extends VoiceCall {
   turns: VoiceTurn[];
 }
+
+export interface BillingSettings {
+  seller_name: string;
+  seller_address: string;
+  seller_state_code: string;
+  seller_gstin: string;
+  seller_email: string;
+  seller_phone: string;
+  payment_details: string;
+  sac_code: string;
+  invoice_prefix: string;
+  gst_enabled: boolean;
+  gst_rate_percent: string;
+  cloudrun_vcpu: string;
+  cloudrun_gib: string;
+  cloudrun_usd_per_vcpu_second: string;
+  cloudrun_usd_per_gib_second: string;
+  updated_at: string | null;
+}
+
+export interface BillingLlmRate {
+  provider: string;
+  model: string;
+  input_usd_per_million: string;
+  output_usd_per_million: string;
+  updated_at: string;
+}
+
+export interface BillingRates {
+  rates: BillingLlmRate[];
+  unpriced: { provider: string; model: string }[];
+}
+
+export interface BillingProfile {
+  tenant_id: string;
+  tenant_name: string;
+  slug: string;
+  legal_name: string;
+  address: string;
+  state_code: string;
+  gstin: string;
+  email: string;
+  default_platform_fee_paise: number;
+}
+
+export interface InvoiceSummary {
+  id: string;
+  tenant_id: string;
+  status: "draft" | "final";
+  invoice_no: string | null;
+  total_paise: number;
+}
+
+export interface BillingPeriodRow {
+  tenant_id: string;
+  name: string;
+  slug: string;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  llm_paise: number | null;
+  compute_seconds: number;
+  jobs: number;
+  cloudrun_paise: number | null;
+  default_platform_fee_paise: number;
+  unpriced_models: string[];
+  invoice: InvoiceSummary | null;
+}
+
+export interface BillingPeriod {
+  period: string;
+  period_ended: boolean;
+  usd_inr: string | null;
+  cloudrun_actual_paise: number | null;
+  cloudrun_unallocated_paise: number;
+  rows: BillingPeriodRow[];
+}
+
+export interface BillingFlag {
+  code: string;
+  detail: string | null;
+}
+
+export interface InvoiceLine {
+  position: number;
+  kind: "llm" | "cloudrun" | "platform_fee";
+  description: string;
+  quantity: string;
+  unit: string;
+  amount_paise: number;
+  detail: Record<string, unknown>;
+}
+
+export interface InvoiceSeller {
+  name: string;
+  address: string;
+  state_code: string;
+  gstin: string;
+  email: string;
+  phone: string;
+  payment_details: string;
+  sac_code: string;
+}
+
+export interface InvoiceBuyer {
+  name: string;
+  address: string;
+  state_code: string;
+  gstin: string;
+  email: string;
+}
+
+export interface Invoice {
+  id: string;
+  tenant_id: string;
+  tenant_name: string;
+  period: string;
+  period_start: string;
+  status: "draft" | "final";
+  doc_type: "tax_invoice" | "proforma";
+  invoice_no: string | null;
+  invoice_date: string | null;
+  usd_inr: string;
+  cloudrun_basis: "estimate" | "actual";
+  llm_paise: number;
+  cloudrun_paise: number;
+  platform_fee_paise: number;
+  subtotal_paise: number;
+  gst_rate_percent: string;
+  gst_kind: "none" | "intra" | "inter";
+  cgst_paise: number;
+  sgst_paise: number;
+  igst_paise: number;
+  total_paise: number;
+  seller: InvoiceSeller;
+  buyer: InvoiceBuyer;
+  lines: InvoiceLine[];
+  blockers: BillingFlag[];
+  warnings: BillingFlag[];
+  generated_at: string;
+  finalized_at: string | null;
+}
+
+export interface GenerateResult {
+  generated: number;
+  skipped_final: number;
+  invoices: InvoiceSummary[];
+}

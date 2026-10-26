@@ -80,3 +80,26 @@ th, td { text-align: left; padding: .5rem; border-bottom: 1px solid var(--line);
 .footer { display: flex; gap: 1rem; justify-content: center; padding: 1rem; color: var(--muted); }
 .notice { max-width: 720px; margin: 0 auto; padding: 1rem 16px; }
 button.danger { background: var(--warn); }
+.dialog-box { background: var(--card); padding: 1.25rem; border-radius: 12px; width: 100%; max-width: 420px; }
+td.num, th.num { text-align: right; white-space: nowrap; }
+.pre { white-space: pre-wrap; }
+.invoice { background: #fff; color: #111; border: 1px solid var(--line); border-radius: 8px; padding: 1.5rem; margin: 1rem 0; max-width: 794px; }
+.invoice th, .invoice td { color: #111; border-bottom: 1px solid #ddd; }
+.invoice-draft { border-style: dashed; }
+.invoice-head { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.invoice-head h1 { margin: 0 0 .25rem; }
+.invoice-meta { text-align: right; }
+.invoice-parties { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem; }
+.invoice-foot { margin-top: 1rem; font-size: .85rem; }
+@media (max-width: 640px) {
+  .invoice { padding: .75rem; }
+  .invoice-parties { grid-template-columns: 1fr; }
+}
+@media print {
+  @page { size: A4; margin: 14mm; }
+  body { background: #fff; color: #111; }
+  .topbar, .footer, .toasts, .no-print, .dialog { display: none !important; }
+  .layout main { padding: 0; }
+  .invoice { border: 0; padding: 0; margin: 0; max-width: none; }
+  .invoice-draft { outline: 0; }
+}

@@ -7,11 +7,11 @@ const SPEC_PATHS = [
   "/onboarding", "/conversations", "/conversations/:id", "/handoffs", "/review", "/approvals", "/settings/autonomy", "/settings/voice",
   "/settings/integrations", "/settings/policy", "/settings/notifications", "/settings/security",
   "/privacy", "/privacy-notice", "/terms",
-  "/admin/login", "/admin/tenants", "/admin/ops",
+  "/admin/login", "/admin/tenants", "/admin/ops", "/admin/billing", "/admin/billing/settings", "/admin/billing/invoices/:id",
 ];
 const SPEC_ACCESS: Record<string, string> = {
   "/": "user", "/onboarding": "owner", "/settings/integrations": "owner", "/settings/policy": "owner", "/settings/autonomy": "owner", "/settings/voice": "owner", "/approvals": "user",
-  "/settings/notifications": "owner", "/settings/security": "user", "/admin/tenants": "admin", "/admin/ops": "admin",
+  "/settings/notifications": "owner", "/settings/security": "user", "/admin/tenants": "admin", "/admin/ops": "admin", "/admin/billing": "admin", "/admin/billing/settings": "admin", "/admin/billing/invoices/:id": "admin",
   "/login": "public", "/admin/login": "public",
 };
 

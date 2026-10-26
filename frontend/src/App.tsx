@@ -6,6 +6,7 @@ import type { Access } from "./routes";
 import { t } from "./i18n";
 import { AdminLogin, ForgotPassword, Login, Pending, ResetPassword, Signup, VerifyEmail } from "./pages/auth";
 import { AdminOps, AdminTenants } from "./pages/Admin";
+import { AdminBilling, AdminBillingSettings, AdminInvoice } from "./pages/Billing";
 import { Approvals } from "./pages/Approvals";
 import { AutonomySettings } from "./pages/Autonomy";
 import { VoiceSettings } from "./pages/Voice";
@@ -63,6 +64,9 @@ export function AppRoutes() {
         <Route path="/settings/security" element={guarded("user", <Security />)} />
         <Route path="/admin/tenants" element={guarded("admin", <AdminTenants />)} />
         <Route path="/admin/ops" element={guarded("admin", <AdminOps />)} />
+        <Route path="/admin/billing" element={guarded("admin", <AdminBilling />)} />
+        <Route path="/admin/billing/settings" element={guarded("admin", <AdminBillingSettings />)} />
+        <Route path="/admin/billing/invoices/:id" element={guarded("admin", <AdminInvoice />)} />
       </Route>
       <Route path="*" element={<p className="empty">{t.notFound}</p>} />
     </Routes>

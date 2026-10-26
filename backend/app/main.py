@@ -7,6 +7,7 @@ from app.api import (
     actions,
     admin_auth,
     admin_autonomy,
+    admin_billing,
     admin_jobs,
     admin_llm,
     admin_llm_settings,
@@ -81,6 +82,7 @@ def create_app() -> FastAPI:
     application.include_router(admin_jobs.router)
     application.include_router(admin_llm.router)
     application.include_router(admin_llm_settings.router)
+    application.include_router(admin_billing.router)
     application.include_router(conversations.router)
     application.include_router(handoffs.router)
     application.include_router(actions.router)

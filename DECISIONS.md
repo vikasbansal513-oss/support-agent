@@ -190,3 +190,14 @@ P18 | transfer lag nahi paya (end reason no_answer/busy/failed/transfer_failed) 
 P18 | call ke baad summary sirf WhatsApp par jab customer ne pichle 24h me WhatsApp kiya ho; warna skipped (voice_calls.summary_status). Email me bhejne ka thread context nahi hota | VERIFY: bina window ke bhejne ke liye Gupshup approved template (HSM) aur WhatsApp consent ka kanooni jawab
 P18 | owner feedback (sahi/galat) har call par aur 7-din stats (calls, agent ne khud sambhale %, callback, latency, slow, feedback) /voice/stats | agent ki quality napne ke liye
 P18 | voice eval suite (app/evals/voice_safety.py: gate 36 + speech cases) eval CLI aur release check me; asli LLM/awaaz ki accuracy ab bhi pilot se hi pata chalegi | VERIFY: pilot data
+P19 | billing alag tables (0016) me, sab super-admin-only RLS; purane llm_model_prices ko nahi chheda (runtime role ke liye read-only, test usi par tika hai); LLM rate admin billing_llm_rates me daalta hai | purana contract na toote
+P19 | LLM kharcha = llm_calls ke tokens x rate (USD/million) x USD->INR; rate na ho to logged est_cost_micro, wo bhi na ho to "missing" aur finalize band | galat bill se behtar rukna
+P19 | USD->INR rate admin har mahine khud likhta hai (billing_periods); bina rate ke draft nahi banta aur invoice me wahi rate chhapta hai | VERIFY: rate kis source se lena hai (RBI/bank) CA se
+P19 | Cloud Run = jobs.duration_ms (status done, finished_at IST mahine me) x (vCPU x rate + GiB x rate) estimate; admin Google ka asli bill ₹ daale to brand ke job-time hisse se baant diya (largest remainder, jod barabar) | Cloud Run brand-wise bill nahi deta
+P19 | job retry ka alag time nahi ginta, sirf done job ka duration | VERIFY: asli bill se estimate ka farak dekhna
+P19 | platform fee admin invoice par ₹ box me likhta hai (draft me hi); brand ka default fee profile me | admin ki maang
+P19 | GST: seller GSTIN ho to tax_invoice warna proforma; same state -> CGST+SGST (barabar), alag/unknown -> IGST; rate settings me (default 18%) | VERIFY: GST laagu hona, SAC code aur rate CA se; abhi SAC khali chhoda
+P19 | invoice number PREFIX/FY/NNNN (FY April-March), invoice_counters se finalize ke transaction me, bina gap; final invoice aur lines DB trigger se lock | tax invoice me gap/badlav nahi
+P19 | finalize me expected_total_paise match zaroori (409 E-CONF-001), blockers par 422 E-VAL-001; chalte mahine ka invoice final nahi hota; seller/buyer ka snapshot invoice me jam jaata hai | admin ne jo dekha wahi final ho
+P19 | error catalogue (spec) nahi badla; blockers/warnings code ke roop me jaate hain, UI i18n se text banata hai; audit me GSTIN/bank detail nahi, sirf badle field ke naam | spec/ source of truth, privacy
+P19 | PDF = browser Print / Save as PDF (A4 print CSS), nayi backend library nahi | admin ki pasand; VERIFY: brand ko dikhane wala invoice view abhi nahi banaya
