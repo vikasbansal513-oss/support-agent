@@ -18,6 +18,7 @@ defusedxml==0.7.1
 distro==1.9.0
 dnspython==2.9.0
 email-validator==2.3.0
+execnet==2.1.2
 fastapi==0.162.0
 filelock==4.2.4
 greenlet==3.5.6
@@ -68,6 +69,7 @@ PyJWT==2.15.1
 PyOTP==2.10.0
 pyparsing==3.3.3
 pytest-asyncio==1.4.0
+pytest-xdist==3.8.0
 pytest==9.1.1
 python-dotenv==1.2.4
 PyYAML==6.0.3

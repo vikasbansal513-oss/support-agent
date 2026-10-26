@@ -1,5 +1,7 @@
 import asyncio
+import fcntl
 import os
+import tempfile
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
@@ -67,16 +69,19 @@ async def _ensure_roles() -> None:
 
 def provision_db(migrate: bool = True) -> TestDb:
     name = f"sa_test_{uuid.uuid4().hex[:10]}"
-    asyncio.run(_ensure_roles())
-    asyncio.run(_admin_exec([f"CREATE DATABASE {name} OWNER {OWNER_ROLE}"]))
-    db = TestDb(
-        name=name,
-        admin_url=_url_for("postgres", "postgres", name),
-        owner_url=_url_for(OWNER_ROLE, ROLE_PASSWORD, name),
-        app_url=_url_for(APP_ROLE, ROLE_PASSWORD, name),
-    )
-    if migrate:
-        migrate_up(db)
+    lock_path = os.path.join(tempfile.gettempdir(), "sa_test_provision.lock")
+    with open(lock_path, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        asyncio.run(_ensure_roles())
+        asyncio.run(_admin_exec([f"CREATE DATABASE {name} OWNER {OWNER_ROLE}"]))
+        db = TestDb(
+            name=name,
+            admin_url=_url_for("postgres", "postgres", name),
+            owner_url=_url_for(OWNER_ROLE, ROLE_PASSWORD, name),
+            app_url=_url_for(APP_ROLE, ROLE_PASSWORD, name),
+        )
+        if migrate:
+            migrate_up(db)
     return db
 
 
@@ -105,6 +110,18 @@ def drop_db(db: TestDb) -> None:
             ]
         )
     )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def fast_password_hasher() -> Iterator[None]:
+    from argon2 import PasswordHasher
+
+    from app.auth import passwords
+
+    original = passwords._hasher
+    passwords._hasher = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
+    yield
+    passwords._hasher = original
 
 
 @pytest.fixture(scope="session")
