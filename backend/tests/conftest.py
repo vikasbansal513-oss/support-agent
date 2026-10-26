@@ -32,10 +32,13 @@ def _fast_external_retries() -> Iterator[None]:
     Tests that trigger retry/timeout paths otherwise burn real wall-clock seconds
     per attempt. Only the sleep default is replaced; max_attempts/timeout/status
     handling stay exactly as written, so retry *behavior* is still tested."""
-    defaults = dict(ExternalHttp.__init__.__kwdefaults__)
+    kwdefaults = ExternalHttp.__init__.__kwdefaults__
+    assert kwdefaults is not None
+    defaults = dict(kwdefaults)
     ExternalHttp.__init__.__kwdefaults__ = {**defaults, "sleep": _instant_sleep}
     yield
     ExternalHttp.__init__.__kwdefaults__ = defaults
+
 
 ADMIN_URL = os.environ.get(
     "TEST_ADMIN_DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/postgres"
