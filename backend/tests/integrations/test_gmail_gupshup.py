@@ -295,6 +295,36 @@ async def test_integration_health_handler_marks_auth_error(
     assert (row.status, row.last_error_code) == ("auth_error", "E-INT-001") and paused is False
 
 
+async def test_gmail_auth_error_notifies_owner_once(
+    runtime_factory: Factory, google_env: None
+) -> None:
+    tid, slug = await active_tenant_slug(runtime_factory)
+    await connect_gmail(runtime_factory, slug, "support@brand.com", "refresh-token-abcdef")
+    transport = httpx.MockTransport(lambda r: httpx.Response(401))
+    ctx = JobContext(runtime_factory, job_for(tid, "integration_health"), transport=transport)
+    await integration_health(ctx)
+    await integration_health(ctx)
+    async with session_scope(runtime_factory, tenant_id=tid) as session:
+        titles = (
+            (
+                await session.execute(
+                    text("SELECT title FROM notifications WHERE link = '/settings/integrations'")
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert titles == ["Gmail reconnect karna zaroori hai"]
+
+
+async def test_gmail_invalid_client_is_config_error_not_reconnect(google_env: None) -> None:
+    client = HttpGmailClient(
+        http(lambda r: httpx.Response(401, json={"error": "invalid_client"})), "r"
+    )
+    with pytest.raises(GmailUpstreamError):
+        await client.list_message_ids("q", 1)
+
+
 async def test_http_gupshup_sender_and_fake() -> None:
     seen: dict[str, str] = {}
 

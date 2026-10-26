@@ -1,6 +1,7 @@
 import json
 import secrets
 import uuid
+from datetime import timedelta
 from typing import Any
 
 import httpx
@@ -305,6 +306,31 @@ async def probe_integration(
     return ProbeResultOut(ok=False, detail="connection failed", error_code="E-INT-001")
 
 
+GMAIL_RECONNECT_TITLE = "Gmail reconnect karna zaroori hai"
+GMAIL_RECONNECT_BODY = (
+    "Gmail ka access khatam ho gaya hai, isliye naye emails nahi aayenge. "
+    "Integrations me jaakar Gmail dobara connect karein."
+)
+
+
+async def _notify_gmail_reconnect(session: AsyncSession) -> None:
+    since = timeutil.utc_now() - timedelta(hours=24)
+    exists = (
+        await session.execute(
+            text("SELECT 1 FROM notifications WHERE title = :t AND created_at >= :s LIMIT 1"),
+            {"t": GMAIL_RECONNECT_TITLE, "s": since},
+        )
+    ).first()
+    if exists is not None:
+        return
+    await session.execute(
+        text(
+            "INSERT INTO notifications (audience, title, body, link) VALUES ('admin', :t, :b, :l)"
+        ),
+        {"t": GMAIL_RECONNECT_TITLE, "b": GMAIL_RECONNECT_BODY, "l": "/settings/integrations"},
+    )
+
+
 async def record_health(
     factory: Factory, tenant_id: uuid.UUID, kind: IntegrationKind, ok: bool, auth_error: bool
 ) -> None:
@@ -318,6 +344,8 @@ async def record_health(
             ),
             {"s": status, "e": None if ok else "E-INT-001", "n": now, "k": kind},
         )
+        if auth_error and kind == "gmail":
+            await _notify_gmail_reconnect(session)
         if auth_error and kind in ("shopify", "gupshup"):
             await session.execute(
                 text("UPDATE tenants SET agent_paused = true WHERE id = :t"), {"t": tenant_id}

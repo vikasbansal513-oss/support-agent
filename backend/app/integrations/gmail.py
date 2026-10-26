@@ -2,11 +2,23 @@ import base64
 from email.message import EmailMessage
 from typing import Any, Protocol
 
+import httpx
+
 from app.core.config import get_settings
 from app.integrations.http import ExternalHttp, UpstreamError
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105
 API = "https://gmail.googleapis.com/gmail/v1/users/me"
+CONFIG_ERRORS = frozenset({"invalid_client", "unauthorized_client"})
+
+
+def _oauth_error(response: httpx.Response) -> str | None:
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    error = body.get("error") if isinstance(body, dict) else None
+    return error if isinstance(error, str) else None
 
 
 class GmailAuthError(Exception):
@@ -62,6 +74,8 @@ class HttpGmailClient:
             )
         except UpstreamError as exc:
             raise GmailUpstreamError(exc.kind) from exc
+        if _oauth_error(response) in CONFIG_ERRORS:
+            raise GmailUpstreamError("client_config")
         if response.status_code in (400, 401):
             raise GmailAuthError("refresh rejected")
         if response.status_code != 200:
