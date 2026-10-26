@@ -18,7 +18,24 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import get_settings
 from app.core.crypto import Crypto
 from app.core.db import make_engine
+from app.integrations.http import ExternalHttp
 from tests.auth.helpers import Clock, MemoryMailer
+
+
+async def _instant_sleep(_: float) -> None:
+    return None
+
+
+@pytest.fixture(autouse=True)
+def _fast_external_retries() -> Iterator[None]:
+    """ExternalHttp retries real asyncio.sleep() by default (production needs that).
+    Tests that trigger retry/timeout paths otherwise burn real wall-clock seconds
+    per attempt. Only the sleep default is replaced; max_attempts/timeout/status
+    handling stay exactly as written, so retry *behavior* is still tested."""
+    defaults = dict(ExternalHttp.__init__.__kwdefaults__)
+    ExternalHttp.__init__.__kwdefaults__ = {**defaults, "sleep": _instant_sleep}
+    yield
+    ExternalHttp.__init__.__kwdefaults__ = defaults
 
 ADMIN_URL = os.environ.get(
     "TEST_ADMIN_DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/postgres"
