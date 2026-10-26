@@ -144,6 +144,10 @@ export interface Integration {
   webhook_url: string | null;
 }
 
+export interface GmailConnect {
+  url: string;
+}
+
 export interface ProbeResult {
   ok: boolean;
   detail: string | null;

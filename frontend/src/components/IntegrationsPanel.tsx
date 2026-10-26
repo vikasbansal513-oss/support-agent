@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../api/client";
-import type { Integration, IntegrationKind, ProbeResult } from "../api/types";
+import type { GmailConnect, Integration, IntegrationKind, ProbeResult } from "../api/types";
 import { t } from "../i18n";
 import { Chip, Field, useSubmit } from "./common";
 import { useToast } from "./Toast";
@@ -46,6 +46,19 @@ function IntegrationCard({ kind, item, onChange }: { kind: IntegrationKind; item
     onChange();
   }, toast.error);
 
+  const connectGmail = useSubmit(async () => {
+    const out = await api.post<GmailConnect>("/integrations/gmail/connect");
+    window.location.assign(out.url);
+  }, toast.error);
+
+  const disconnectGmail = useSubmit(async () => {
+    if (!window.confirm(t.gmailDisconnectConfirm)) return;
+    await api.delete<Integration>("/integrations/gmail");
+    setProbe(null);
+    toast.info(t.gmailDisconnectedToast);
+    onChange();
+  }, toast.error);
+
   const editable = kind !== "gmail";
   const configured = item?.configured ?? false;
   return (
@@ -54,7 +67,13 @@ function IntegrationCard({ kind, item, onChange }: { kind: IntegrationKind; item
         <h2>{LABEL[kind]}</h2>
         <Chip tone={item?.status === "ok" ? "ok" : item?.status === "auth_error" ? "urgent" : undefined}>{item?.status ?? "not_configured"}</Chip>
       </div>
-      {configured && item?.secret_hint && (
+      {kind === "gmail" && configured && item?.config.address && (
+        <p>
+          {t.gmailConnectedAs}: {item.config.address}
+        </p>
+      )}
+      {kind === "gmail" && item?.status === "auth_error" && <p className="banner">{t.gmailAuthError}</p>}
+      {kind !== "gmail" && configured && item?.secret_hint && (
         <p>
           {t.secretSet}: {item.secret_hint}
         </p>
@@ -117,6 +136,16 @@ function IntegrationCard({ kind, item, onChange }: { kind: IntegrationKind; item
           {editable && (
             <button type="button" className="secondary" onClick={() => setEditing(true)}>
               {configured ? t.save : LABEL[kind]}
+            </button>
+          )}
+          {kind === "gmail" && (
+            <button type="button" disabled={connectGmail.busy} onClick={() => void connectGmail.run()}>
+              {configured ? t.gmailReconnect : t.gmailConnect}
+            </button>
+          )}
+          {kind === "gmail" && configured && (
+            <button type="button" className="secondary" disabled={disconnectGmail.busy} onClick={() => void disconnectGmail.run()}>
+              {t.gmailDisconnect}
             </button>
           )}
           {configured && (
