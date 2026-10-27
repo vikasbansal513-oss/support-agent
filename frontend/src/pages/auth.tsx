@@ -16,7 +16,7 @@ function LoginForm({ realm }: { realm: Realm }) {
   const [code, setCode] = useState("");
   const [mfaToken, setMfaToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const home = realm === "admin" ? "/admin/tenants" : "/";
+  const home = realm === "admin" ? "/admin" : "/";
 
   if (user) return <Navigate to={home} replace />;
 

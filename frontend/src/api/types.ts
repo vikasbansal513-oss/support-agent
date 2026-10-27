@@ -263,6 +263,89 @@ export interface LlmUsageRow {
   p95_latency_ms: number | null;
 }
 
+export interface CallsByDay {
+  day: string;
+  calls: number;
+}
+
+export interface Overview {
+  tenants_total: number;
+  tenants_active: number;
+  tenants_pending: number;
+  tenants_paused: number;
+  handoffs_open: number;
+  jobs_failed: number;
+  today_calls: number;
+  today_cost_micro: number;
+  calls_by_day: CallsByDay[];
+}
+
+export interface Health {
+  status: "ok" | "degraded";
+  db: "ok" | "down";
+  worker_last_seen_at: string | null;
+  worker_seconds_since: number | null;
+  queue_depth: number;
+  jobs_failed_today: number;
+}
+
+export interface TenantStats {
+  tenant_id: string;
+  messages_today: number;
+  monthly_cost_micro: number;
+  last_activity_at: string | null;
+}
+
+export interface Quota {
+  tenant_id: string;
+  monthly_call_limit: number | null;
+  warn_percent: number;
+  calls_this_month: number;
+  usage_percent: number | null;
+  updated_at: string | null;
+}
+
+export interface Alert {
+  id: string;
+  tenant_id: string | null;
+  kind: string;
+  severity: "info" | "warning" | "critical";
+  message: string;
+  status: "open" | "resolved";
+  created_at: string;
+  resolved_at: string | null;
+}
+
+export interface AuditLogRow {
+  id: string;
+  occurred_at: string;
+  tenant_id: string | null;
+  actor_user_id: string | null;
+  actor_role: string | null;
+  action: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  reason: string | null;
+}
+
+export interface TenantRank {
+  tenant_id: string;
+  name: string;
+  handled: number;
+  handed_off: number;
+  handoff_rate_percent: number;
+}
+
+export interface ControlTower {
+  health: Health;
+  error_rate_percent: number;
+  skipped_count: number;
+  p95_latency_ms: number | null;
+  failed_jobs_today: number;
+  failed_jobs_avg_7d: number;
+  top_tenants: TenantRank[];
+}
+
 export interface PrivacyRequest {
   id: string;
   kind: "export" | "delete" | "correct";

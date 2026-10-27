@@ -1,7 +1,8 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import type { WriteTool, Level, GlobalState, Job, LlmProvider, LlmSettings, LlmTestResult, LlmUsageRow, Mode, Page, Tenant } from "../api/types";
-import { Async, Chip, Empty, Field, ReasonDialog, Screen } from "../components/common";
+import type { WriteTool, Health, Level, GlobalState, Job, LlmProvider, LlmSettings, LlmTestResult, LlmUsageRow, Mode, Overview, Page, Tenant } from "../api/types";
+import { Async, Chip, Empty, Field, ReasonDialog, Screen, StatCard } from "../components/common";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
 import { formatIst } from "../format";
@@ -9,9 +10,72 @@ import { t, type Key } from "../i18n";
 
 type Pending = { tenant: Tenant; kind: "approve" | "pause" | "resume" | "mode" | "limit" | "autonomy"; mode?: Mode; limit?: number | null; tool?: WriteTool; level?: Level };
 
+export function AdminOverview() {
+  const [overview, reload] = useApi(() => api.get<Overview>("/admin/overview"));
+  const [health, reloadHealth] = useApi(() => api.get<Health>("/admin/health"));
+  const maxCalls = (rows: { calls: number }[]) => Math.max(1, ...rows.map((r) => r.calls));
+  return (
+    <Screen title={t.overviewTitle}>
+      <Async value={overview} reload={reload}>
+        {(o) => (
+          <>
+            <div className="grid">
+              <StatCard label={t.totalBrands} value={o.tenants_total} />
+              <StatCard label={t.activeBrands} value={o.tenants_active} tone="ok" />
+              <StatCard label={t.pendingBrands} value={o.tenants_pending} tone={o.tenants_pending > 0 ? "warn" : undefined} />
+              <StatCard label={t.pausedBrands} value={o.tenants_paused} />
+              <StatCard label={t.openHandoffs} value={o.handoffs_open} tone={o.handoffs_open > 0 ? "warn" : undefined} />
+              <StatCard label={t.failedJobs} value={o.jobs_failed} tone={o.jobs_failed > 0 ? "warn" : undefined} />
+              <StatCard label={t.todayCalls} value={o.today_calls} />
+              <StatCard label={t.todayCost} value={`₹${(o.today_cost_micro / 1_000_000).toFixed(2)}`} />
+            </div>
+            <h2>{t.callsLast7Days}</h2>
+            {o.calls_by_day.length === 0 ? (
+              <Empty>{t.noRows}</Empty>
+            ) : (
+              <div className="row" style={{ alignItems: "flex-end", gap: 8 }}>
+                {o.calls_by_day.map((d) => (
+                  <div key={d.day} style={{ textAlign: "center" }}>
+                    <div style={{ height: 100 * (d.calls / maxCalls(o.calls_by_day)), width: 24, background: "currentColor", opacity: 0.6 }} />
+                    <small>{d.day.slice(5)}</small>
+                    <br />
+                    <small>{d.calls}</small>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </Async>
+      <h2>{t.systemHealthTitle}</h2>
+      <Async value={health} reload={reloadHealth}>
+        {(h) => (
+          <div className="row">
+            <Chip tone={h.db === "ok" ? "ok" : "urgent"}>{t.healthDb}: {h.db}</Chip>
+            {h.worker_seconds_since === null ? (
+              <Chip tone="urgent">{t.healthWorker}: {t.healthWorkerNeverSeen}</Chip>
+            ) : (
+              <Chip tone={h.worker_seconds_since > 180 ? "urgent" : "ok"}>
+                {t.healthWorker}: {h.worker_seconds_since} {t.healthWorkerSecondsAgo}
+              </Chip>
+            )}
+            <Chip tone={h.queue_depth > 0 ? "warn" : "ok"}>{t.healthQueueDepth}: {h.queue_depth}</Chip>
+            <Chip tone={h.jobs_failed_today > 0 ? "urgent" : "ok"}>{t.healthFailedToday}: {h.jobs_failed_today}</Chip>
+          </div>
+        )}
+      </Async>
+    </Screen>
+  );
+}
+
 export function AdminTenants() {
   const toast = useToast();
-  const [list, reload] = useApi(() => api.get<Page<Tenant>>("/admin/tenants"));
+  const [q, setQ] = useState("");
+  const [applied, setApplied] = useState("");
+  const [list, reload] = useApi(
+    () => api.get<Page<Tenant>>(`/admin/tenants${applied ? `?q=${encodeURIComponent(applied)}` : ""}`),
+    [applied],
+  );
   const [pending, setPending] = useState<Pending | null>(null);
   const [limitText, setLimitText] = useState<Record<string, string>>({});
   const [auto, setAuto] = useState<{ tool: WriteTool; level: Level }>({ tool: "address_update", level: "auto" });
@@ -34,6 +98,10 @@ export function AdminTenants() {
 
   return (
     <Screen title={t.tenantsTitle}>
+      <form className="row" onSubmit={(event) => { event.preventDefault(); setApplied(q.trim()); }}>
+        <input aria-label={t.searchBrands} placeholder={t.searchBrands} value={q} onChange={(event) => setQ(event.target.value)} />
+        <button type="submit" className="secondary">{t.searchBrands}</button>
+      </form>
       <Async value={list} reload={reload}>
         {(page) =>
           page.items.length === 0 ? (
@@ -54,7 +122,7 @@ export function AdminTenants() {
                   {page.items.map((tenant) => (
                     <tr key={tenant.id}>
                       <td>
-                        {tenant.name}
+                        <Link to={`/admin/tenants/${tenant.id}`}>{tenant.name}</Link>
                         <br />
                         <small>{tenant.slug}</small>
                       </td>

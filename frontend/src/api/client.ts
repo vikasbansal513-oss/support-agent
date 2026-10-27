@@ -121,6 +121,22 @@ export const api = {
   delete: <T>(path: string) => request<T>("DELETE", path),
 };
 
+export async function downloadFile(path: string, filename: string): Promise<void> {
+  const response = await fetch(baseUrl() + path, {
+    method: "GET",
+    credentials: "include",
+    headers: headersFor("GET", false, true),
+  });
+  if (!response.ok) throw await parseError(response);
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 export async function publicPost<T>(path: string, body: unknown): Promise<T> {
   const response = await fetch(baseUrl() + path, {
     method: "POST",

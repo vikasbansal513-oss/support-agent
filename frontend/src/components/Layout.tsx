@@ -8,8 +8,12 @@ export function Layout() {
   const links: [string, string][] =
     realm === "admin"
       ? [
+          ["/admin", t.navOverview],
           ["/admin/tenants", t.navTenants],
           ["/admin/ops", t.navOps],
+          ["/admin/audit-log", t.navAuditLog],
+          ["/admin/alerts", t.navAlerts],
+          ["/admin/control-tower", t.navControlTower],
           ["/admin/billing", t.navBilling],
         ]
       : [
@@ -37,7 +41,7 @@ export function Layout() {
         <strong>{t.appName}</strong>
         <nav aria-label="main">
           {links.map(([to, label]) => (
-            <NavLink key={to} to={to} end={to === "/"}>
+            <NavLink key={to} to={to} end={to === "/" || to === "/admin"}>
               {label}
             </NavLink>
           ))}

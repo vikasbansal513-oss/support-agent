@@ -5,13 +5,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api import (
     actions,
+    admin_alerts,
+    admin_audit,
     admin_auth,
     admin_autonomy,
     admin_billing,
+    admin_control_tower,
     admin_jobs,
     admin_llm,
     admin_llm_settings,
     admin_ops,
+    admin_overview,
     admin_tenants,
     agent,
     approvals,
@@ -91,6 +95,10 @@ def create_app() -> FastAPI:
     application.include_router(dashboard.router)
     application.include_router(privacy.router)
     application.include_router(admin_ops.router)
+    application.include_router(admin_overview.router)
+    application.include_router(admin_audit.router)
+    application.include_router(admin_alerts.router)
+    application.include_router(admin_control_tower.router)
     application.include_router(whatsapp.router)
     application.include_router(voice_webhook.router)
     application.include_router(system_router)

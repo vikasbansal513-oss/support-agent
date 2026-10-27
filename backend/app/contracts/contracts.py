@@ -494,6 +494,95 @@ class LlmUsageRowOut(BaseModel):
     p95_latency_ms: int | None
 
 
+class CallsByDayOut(BaseModel):
+    day: str
+    calls: int
+
+
+class OverviewOut(BaseModel):
+    tenants_total: int
+    tenants_active: int
+    tenants_pending: int
+    tenants_paused: int
+    handoffs_open: int
+    jobs_failed: int
+    today_calls: int
+    today_cost_micro: int
+    calls_by_day: list[CallsByDayOut]
+
+
+class AdminHealthOut(BaseModel):
+    status: Literal["ok", "degraded"]
+    db: Literal["ok", "down"]
+    worker_last_seen_at: AwareDatetime | None
+    worker_seconds_since: int | None
+    queue_depth: int
+    jobs_failed_today: int
+
+
+class TenantStatsOut(BaseModel):
+    tenant_id: uuid.UUID
+    messages_today: int
+    monthly_cost_micro: int
+    last_activity_at: AwareDatetime | None
+
+
+class QuotaOut(BaseModel):
+    tenant_id: uuid.UUID
+    monthly_call_limit: int | None
+    warn_percent: int
+    calls_this_month: int
+    usage_percent: float | None
+    updated_at: AwareDatetime | None
+
+
+class QuotaIn(Strict):
+    monthly_call_limit: int | None = Field(default=None, ge=0, le=10_000_000)
+    warn_percent: int = Field(default=80, ge=1, le=100)
+    reason: str = Field(min_length=5, max_length=300)
+
+
+class AlertOut(BaseModel):
+    id: uuid.UUID
+    tenant_id: uuid.UUID | None
+    kind: str
+    severity: Literal["info", "warning", "critical"]
+    message: str
+    status: Literal["open", "resolved"]
+    created_at: AwareDatetime
+    resolved_at: AwareDatetime | None
+
+
+class AuditLogRowOut(BaseModel):
+    id: uuid.UUID
+    occurred_at: AwareDatetime
+    tenant_id: uuid.UUID | None
+    actor_user_id: uuid.UUID | None
+    actor_role: str | None
+    action: str
+    entity_type: str | None
+    entity_id: str | None
+    reason: str | None
+
+
+class TenantRankOut(BaseModel):
+    tenant_id: uuid.UUID
+    name: str
+    handled: int
+    handed_off: int
+    handoff_rate_percent: float
+
+
+class ControlTowerOut(BaseModel):
+    health: AdminHealthOut
+    error_rate_percent: float
+    skipped_count: int
+    p95_latency_ms: int | None
+    failed_jobs_today: int
+    failed_jobs_avg_7d: float
+    top_tenants: list[TenantRankOut]
+
+
 # ------------------------------------------------------------------ API: integrations / settings
 class ShopifyIn(Strict):
     shop_domain: str = Field(pattern=r"^[a-z0-9][a-z0-9-]*\.myshopify\.com$", max_length=100)

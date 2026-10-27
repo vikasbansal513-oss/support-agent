@@ -12,9 +12,12 @@ from app.auth.service import Principal
 from app.contracts.contracts import (
     ModeIn,
     Page,
+    QuotaIn,
+    QuotaOut,
     ReasonIn,
     TenantOut,
     TenantPatchIn,
+    TenantStatsOut,
     TenantStatus,
     UsageLimitIn,
 )
@@ -39,6 +42,7 @@ _LIST = text(
     "SELECT id, name, slug, status, agent_paused, mode, plan, included_conversations, "
     "usage_override_limit, created_at, approved_at FROM tenants "
     "WHERE (CAST(:status AS text) IS NULL OR status = :status) "
+    "AND (CAST(:q AS text) IS NULL OR name ILIKE '%' || :q || '%' OR slug ILIKE '%' || :q || '%') "
     "AND (CAST(:c_at AS timestamptz) IS NULL OR (created_at, id) < (:c_at, CAST(:c_id AS uuid))) "
     "ORDER BY created_at DESC, id DESC LIMIT :limit"
 )
@@ -83,12 +87,19 @@ async def _get(session: AsyncSession, tenant_id: uuid.UUID, lock: bool = False) 
 @router.get("")
 async def list_tenants(
     status: TenantStatus | None = None,
+    q: str | None = Query(default=None, max_length=120),
     limit: int = Query(default=50, ge=1, le=200),
     cursor: str | None = None,
     admin: Principal = Depends(require_admin),  # noqa: B008
     factory: Factory = Depends(get_session_factory),  # noqa: B008
 ) -> Page:
-    params: dict[str, Any] = {"limit": limit + 1, "status": status, "c_at": None, "c_id": None}
+    params: dict[str, Any] = {
+        "limit": limit + 1,
+        "status": status,
+        "q": q.strip() if q and q.strip() else None,
+        "c_at": None,
+        "c_id": None,
+    }
     if cursor:
         c_at, c_id = _decode_cursor(cursor)
         params["c_at"], params["c_id"] = c_at, str(c_id)
@@ -244,6 +255,145 @@ async def resume(
         action="admin.tenant_resumed",
         reason=body.reason,
     )
+
+
+@router.get("/{tenant_id}/stats")
+async def tenant_stats(
+    tenant_id: uuid.UUID,
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> TenantStatsOut:
+    async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
+        await _get(session, tenant_id)
+        today = (
+            await session.execute(
+                text(
+                    "SELECT count(*) FROM messages WHERE tenant_id = :t"
+                    " AND (created_at AT TIME ZONE 'Asia/Kolkata')::date"
+                    " = (now() AT TIME ZONE 'Asia/Kolkata')::date"
+                ),
+                {"t": tenant_id},
+            )
+        ).scalar_one()
+        cost = (
+            await session.execute(
+                text(
+                    "SELECT COALESCE(sum(est_cost_micro), 0) FROM llm_calls WHERE tenant_id = :t"
+                    " AND (created_at AT TIME ZONE 'Asia/Kolkata')"
+                    " >= date_trunc('month', now() AT TIME ZONE 'Asia/Kolkata')"
+                ),
+                {"t": tenant_id},
+            )
+        ).scalar_one()
+        last_activity = (
+            await session.execute(
+                text("SELECT max(last_message_at) FROM conversations WHERE tenant_id = :t"),
+                {"t": tenant_id},
+            )
+        ).scalar_one_or_none()
+    return TenantStatsOut(
+        tenant_id=tenant_id,
+        messages_today=int(today),
+        monthly_cost_micro=int(cost),
+        last_activity_at=last_activity,
+    )
+
+
+async def _quota_out(session: AsyncSession, tenant_id: uuid.UUID) -> QuotaOut:
+    row = (
+        await session.execute(
+            text(
+                "SELECT monthly_call_limit, warn_percent, updated_at FROM brand_quotas"
+                " WHERE tenant_id = :t"
+            ),
+            {"t": tenant_id},
+        )
+    ).one_or_none()
+    calls = (
+        await session.execute(
+            text(
+                "SELECT count(*) FROM llm_calls WHERE tenant_id = :t"
+                " AND (created_at AT TIME ZONE 'Asia/Kolkata')"
+                " >= date_trunc('month', now() AT TIME ZONE 'Asia/Kolkata')"
+            ),
+            {"t": tenant_id},
+        )
+    ).scalar_one()
+    limit_val = row.monthly_call_limit if row else None
+    usage_pct = (int(calls) * 100.0 / limit_val) if limit_val else None
+    return QuotaOut(
+        tenant_id=tenant_id,
+        monthly_call_limit=limit_val,
+        warn_percent=row.warn_percent if row else 80,
+        calls_this_month=int(calls),
+        usage_percent=usage_pct,
+        updated_at=row.updated_at if row else None,
+    )
+
+
+@router.get("/{tenant_id}/quota")
+async def get_quota(
+    tenant_id: uuid.UUID,
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> QuotaOut:
+    async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
+        await _get(session, tenant_id)
+        return await _quota_out(session, tenant_id)
+
+
+@router.put("/{tenant_id}/quota")
+async def set_quota(
+    tenant_id: uuid.UUID,
+    body: QuotaIn,
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> QuotaOut:
+    async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
+        await _get(session, tenant_id)
+        before = (
+            await session.execute(
+                text(
+                    "SELECT monthly_call_limit, warn_percent FROM brand_quotas WHERE tenant_id = :t"
+                ),
+                {"t": tenant_id},
+            )
+        ).one_or_none()
+        await session.execute(
+            text(
+                "INSERT INTO brand_quotas (tenant_id, monthly_call_limit, warn_percent, updated_by,"
+                " updated_at) VALUES (:t, :l, :w, :u, now())"
+                " ON CONFLICT (tenant_id) DO UPDATE SET monthly_call_limit = :l, warn_percent = :w,"
+                " updated_by = :u, updated_at = now()"
+            ),
+            {
+                "t": tenant_id,
+                "l": body.monthly_call_limit,
+                "w": body.warn_percent,
+                "u": admin.user_id,
+            },
+        )
+        await record(
+            session,
+            AuditEvent(
+                action="admin.quota_changed",
+                entity_type="tenant",
+                entity_id=str(tenant_id),
+                old_value={
+                    "monthly_call_limit": before.monthly_call_limit if before else None,
+                    "warn_percent": before.warn_percent if before else None,
+                },
+                new_value={
+                    "monthly_call_limit": body.monthly_call_limit,
+                    "warn_percent": body.warn_percent,
+                },
+                reason=body.reason,
+                actor_user_id=admin.user_id,
+                actor_role="super_admin",
+            ),
+            tenant_id=tenant_id,
+        )
+        return await _quota_out(session, tenant_id)
 
 
 @router.put("/{tenant_id}/usage-limit")

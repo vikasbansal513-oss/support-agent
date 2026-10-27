@@ -5,7 +5,11 @@ import { ToastProvider } from "./components/Toast";
 import type { Access } from "./routes";
 import { t } from "./i18n";
 import { AdminLogin, ForgotPassword, Login, Pending, ResetPassword, Signup, VerifyEmail } from "./pages/auth";
-import { AdminOps, AdminTenants } from "./pages/Admin";
+import { AdminOps, AdminOverview, AdminTenants } from "./pages/Admin";
+import { AdminAlerts } from "./pages/AdminAlerts";
+import { AdminAuditLog } from "./pages/AdminAuditLog";
+import { AdminControlTower } from "./pages/AdminControlTower";
+import { AdminTenantDetail } from "./pages/AdminTenantDetail";
 import { AdminBilling, AdminBillingSettings, AdminInvoice } from "./pages/Billing";
 import { Approvals } from "./pages/Approvals";
 import { AutonomySettings } from "./pages/Autonomy";
@@ -26,7 +30,7 @@ export function Guard({ access, children }: { access: Access; children: ReactEle
   if (access === "public") return children;
   if (!user) return <Navigate to={access === "admin" ? "/admin/login" : "/login"} replace />;
   if (access === "admin") return realm === "admin" ? children : <Navigate to="/admin/login" replace />;
-  if (realm === "admin") return <Navigate to="/admin/tenants" replace />;
+  if (realm === "admin") return <Navigate to="/admin" replace />;
   if (access === "owner" && user.role !== "owner") return <p className="empty">{t.roleHidden}</p>;
   return children;
 }
@@ -62,8 +66,13 @@ export function AppRoutes() {
         <Route path="/settings/notifications" element={guarded("owner", <NotificationsSettings />)} />
         <Route path="/privacy" element={guarded("owner", <PrivacyRequests />)} />
         <Route path="/settings/security" element={guarded("user", <Security />)} />
+        <Route path="/admin" element={guarded("admin", <AdminOverview />)} />
         <Route path="/admin/tenants" element={guarded("admin", <AdminTenants />)} />
+        <Route path="/admin/tenants/:id" element={guarded("admin", <AdminTenantDetail />)} />
         <Route path="/admin/ops" element={guarded("admin", <AdminOps />)} />
+        <Route path="/admin/audit-log" element={guarded("admin", <AdminAuditLog />)} />
+        <Route path="/admin/alerts" element={guarded("admin", <AdminAlerts />)} />
+        <Route path="/admin/control-tower" element={guarded("admin", <AdminControlTower />)} />
         <Route path="/admin/billing" element={guarded("admin", <AdminBilling />)} />
         <Route path="/admin/billing/settings" element={guarded("admin", <AdminBillingSettings />)} />
         <Route path="/admin/billing/invoices/:id" element={guarded("admin", <AdminInvoice />)} />
