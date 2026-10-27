@@ -134,6 +134,8 @@ def test_migration_up_down_up_and_runtime_grants() -> None:
                 "tenant_billing_profiles",
                 "invoices",
                 "invoice_lines",
+                "brand_quotas",
+                "alerts",
             ]
         )
         assert can_mutate is False
@@ -153,4 +155,4 @@ def test_alembic_version_table_kept_out_of_public(test_db: TestDb) -> None:
         await engine.dispose()
         return list(rows)
 
-    assert asyncio.run(versions()) == ["0016"]
+    assert asyncio.run(versions()) == ["0018"]
