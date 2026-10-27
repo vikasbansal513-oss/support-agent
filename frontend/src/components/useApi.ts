@@ -12,7 +12,7 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: readonly unknown[] = 
 
   useEffect(() => {
     let alive = true;
-    setValue({ state: "loading" });
+    setValue((prev) => (prev.state === "data" ? prev : { state: "loading" }));
     fetcher().then(
       (data) => alive && setValue({ state: "data", data }),
       (error: unknown) => alive && setValue({ state: "error", error: error instanceof Error ? error : new Error("unknown") }),
