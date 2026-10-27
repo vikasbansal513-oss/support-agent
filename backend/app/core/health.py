@@ -45,7 +45,7 @@ async def compute_health(factory: Factory) -> AdminHealthOut:
     degraded = db_status == "down" or (seconds_since is not None and seconds_since > 180)
     return AdminHealthOut(
         status="degraded" if degraded else "ok",
-        db=db_status,  # type: ignore[arg-type]
+        db=db_status,
         worker_last_seen_at=worker_last_seen,
         worker_seconds_since=seconds_since,
         queue_depth=int(queue_depth),
