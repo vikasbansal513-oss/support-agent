@@ -102,7 +102,12 @@ async def whatsapp_webhook(
                 factory,
                 tenant.tenant_id,
                 f"skip:{_digest(raw_bytes)}",
-                {"type": str(body.get("type")), "app": app_name, "expected_app": tenant.app_name, "raw": body},
+                {
+                    "type": str(body.get("type")),
+                    "app": app_name,
+                    "expected_app": tenant.app_name,
+                    "raw": body,
+                },
                 "skipped",
                 "APP_MISMATCH",
                 False,
