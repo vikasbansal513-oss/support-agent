@@ -189,9 +189,7 @@ def main() -> None:
     )
     args = parser.parse_args()
     runner.install()
-    stats = asyncio.run(
-        run_worker(get_session_factory(), args.max_seconds, exit_when_idle=True)
-    )
+    stats = asyncio.run(run_worker(get_session_factory(), args.max_seconds, exit_when_idle=True))
     logger.info("worker finished", extra={"stats": stats})
 
 
