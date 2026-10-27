@@ -22,10 +22,14 @@ from app.voice.contracts import (
 from app.voice.providers import provider_names
 
 
-async def get_settings_out(session: AsyncSession) -> VoiceSettingsOut:
+async def get_settings_out(session: AsyncSession, tenant_id: uuid.UUID) -> VoiceSettingsOut:
     row = (
         await session.execute(
-            text("SELECT called_number, transfer_number, enabled, provider FROM voice_numbers")
+            text(
+                "SELECT called_number, transfer_number, enabled, provider, telephony_mode"
+                " FROM voice_numbers WHERE tenant_id = :t"
+            ),
+            {"t": tenant_id},
         )
     ).first()
     if row is None:
@@ -36,16 +40,14 @@ async def get_settings_out(session: AsyncSession) -> VoiceSettingsOut:
         transfer_number=row.transfer_number,
         enabled=bool(row.enabled),
         provider=row.provider,
+        telephony_mode=row.telephony_mode,
         providers=provider_names(),
     )
 
 
 async def put_settings(
-    session: AsyncSession, principal: Principal, body: VoiceSettingsIn
+    session: AsyncSession, tenant_id: uuid.UUID, principal: Principal, body: VoiceSettingsIn
 ) -> VoiceSettingsOut:
-    tenant_id = principal.tenant_id
-    if tenant_id is None:
-        raise AppError("E-AUTH-007")
     owner = (
         await session.execute(
             text("SELECT tenant_id FROM voice_numbers WHERE called_number = :n"),
@@ -67,15 +69,17 @@ async def put_settings(
         )
         await session.execute(
             text(
-                "INSERT INTO voice_numbers (called_number, webhook_token_hash, enabled, transfer_number,"
-                " provider) VALUES (:n, :h, :e, :t, :p)"
+                "INSERT INTO voice_numbers (called_number, webhook_token_hash, tenant_id, enabled,"
+                " transfer_number, provider, telephony_mode) VALUES (:n, :h, :tid, :e, :t, :p, :m)"
             ),
             {
                 "n": body.called_number,
                 "h": hash_token(token),
+                "tid": tenant_id,
                 "e": body.enabled,
                 "t": body.transfer_number,
                 "p": body.provider,
+                "m": body.telephony_mode,
             },
         )
         webhook_url = f"{get_settings().public_base_url.rstrip('/')}/webhooks/voice/{token}"
@@ -83,10 +87,16 @@ async def put_settings(
         await session.execute(
             text(
                 "UPDATE voice_numbers SET enabled = :e, transfer_number = :t, provider = :p,"
-                " updated_at = now()"
+                " telephony_mode = :m, updated_at = now()"
                 " WHERE tenant_id = :i"
             ),
-            {"e": body.enabled, "t": body.transfer_number, "p": body.provider, "i": tenant_id},
+            {
+                "e": body.enabled,
+                "t": body.transfer_number,
+                "p": body.provider,
+                "m": body.telephony_mode,
+                "i": tenant_id,
+            },
         )
     await record(
         session,
@@ -98,7 +108,7 @@ async def put_settings(
             actor_role=principal.role,
         ),
     )
-    out = await get_settings_out(session)
+    out = await get_settings_out(session, tenant_id)
     return out.model_copy(update={"webhook_url": webhook_url})
 
 

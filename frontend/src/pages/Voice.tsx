@@ -1,84 +1,33 @@
 import { useState } from "react";
 import { api } from "../api/client";
 import type { VoiceCall, VoiceCallDetail, VoiceSettings as Settings, VoiceStats } from "../api/types";
-import { Async, Chip, Empty, Field, Screen, StatCard } from "../components/common";
+import { Async, Chip, Empty, Screen, StatCard } from "../components/common";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
 import { formatIst } from "../format";
 import { t, type Key } from "../i18n";
 
-function SettingsForm({ initial, configured, onSaved }: { initial: Settings; configured: boolean; onSaved: (out: Settings) => void }) {
-  const toast = useToast();
-  const [called, setCalled] = useState(initial.called_number ?? "");
-  const [transfer, setTransfer] = useState(initial.transfer_number ?? "");
-  const [enabled, setEnabled] = useState(initial.enabled || !initial.configured);
-  const [provider, setProvider] = useState(initial.provider);
-  const [rotate, setRotate] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [webhook, setWebhook] = useState<string | null>(null);
-
-  const save = async () => {
-    setBusy(true);
-    try {
-      const out = await api.put<Settings>("/voice/settings", {
-        called_number: called,
-        transfer_number: transfer.trim() === "" ? null : transfer,
-        enabled,
-        rotate_webhook: rotate,
-        provider,
-      });
-      setWebhook(out.webhook_url);
-      setRotate(false);
-      toast.info(t.voiceSaved);
-      onSaved(out);
-    } catch (err) {
-      toast.error(err);
-    } finally {
-      setBusy(false);
-    }
-  };
-
+function SettingsStatus({ settings }: { settings: Settings }) {
   return (
-    <form
-      onSubmit={(event) => {
-        event.preventDefault();
-        void save();
-      }}
-    >
+    <section className="card">
       <p>{t.voiceIntro}</p>
-      <Field label={t.voiceCalledNumber} value={called} onChange={setCalled} required />
-      <Field label={t.voiceTransferNumber} value={transfer} onChange={setTransfer} />
-      <label className="field">
-        <span>{t.voiceProvider}</span>
-        <select aria-label={t.voiceProvider} value={provider} onChange={(event) => setProvider(event.target.value)}>
-          {(initial.providers.length ? initial.providers : [provider]).map((name) => (
-            <option key={name} value={name}>
-              {name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="field">
-        <span>{t.voiceEnabled}</span>
-        <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
-      </label>
-      {configured && (
-        <label className="field">
-          <span>{t.voiceRotate}</span>
-          <input type="checkbox" checked={rotate} onChange={(event) => setRotate(event.target.checked)} />
-        </label>
-      )}
-      {webhook && (
-        <p role="status">
-          {t.voiceWebhookOnce} <code>{webhook}</code>
+      <p>
+        <Chip tone={settings.configured ? "ok" : "warn"}>
+          {settings.configured ? t.voiceStatusConfigured : t.voiceStatusNotConfigured}
+        </Chip>{" "}
+        {settings.configured && (
+          <Chip tone={settings.enabled ? "ok" : "warn"}>
+            {settings.enabled ? t.voiceEnabled : t.voiceStatusDisabled}
+          </Chip>
+        )}
+      </p>
+      {settings.configured && (
+        <p>
+          {t.voiceCalledNumber}: <code>{settings.called_number}</code>
         </p>
       )}
-      <div className="row">
-        <button type="submit" disabled={busy}>
-          {t.voiceSave}
-        </button>
-      </div>
-    </form>
+      <p className="hint">{t.voiceReadOnlyNote}</p>
+    </section>
   );
 }
 
@@ -187,12 +136,11 @@ function Calls() {
 }
 
 function Body({ initial }: { initial: Settings }) {
-  const [configured, setConfigured] = useState(initial.configured);
   return (
     <>
-      <SettingsForm initial={initial} configured={configured} onSaved={(out) => setConfigured(out.configured)} />
-      {configured && <Stats />}
-      {configured && <Calls />}
+      <SettingsStatus settings={initial} />
+      {initial.configured && <Stats />}
+      {initial.configured && <Calls />}
     </>
   );
 }

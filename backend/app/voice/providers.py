@@ -64,9 +64,56 @@ class FakeIvrAdapter:
         }
 
 
+class PlivoAdapter:
+    """Plivo telephony (DIY Voice Calling Agent Stack). Call-routing/webhook mapping only —
+    no LLM or response-generation logic lives here, that stays in app.voice.service / the agent graph.
+
+    Maps Plivo's Answer URL / AVR-style webhook fields (CallUUID, From, To, Event,
+    Speech/Digits, ConfidenceScore, UtteranceId) into the provider-neutral VoiceEventIn,
+    and renders VoiceReplyOut back as a Plivo XML-action-style dict the caller can turn
+    into Plivo XML (<Speak>/<GetDigits>/<GetInput>/<Dial>/<Hangup>).
+    """
+
+    name = "plivo"
+    _EVENTS = {"StartApp": "start", "Speech": "turn", "Input": "turn", "Hangup": "end"}
+
+    def parse(self, body: dict[str, Any]) -> VoiceEventIn:
+        event_raw = body.get("Event") or body.get("event")
+        kind = self._EVENTS.get(str(event_raw))
+        if kind is None:
+            raise ProviderPayloadError("unknown event type")
+        confidence = body.get("ConfidenceScore")
+        return VoiceEventIn.model_validate(
+            {
+                "event": kind,
+                "call_id": body.get("CallUUID"),
+                "from": body.get("From"),
+                "to": body.get("To"),
+                "speech": body.get("Speech") or body.get("SpeechResult") or "",
+                "digits": re.sub(r"[^0-9*#]", "", str(body.get("Digits") or "")),
+                "confidence": float(confidence) if confidence not in (None, "") else None,
+                "turn_id": body.get("UtteranceId"),
+                "reason": body.get("HangupCause") or body.get("EndReason"),
+            }
+        )
+
+    def render(self, reply: VoiceReplyOut) -> dict[str, Any]:
+        return {
+            "Speak": reply.say,
+            "Language": reply.language,
+            "Action": {"continue": "GetInput", "transfer": "Dial", "hangup": "Hangup"}[
+                reply.action
+            ],
+            "DialNumber": reply.transfer_to,
+            "BargeIn": reply.barge_in,
+            "Whisper": reply.briefing,
+        }
+
+
 ADAPTERS: dict[str, VoiceProviderAdapter] = {
     GenericAdapter.name: GenericAdapter(),
     FakeIvrAdapter.name: FakeIvrAdapter(),
+    PlivoAdapter.name: PlivoAdapter(),
 }
 
 

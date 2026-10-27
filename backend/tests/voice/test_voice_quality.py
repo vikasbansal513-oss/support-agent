@@ -5,6 +5,8 @@ from sqlalchemy import text
 from app.core.db import session_scope
 from app.voice import service
 from tests.agent.helpers import AgentEnv
+from tests.auth.helpers import bearer
+from tests.auth.test_admin_flow import _admin_login_with_mfa
 from tests.v1.flow import ADDRESS, plan, setup
 from tests.voice.helpers import CALLER, TRANSFER, Voice, _no_anomaly_stop, configure  # noqa: F401
 
@@ -64,12 +66,23 @@ async def test_other_provider_payload_shape_is_mapped_both_ways(env: AgentEnv) -
 
 async def test_unknown_provider_is_rejected(env: AgentEnv) -> None:
     await setup(env, "auto")
+    _, verified, _ = await _admin_login_with_mfa(env.client, env.factory)
     resp = await env.client.put(
-        "/voice/settings",
+        f"/admin/tenants/{env.wa.tenant_id}/voice-settings",
         json={"called_number": "+911155550000", "provider": "made_up"},
-        headers=env.wa.headers,
+        headers=bearer(verified),
     )
     assert resp.status_code == 422
+
+
+async def test_client_can_no_longer_configure_calling(env: AgentEnv) -> None:
+    await setup(env, "auto")
+    resp = await env.client.put(
+        "/voice/settings",
+        json={"called_number": "+911155550000", "provider": "generic"},
+        headers=env.wa.headers,
+    )
+    assert resp.status_code in (404, 405)
 
 
 async def test_greeting_discloses_ai_and_transcript_and_cannot_be_interrupted(

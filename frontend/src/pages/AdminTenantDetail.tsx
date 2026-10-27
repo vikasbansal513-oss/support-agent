@@ -1,12 +1,133 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
-import type { Quota, Tenant, TenantStats } from "../api/types";
-import { Async, Chip, Screen, StatCard } from "../components/common";
+import type { Quota, Tenant, TenantStats, VoiceSettings } from "../api/types";
+import { Async, Chip, Field, Screen, StatCard } from "../components/common";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
 import { formatIst } from "../format";
 import { t } from "../i18n";
+
+function VoiceSection({ tenantId }: { tenantId: string }) {
+  const [settings, reload] = useApi(
+    () => api.get<VoiceSettings>(`/admin/tenants/${tenantId}/voice-settings`),
+    [tenantId],
+  );
+  return (
+    <Async value={settings} reload={reload}>
+      {(s) => <VoiceForm tenantId={tenantId} initial={s} onSaved={reload} />}
+    </Async>
+  );
+}
+
+function VoiceForm({
+  tenantId,
+  initial,
+  onSaved,
+}: {
+  tenantId: string;
+  initial: VoiceSettings;
+  onSaved: () => void;
+}) {
+  const toast = useToast();
+  const [telephonyMode, setTelephonyMode] = useState(initial.telephony_mode);
+  const [called, setCalled] = useState(initial.called_number ?? "");
+  const [transfer, setTransfer] = useState(initial.transfer_number ?? "");
+  const [enabled, setEnabled] = useState(initial.enabled || !initial.configured);
+  const [provider, setProvider] = useState(initial.provider);
+  const [rotate, setRotate] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [webhook, setWebhook] = useState<string | null>(null);
+
+  const setMode = (mode: "ready_made" | "diy_plivo") => {
+    setTelephonyMode(mode);
+    setProvider(mode === "diy_plivo" ? "plivo" : initial.providers.find((p) => p !== "plivo") ?? "generic");
+  };
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const out = await api.put<VoiceSettings>(`/admin/tenants/${tenantId}/voice-settings`, {
+        called_number: called,
+        transfer_number: transfer.trim() === "" ? null : transfer,
+        enabled,
+        rotate_webhook: rotate,
+        provider,
+        telephony_mode: telephonyMode,
+      });
+      setWebhook(out.webhook_url);
+      setRotate(false);
+      toast.info(t.saved);
+      onSaved();
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="card">
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void save();
+        }}
+      >
+        <label className="field">
+          <span>{t.voiceTelephonyMode}</span>
+          <select
+            aria-label={t.voiceTelephonyMode}
+            value={telephonyMode}
+            onChange={(event) => setMode(event.target.value as "ready_made" | "diy_plivo")}
+          >
+            <option value="ready_made">{t.voiceModeReadyMade}</option>
+            <option value="diy_plivo">{t.voiceModeDiyPlivo}</option>
+          </select>
+        </label>
+        <Field label={t.voiceCalledNumber} value={called} onChange={setCalled} required />
+        <Field label={t.voiceTransferNumber} value={transfer} onChange={setTransfer} />
+        <label className="field">
+          <span>{t.voiceProvider}</span>
+          <select
+            aria-label={t.voiceProvider}
+            value={provider}
+            disabled={telephonyMode === "diy_plivo"}
+            onChange={(event) => setProvider(event.target.value)}
+          >
+            {(initial.providers.length ? initial.providers : [provider])
+              .filter((name) => (telephonyMode === "diy_plivo" ? name === "plivo" : name !== "plivo"))
+              .map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>{t.voiceEnabled}</span>
+          <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+        </label>
+        {initial.configured && (
+          <label className="field">
+            <span>{t.voiceRotate}</span>
+            <input type="checkbox" checked={rotate} onChange={(event) => setRotate(event.target.checked)} />
+          </label>
+        )}
+        {webhook && (
+          <p role="status">
+            {t.voiceWebhookOnce} <code>{webhook}</code>
+          </p>
+        )}
+        <div className="row">
+          <button type="submit" disabled={busy}>
+            {t.voiceSave}
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}
 
 export function AdminTenantDetail() {
   const { id = "" } = useParams();
@@ -98,6 +219,8 @@ export function AdminTenantDetail() {
           </section>
         )}
       </Async>
+      <h2>{t.voiceCallingTitle}</h2>
+      <VoiceSection tenantId={id} />
     </Screen>
   );
 }

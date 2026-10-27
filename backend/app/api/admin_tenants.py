@@ -26,6 +26,8 @@ from app.core.audit import AuditEvent, record
 from app.core.config import get_settings
 from app.core.db import get_session_factory, session_scope
 from app.core.errors import AppError
+from app.voice import admin as voice_admin
+from app.voice.contracts import VoiceSettingsIn, VoiceSettingsOut
 
 router = APIRouter(prefix="/admin/tenants", tags=["admin-tenants"])
 Factory = async_sessionmaker[AsyncSession]
@@ -470,3 +472,32 @@ async def set_mode(
             tenant_id=tenant_id,
         )
         return _out(await _get(session, tenant_id))
+
+
+@router.get("/{tenant_id}/voice-settings")
+async def get_voice_settings(
+    tenant_id: uuid.UUID,
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> VoiceSettingsOut:
+    # voice_numbers RLS write policies check tenant_id = app_current_tenant() (no
+    # super_admin bypass for writes), so tenant_id must be set in the session too.
+    async with session_scope(
+        factory, tenant_id=tenant_id, super_admin=True, user_id=admin.user_id
+    ) as session:
+        await _get(session, tenant_id)
+        return await voice_admin.get_settings_out(session, tenant_id)
+
+
+@router.put("/{tenant_id}/voice-settings")
+async def set_voice_settings(
+    tenant_id: uuid.UUID,
+    body: VoiceSettingsIn,
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> VoiceSettingsOut:
+    async with session_scope(
+        factory, tenant_id=tenant_id, super_admin=True, user_id=admin.user_id
+    ) as session:
+        await _get(session, tenant_id)
+        return await voice_admin.put_settings(session, tenant_id, admin, body)

@@ -1,7 +1,7 @@
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 E164 = re.compile(r"^\+[1-9][0-9]{7,14}$")
 
@@ -46,6 +46,7 @@ class VoiceSettingsIn(BaseModel):
     enabled: bool = True
     rotate_webhook: bool = False
     provider: str = "generic"
+    telephony_mode: Literal["ready_made", "diy_plivo"] = "ready_made"
 
     @field_validator("provider")
     @classmethod
@@ -66,6 +67,14 @@ class VoiceSettingsIn(BaseModel):
             raise ValueError("number must be E.164 (+91...)")
         return cleaned
 
+    @model_validator(mode="after")
+    def _telephony_mode_provider_match(self) -> "VoiceSettingsIn":
+        if self.telephony_mode == "diy_plivo" and self.provider != "plivo":
+            raise ValueError("diy_plivo telephony_mode requires provider='plivo'")
+        if self.telephony_mode == "ready_made" and self.provider == "plivo":
+            raise ValueError("provider='plivo' requires telephony_mode='diy_plivo'")
+        return self
+
 
 class VoiceSettingsOut(BaseModel):
     configured: bool
@@ -74,6 +83,7 @@ class VoiceSettingsOut(BaseModel):
     enabled: bool = False
     webhook_url: str | None = None
     provider: str = "generic"
+    telephony_mode: Literal["ready_made", "diy_plivo"] = "ready_made"
     providers: list[str] = Field(default_factory=list)
 
 

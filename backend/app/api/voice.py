@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.auth.deps import require_owner, require_user
+from app.auth.deps import require_user
 from app.auth.service import Principal
 from app.core.db import get_session_factory, session_scope
 from app.voice import admin
@@ -11,7 +11,6 @@ from app.voice.contracts import (
     VoiceCallDetail,
     VoiceCallOut,
     VoiceFeedbackIn,
-    VoiceSettingsIn,
     VoiceSettingsOut,
     VoiceStatsOut,
 )
@@ -28,19 +27,12 @@ async def get_voice_settings(
     async with session_scope(
         factory, tenant_id=principal.tenant_id, user_id=principal.user_id
     ) as s:
-        return await admin.get_settings_out(s)
+        return await admin.get_settings_out(s, principal.tenant_id)
 
 
-@router.put("/settings")
-async def put_voice_settings(
-    body: VoiceSettingsIn,
-    principal: Principal = Depends(require_owner),  # noqa: B008
-    factory: Factory = Depends(get_session_factory),  # noqa: B008
-) -> VoiceSettingsOut:
-    async with session_scope(
-        factory, tenant_id=principal.tenant_id, user_id=principal.user_id
-    ) as s:
-        return await admin.put_settings(s, principal, body)
+# Calling number/provider setup is admin-only now (platform admin dashboard,
+# PUT /admin/tenants/{tenant_id}/voice-settings in app.api.admin_tenants). Clients can
+# only read their current status above; they can no longer configure it themselves.
 
 
 @router.get("/calls")
