@@ -547,6 +547,9 @@ export interface BillingPeriodRow {
   compute_seconds: number;
   jobs: number;
   cloudrun_paise: number | null;
+  voice_calls: number;
+  voice_call_seconds: number;
+  telephony_paise: number | null;
   default_platform_fee_paise: number;
   unpriced_models: string[];
   invoice: InvoiceSummary | null;
@@ -558,6 +561,8 @@ export interface BillingPeriod {
   usd_inr: string | null;
   cloudrun_actual_paise: number | null;
   cloudrun_unallocated_paise: number;
+  telephony_actual_paise: number | null;
+  telephony_unallocated_paise: number;
   rows: BillingPeriodRow[];
 }
 
@@ -568,7 +573,7 @@ export interface BillingFlag {
 
 export interface InvoiceLine {
   position: number;
-  kind: "llm" | "cloudrun" | "platform_fee";
+  kind: "llm" | "cloudrun" | "telephony" | "platform_fee";
   description: string;
   quantity: string;
   unit: string;
@@ -609,6 +614,7 @@ export interface Invoice {
   cloudrun_basis: "estimate" | "actual";
   llm_paise: number;
   cloudrun_paise: number;
+  telephony_paise: number;
   platform_fee_paise: number;
   subtotal_paise: number;
   gst_rate_percent: string;
