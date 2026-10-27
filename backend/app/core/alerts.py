@@ -23,7 +23,13 @@ class Condition:
 async def _upsert(session: AsyncSession, cond: Condition) -> None:
     await session.execute(
         _UPSERT,
-        {"t": cond.tenant_id, "k": cond.kind, "s": cond.severity, "m": cond.message, "d": cond.dedupe_key},
+        {
+            "t": cond.tenant_id,
+            "k": cond.kind,
+            "s": cond.severity,
+            "m": cond.message,
+            "d": cond.dedupe_key,
+        },
     )
 
 
@@ -62,7 +68,9 @@ async def scan_and_upsert(session: AsyncSession) -> None:
 
     failed_recent = (
         await session.execute(
-            text("SELECT count(*) FROM jobs WHERE status = 'needs_review' AND updated_at >= now() - interval '15 minutes'")
+            text(
+                "SELECT count(*) FROM jobs WHERE status = 'needs_review' AND updated_at >= now() - interval '15 minutes'"
+            )
         )
     ).scalar_one()
     if failed_recent > 5:

@@ -115,13 +115,29 @@ async def export_audit_log_csv(
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(
-        ["occurred_at", "tenant_id", "actor_user_id", "actor_role", "action", "entity_type",
-         "entity_id", "reason"]
+        [
+            "occurred_at",
+            "tenant_id",
+            "actor_user_id",
+            "actor_role",
+            "action",
+            "entity_type",
+            "entity_id",
+            "reason",
+        ]
     )
     for r in rows:
         writer.writerow(
-            [r.occurred_at.isoformat(), r.tenant_id, r.actor_user_id, r.actor_role, r.action,
-             r.entity_type, r.entity_id, r.reason or ""]
+            [
+                r.occurred_at.isoformat(),
+                r.tenant_id,
+                r.actor_user_id,
+                r.actor_role,
+                r.action,
+                r.entity_type,
+                r.entity_id,
+                r.reason or "",
+            ]
         )
     return Response(
         content=buffer.getvalue(),
