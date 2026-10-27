@@ -387,26 +387,31 @@ describe("autonomy settings", () => {
 });
 
 describe("voice settings", () => {
-  it("saves the number, shows the webhook once and lists calls with transcript", async () => {
-    const settings = { configured: false, called_number: null, transfer_number: null, enabled: false, webhook_url: null, provider: "generic", providers: ["fake_ivr", "generic"] };
+  it("shows a read-only status and lists calls with transcript", async () => {
+    const settings = {
+      configured: true,
+      called_number: "+911140000000",
+      transfer_number: null,
+      enabled: true,
+      webhook_url: "https://api.example/webhooks/voice/abc",
+      provider: "generic",
+      providers: ["fake_ivr", "generic"],
+      telephony_mode: "ready_made",
+    };
     const call = { id: "c1", status: "callback", caller_masked: "+91******3210", turn_count: 2, end_reason: "handoff", started_at: "2026-01-01T10:00:00Z", ended_at: null, conversation_id: "v1", order_ref: "#1001", avg_latency_ms: 900, max_latency_ms: 1500, slow_turns: 0, feedback: null, feedback_note: null, summary_status: "skipped" };
     const stats = { days: 7, calls: 1, handled_by_agent: 0, transferred: 0, callback: 1, failed: 0, avg_turns: 2, avg_latency_ms: 900, slow_turns: 0, feedback_good: 0, feedback_bad: 0, agent_rate_percent: 0 };
     const calls = mockFetch((c) => {
       if (c.method === "GET" && c.url.endsWith("/voice/settings")) return { body: settings };
-      if (c.method === "PUT" && c.url.endsWith("/voice/settings")) return { body: { ...settings, configured: true, called_number: "+911140000000", enabled: true, webhook_url: "https://api.example/webhooks/voice/abc" } };
       if (c.url.includes("/voice/stats")) return { body: stats };
       if (c.method === "POST" && c.url.endsWith("/voice/calls/c1/feedback")) return { body: { ...call, feedback: "good" } };
       if (c.url.endsWith("/voice/calls")) return { body: [call] };
       if (c.url.endsWith("/voice/calls/c1")) return { body: { ...call, turns: [{ at: "2026-01-01T10:00:01Z", speaker: "caller", text: "order kahan hai" }] } };
       return undefined;
     });
-    renderApp(<VoiceSettings />);
     const user = userEvent.setup();
-    await user.type(await screen.findByLabelText(t.voiceCalledNumber), "+911140000000");
-    await user.click(screen.getByRole("button", { name: t.voiceSave }));
-    expect(await screen.findByText(/webhooks\/voice\/abc/)).toBeInTheDocument();
-    const put = calls.find((c) => c.method === "PUT")?.body as { called_number: string; transfer_number: null; enabled: boolean; provider: string };
-    expect(put).toMatchObject({ called_number: "+911140000000", transfer_number: null, enabled: true, provider: "generic" });
+    renderApp(<VoiceSettings />);
+    expect(await screen.findByText(/\+911140000000/)).toBeInTheDocument();
+    expect(screen.getByText(t.voiceStatusConfigured)).toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: /3210/ }));
     expect(await screen.findByText(/order kahan hai/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: t.voiceFeedbackGood }));

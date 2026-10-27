@@ -14,6 +14,8 @@ const PERIOD = {
   usd_inr: "88.0000",
   cloudrun_actual_paise: null,
   cloudrun_unallocated_paise: 0,
+  telephony_actual_paise: null,
+  telephony_unallocated_paise: 0,
   rows: [
     {
       tenant_id: TID,
@@ -26,6 +28,9 @@ const PERIOD = {
       compute_seconds: 3600,
       jobs: 4,
       cloudrun_paise: 500,
+      voice_calls: 2,
+      voice_call_seconds: 180,
+      telephony_paise: 200,
       default_platform_fee_paise: 100000,
       unpriced_models: [],
       invoice: null,
@@ -47,6 +52,7 @@ const INVOICE = {
   cloudrun_basis: "estimate",
   llm_paise: 10000,
   cloudrun_paise: 0,
+  telephony_paise: 0,
   platform_fee_paise: 90000,
   subtotal_paise: 100000,
   gst_rate_percent: "18.00",
@@ -88,7 +94,7 @@ describe("billing pages", () => {
     fireEvent.click(screen.getAllByRole("button").find((b) => b.className !== "secondary" && b.textContent !== "")!);
     await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
     const put = calls.find((c) => c.method === "PUT")!;
-    expect(put.body).toEqual({ usd_inr: "90", cloudrun_actual_paise: null });
+    expect(put.body).toEqual({ usd_inr: "90", cloudrun_actual_paise: null, telephony_actual_paise: null });
   });
 
   it("finalizes with the displayed total", async () => {

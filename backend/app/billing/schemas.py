@@ -125,6 +125,7 @@ class ProfileRowOut(ProfileIn):
 class PeriodIn(Strict):
     usd_inr: Annotated[Decimal, Field(gt=0, le=1000, max_digits=12, decimal_places=4)] | None = None
     cloudrun_actual_paise: Paise | None = None
+    telephony_actual_paise: Paise | None = None
 
 
 class GenerateIn(Strict):
@@ -164,6 +165,9 @@ class PeriodRowOut(BaseModel):
     compute_seconds: int
     jobs: int
     cloudrun_paise: int | None
+    voice_calls: int
+    voice_call_seconds: int
+    telephony_paise: int | None
     default_platform_fee_paise: int
     unpriced_models: list[str]
     invoice: InvoiceSummaryOut | None
@@ -175,6 +179,8 @@ class PeriodOut(BaseModel):
     usd_inr: Decimal | None
     cloudrun_actual_paise: int | None
     cloudrun_unallocated_paise: int
+    telephony_actual_paise: int | None
+    telephony_unallocated_paise: int
     rows: list[PeriodRowOut]
 
 
@@ -199,7 +205,7 @@ class BuyerOut(BaseModel):
 
 class InvoiceLineOut(BaseModel):
     position: int
-    kind: Literal["llm", "cloudrun", "platform_fee"]
+    kind: Literal["llm", "cloudrun", "telephony", "platform_fee"]
     description: str
     quantity: Decimal
     unit: str
@@ -221,6 +227,7 @@ class InvoiceOut(BaseModel):
     cloudrun_basis: Literal["estimate", "actual"]
     llm_paise: int
     cloudrun_paise: int
+    telephony_paise: int
     platform_fee_paise: int
     subtotal_paise: int
     gst_rate_percent: Decimal

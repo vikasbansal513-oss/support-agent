@@ -96,11 +96,15 @@ _PROFILE_UPSERT = text(
     " default_platform_fee_paise = :default_platform_fee_paise, updated_by = :u,"
     " updated_at = now()"
 )
-_PERIOD = text("SELECT usd_inr, cloudrun_actual_paise FROM billing_periods WHERE period_start = :p")
+_PERIOD = text(
+    "SELECT usd_inr, cloudrun_actual_paise, telephony_actual_paise FROM billing_periods"
+    " WHERE period_start = :p"
+)
 _PERIOD_UPSERT = text(
-    "INSERT INTO billing_periods (period_start, usd_inr, cloudrun_actual_paise, updated_by,"
-    " updated_at) VALUES (:p, :fx, :actual, :u, now()) ON CONFLICT (period_start) DO UPDATE SET"
-    " usd_inr = :fx, cloudrun_actual_paise = :actual, updated_by = :u, updated_at = now()"
+    "INSERT INTO billing_periods (period_start, usd_inr, cloudrun_actual_paise,"
+    " telephony_actual_paise, updated_by, updated_at) VALUES (:p, :fx, :actual, :tel_actual, :u,"
+    " now()) ON CONFLICT (period_start) DO UPDATE SET usd_inr = :fx, cloudrun_actual_paise ="
+    " :actual, telephony_actual_paise = :tel_actual, updated_by = :u, updated_at = now()"
 )
 _LLM_USAGE = text(
     "SELECT tenant_id, provider, model, count(*) AS calls,"
@@ -116,6 +120,12 @@ _COMPUTE_USAGE = text(
     "SELECT tenant_id, COALESCE(sum(duration_ms), 0) AS ms, count(*) AS jobs FROM jobs"
     " WHERE status = 'done' AND finished_at >= :s AND finished_at < :e GROUP BY tenant_id"
 )
+_VOICE_USAGE = text(
+    "SELECT tenant_id, count(*) AS calls,"
+    " COALESCE(sum(extract(epoch FROM (ended_at - started_at))), 0)::bigint AS seconds"
+    " FROM voice_calls WHERE ended_at IS NOT NULL AND started_at >= :s AND started_at < :e"
+    " GROUP BY tenant_id"
+)
 _TENANT = text("SELECT id, name FROM tenants WHERE id = :t")
 _INVOICE_LOCK = text(
     "SELECT id, status, platform_fee_paise FROM invoices"
@@ -123,11 +133,11 @@ _INVOICE_LOCK = text(
 )
 _INVOICE_UPSERT = text(
     "INSERT INTO invoices (tenant_id, period_start, usd_inr, cloudrun_basis, llm_paise,"
-    " cloudrun_paise, platform_fee_paise, subtotal_paise, gst_rate_percent, gst_kind,"
-    " cgst_paise, sgst_paise, igst_paise, total_paise, generated_at) VALUES (:t, :p, :fx, :basis,"
-    " :llm, :cloud, :fee, :sub, :rate, :kind, :cgst, :sgst, :igst, :total, now())"
+    " cloudrun_paise, telephony_paise, platform_fee_paise, subtotal_paise, gst_rate_percent,"
+    " gst_kind, cgst_paise, sgst_paise, igst_paise, total_paise, generated_at) VALUES (:t, :p, :fx,"
+    " :basis, :llm, :cloud, :tel, :fee, :sub, :rate, :kind, :cgst, :sgst, :igst, :total, now())"
     " ON CONFLICT (tenant_id, period_start) DO UPDATE SET usd_inr = :fx, cloudrun_basis = :basis,"
-    " llm_paise = :llm, cloudrun_paise = :cloud, platform_fee_paise = :fee,"
+    " llm_paise = :llm, cloudrun_paise = :cloud, telephony_paise = :tel, platform_fee_paise = :fee,"
     " subtotal_paise = :sub, gst_rate_percent = :rate, gst_kind = :kind, cgst_paise = :cgst,"
     " sgst_paise = :sgst, igst_paise = :igst, total_paise = :total, generated_at = now()"
     " RETURNING id"
@@ -141,8 +151,8 @@ _LINE_INSERT = text(
 _INVOICE = text(
     "SELECT i.id, i.tenant_id, t.name AS tenant_name, i.period_start, i.status, i.doc_type,"
     " i.invoice_no, i.invoice_date, i.usd_inr, i.cloudrun_basis, i.llm_paise, i.cloudrun_paise,"
-    " i.platform_fee_paise, i.subtotal_paise, i.gst_rate_percent, i.gst_kind, i.cgst_paise,"
-    " i.sgst_paise, i.igst_paise, i.total_paise, i.seller, i.buyer, i.generated_at,"
+    " i.telephony_paise, i.platform_fee_paise, i.subtotal_paise, i.gst_rate_percent, i.gst_kind,"
+    " i.cgst_paise, i.sgst_paise, i.igst_paise, i.total_paise, i.seller, i.buyer, i.generated_at,"
     " i.finalized_at FROM invoices i JOIN tenants t ON t.id = i.tenant_id WHERE i.id = :i"
 )
 _INVOICE_LOCKED = text(
@@ -329,6 +339,20 @@ class Compute:
     jobs: int
 
 
+@dataclass(frozen=True)
+class VoiceUsage:
+    seconds: int
+    calls: int
+
+
+@dataclass(frozen=True)
+class Telephony:
+    amount_paise: int
+    seconds: int
+    calls: int
+    share_percent: Decimal
+
+
 Rates = dict[tuple[str, str], tuple[Decimal, Decimal]]
 
 
@@ -416,15 +440,39 @@ def price_cloudrun(
     return result
 
 
+def price_telephony(
+    actual_paise: int | None, voice: dict[uuid.UUID, VoiceUsage]
+) -> dict[uuid.UUID, Telephony]:
+    """Plivo/telephony cost: actual-bill only (admin enters the real monthly Plivo bill in
+    paise), allocated across tenants by call-seconds. No per-minute estimate - Plivo's real
+    per-destination rate isn't known here, so until the admin enters an actual bill this is 0."""
+    total_seconds = sum(v.seconds for v in voice.values())
+    shares = (
+        calc.allocate(actual_paise, {t: v.seconds for t, v in voice.items()})
+        if actual_paise is not None
+        else {}
+    )
+    result: dict[uuid.UUID, Telephony] = {}
+    for tenant_id, usage in voice.items():
+        share = (
+            Decimal(usage.seconds) * 100 / Decimal(total_seconds) if total_seconds > 0 else _ZERO
+        )
+        amount = shares.get(tenant_id, 0) if actual_paise is not None else 0
+        result[tenant_id] = Telephony(amount, usage.seconds, usage.calls, share)
+    return result
+
+
 @dataclass(frozen=True)
 class PeriodData:
     period_start: date
     usd_inr: Decimal | None
     actual_paise: int | None
+    telephony_actual_paise: int | None
     settings: BillingSettingsOut
     rates: Rates
     llm: dict[uuid.UUID, list[LlmUsage]]
     compute: dict[uuid.UUID, Compute]
+    voice: dict[uuid.UUID, VoiceUsage]
 
 
 async def _collect(
@@ -440,6 +488,7 @@ async def _collect(
         )
     ).all()
     compute_rows = (await session.execute(_COMPUTE_USAGE, {"s": start, "e": end})).all()
+    voice_rows = (await session.execute(_VOICE_USAGE, {"s": start, "e": end})).all()
     llm: dict[uuid.UUID, list[LlmUsage]] = {}
     for r in llm_rows:
         llm.setdefault(r.tenant_id, []).append(
@@ -459,6 +508,9 @@ async def _collect(
         actual_paise=int(period.cloudrun_actual_paise)
         if period and period.cloudrun_actual_paise is not None
         else None,
+        telephony_actual_paise=int(period.telephony_actual_paise)
+        if period and period.telephony_actual_paise is not None
+        else None,
         settings=await load_settings(session),
         rates={
             (r.provider, r.model): (r.input_usd_per_million, r.output_usd_per_million)
@@ -466,6 +518,7 @@ async def _collect(
         },
         llm=llm,
         compute={r.tenant_id: Compute(int(r.ms), int(r.jobs)) for r in compute_rows},
+        voice={r.tenant_id: VoiceUsage(int(r.seconds), int(r.calls)) for r in voice_rows},
     )
 
 
@@ -494,6 +547,7 @@ async def save_period(
             "p": period_start,
             "fx": body.usd_inr,
             "actual": body.cloudrun_actual_paise,
+            "tel_actual": body.telephony_actual_paise,
             "u": admin_id,
         },
     )
@@ -506,10 +560,12 @@ async def save_period(
             old_value={
                 "usd_inr": str(existing.usd_inr) if existing and existing.usd_inr else None,
                 "cloudrun_actual_paise": existing.cloudrun_actual_paise if existing else None,
+                "telephony_actual_paise": existing.telephony_actual_paise if existing else None,
             },
             new_value={
                 "usd_inr": str(body.usd_inr) if body.usd_inr else None,
                 "cloudrun_actual_paise": body.cloudrun_actual_paise,
+                "telephony_actual_paise": body.telephony_actual_paise,
             },
             actor_user_id=admin_id,
             actor_role="super_admin",
@@ -521,6 +577,7 @@ async def save_period(
 async def period_overview(session: AsyncSession, period_start: date) -> PeriodOut:
     data = await _collect(session, period_start, None)
     cloud = price_cloudrun(data.settings, data.usd_inr, data.actual_paise, data.compute)
+    telephony = price_telephony(data.telephony_actual_paise, data.voice)
     profiles = await list_profiles(session)
     invoices = {
         r.tenant_id: InvoiceSummaryOut(
@@ -538,6 +595,7 @@ async def period_overview(session: AsyncSession, period_start: date) -> PeriodOu
         usages = data.llm.get(profile.tenant_id, [])
         lines = price_llm(usages, data.rates, data.usd_inr)
         compute = cloud.get(profile.tenant_id)
+        voice = telephony.get(profile.tenant_id)
         rows.append(
             PeriodRowOut(
                 tenant_id=profile.tenant_id,
@@ -552,6 +610,11 @@ async def period_overview(session: AsyncSession, period_start: date) -> PeriodOu
                 compute_seconds=(compute.milliseconds // 1000) if compute else 0,
                 jobs=compute.jobs if compute else 0,
                 cloudrun_paise=(compute.amount_paise if compute else 0) if cloud_known else None,
+                voice_calls=voice.calls if voice else 0,
+                voice_call_seconds=voice.seconds if voice else 0,
+                telephony_paise=(voice.amount_paise if voice else 0)
+                if data.telephony_actual_paise is not None
+                else None,
                 default_platform_fee_paise=profile.default_platform_fee_paise,
                 unpriced_models=[
                     f"{line.provider}/{line.model}" for line in lines if line.source == "missing"
@@ -560,6 +623,11 @@ async def period_overview(session: AsyncSession, period_start: date) -> PeriodOu
             )
         )
     allocated = sum(c.amount_paise for c in cloud.values()) if data.actual_paise is not None else 0
+    tel_allocated = (
+        sum(v.amount_paise for v in telephony.values())
+        if data.telephony_actual_paise is not None
+        else 0
+    )
     return PeriodOut(
         period=calc.period_label(period_start),
         period_ended=_period_ended(period_start),
@@ -568,6 +636,10 @@ async def period_overview(session: AsyncSession, period_start: date) -> PeriodOu
         cloudrun_unallocated_paise=(data.actual_paise - allocated)
         if data.actual_paise is not None
         else 0,
+        telephony_actual_paise=data.telephony_actual_paise,
+        telephony_unallocated_paise=(data.telephony_actual_paise - tel_allocated)
+        if data.telephony_actual_paise is not None
+        else 0,
         rows=rows,
     )
 
@@ -575,7 +647,7 @@ async def period_overview(session: AsyncSession, period_start: date) -> PeriodOu
 # ---------------------------------------------------------------- invoice building
 @dataclass(frozen=True)
 class BuiltLine:
-    kind: Literal["llm", "cloudrun", "platform_fee"]
+    kind: Literal["llm", "cloudrun", "telephony", "platform_fee"]
     description: str
     quantity: Decimal
     unit: str
@@ -590,6 +662,7 @@ class BuiltInvoice:
     basis: Literal["estimate", "actual"]
     llm_paise: int
     cloudrun_paise: int
+    telephony_paise: int
     platform_fee_paise: int
     gst_rate_percent: Decimal
     gst: calc.GstSplit
@@ -597,7 +670,7 @@ class BuiltInvoice:
 
     @property
     def subtotal_paise(self) -> int:
-        return self.llm_paise + self.cloudrun_paise + self.platform_fee_paise
+        return self.llm_paise + self.cloudrun_paise + self.telephony_paise + self.platform_fee_paise
 
     @property
     def total_paise(self) -> int:
@@ -609,6 +682,7 @@ def build_invoice(
     data: PeriodData,
     usd_inr: Decimal,
     cloud: CloudRun | None,
+    telephony: Telephony | None,
     platform_fee_paise: int,
     buyer_state: str,
 ) -> BuiltInvoice:
@@ -656,6 +730,22 @@ def build_invoice(
                 },
             )
         )
+    telephony_paise = telephony.amount_paise if telephony else 0
+    if telephony and (telephony.seconds > 0 or telephony.amount_paise > 0):
+        lines.append(
+            BuiltLine(
+                "telephony",
+                "Telephony (Plivo calling minutes)",
+                (Decimal(telephony.seconds) / Decimal(60)).quantize(Decimal("0.01")),
+                "minutes",
+                telephony.amount_paise,
+                {
+                    "seconds": telephony.seconds,
+                    "calls": telephony.calls,
+                    "share_percent": str(telephony.share_percent.quantize(Decimal("0.01"))),
+                },
+            )
+        )
     if platform_fee_paise > 0:
         lines.append(
             BuiltLine(
@@ -667,7 +757,7 @@ def build_invoice(
                 {},
             )
         )
-    subtotal = llm_paise + cloud_paise + platform_fee_paise
+    subtotal = llm_paise + cloud_paise + telephony_paise + platform_fee_paise
     gst = calc.gst_split(
         subtotal,
         data.settings.gst_rate_percent,
@@ -681,6 +771,7 @@ def build_invoice(
         basis=cloud.basis if cloud else ("actual" if data.actual_paise is not None else "estimate"),
         llm_paise=llm_paise,
         cloudrun_paise=cloud_paise,
+        telephony_paise=telephony_paise,
         platform_fee_paise=platform_fee_paise,
         gst_rate_percent=data.settings.gst_rate_percent if gst.kind != "none" else _ZERO,
         gst=gst,
@@ -699,6 +790,7 @@ async def _save_draft(session: AsyncSession, period_start: date, built: BuiltInv
                 "basis": built.basis,
                 "llm": built.llm_paise,
                 "cloud": built.cloudrun_paise,
+                "tel": built.telephony_paise,
                 "fee": built.platform_fee_paise,
                 "sub": built.subtotal_paise,
                 "rate": built.gst_rate_percent,
@@ -752,8 +844,15 @@ async def _rebuild(
         else profile.default_platform_fee_paise
     )
     cloud_all = price_cloudrun(data.settings, data.usd_inr, data.actual_paise, data.compute)
+    telephony_all = price_telephony(data.telephony_actual_paise, data.voice)
     built = build_invoice(
-        tenant_id, data, data.usd_inr, cloud_all.get(tenant_id), fee, profile.state_code
+        tenant_id,
+        data,
+        data.usd_inr,
+        cloud_all.get(tenant_id),
+        telephony_all.get(tenant_id),
+        fee,
+        profile.state_code,
     )
     invoice_id = await _save_draft(session, data.period_start, built)
     return invoice_id, built
@@ -776,7 +875,10 @@ async def generate(
         targets = [
             t
             for t in ids
-            if data.llm.get(t) or t in data.compute or profiles[t].default_platform_fee_paise > 0
+            if data.llm.get(t)
+            or t in data.compute
+            or t in data.voice
+            or profiles[t].default_platform_fee_paise > 0
         ]
     generated = 0
     skipped = 0
@@ -920,6 +1022,7 @@ async def get_invoice(session: AsyncSession, invoice_id: uuid.UUID) -> InvoiceOu
         cloudrun_basis=row.cloudrun_basis,
         llm_paise=int(row.llm_paise),
         cloudrun_paise=int(row.cloudrun_paise),
+        telephony_paise=int(row.telephony_paise),
         platform_fee_paise=int(row.platform_fee_paise),
         subtotal_paise=int(row.subtotal_paise),
         gst_rate_percent=row.gst_rate_percent,

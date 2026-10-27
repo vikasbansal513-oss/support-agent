@@ -119,6 +119,44 @@ async def add_job(env: AgentEnv, tenant_id: uuid.UUID, when: datetime, milliseco
         )
 
 
+async def add_voice_call(
+    env: AgentEnv, tenant_id: uuid.UUID, when: datetime, seconds: int
+) -> None:
+    async with session_scope(env.owner_factory, tenant_id=tenant_id) as session:
+        customer_id = (
+            await session.execute(
+                text(
+                    "INSERT INTO customers (tenant_id, phone_e164) VALUES (:t, :p) RETURNING id"
+                ),
+                {"t": tenant_id, "p": f"+1{uuid.uuid4().int % 10**10:010d}"},
+            )
+        ).scalar_one()
+        conversation_id = (
+            await session.execute(
+                text(
+                    "INSERT INTO conversations (tenant_id, customer_id, channel)"
+                    " VALUES (:t, :c, 'voice') RETURNING id"
+                ),
+                {"t": tenant_id, "c": customer_id},
+            )
+        ).scalar_one()
+        await session.execute(
+            text(
+                "INSERT INTO voice_calls (tenant_id, provider_call_id, conversation_id,"
+                " customer_id, status, started_at, ended_at) VALUES (:t, :pc, :conv, :cust,"
+                " 'completed', :s, :e)"
+            ),
+            {
+                "t": tenant_id,
+                "pc": str(uuid.uuid4()),
+                "conv": conversation_id,
+                "cust": customer_id,
+                "s": when,
+                "e": when + timedelta(seconds=seconds),
+            },
+        )
+
+
 async def put(env: AgentEnv, headers: dict[str, str], path: str, body: Any) -> httpx.Response:
     return await env.client.put(f"/admin/billing{path}", json=body, headers=headers)
 
@@ -469,6 +507,48 @@ async def test_actual_bill_with_no_compute_is_reported_as_unallocated(env: Agent
     cleared = await put(env, headers, f"/periods/{label}", {"usd_inr": "88"})
     assert cleared.json()["cloudrun_actual_paise"] is None
     assert cleared.json()["cloudrun_unallocated_paise"] == 0
+
+
+async def test_telephony_bill_is_split_by_call_seconds_and_adds_up(env: AgentEnv) -> None:
+    headers = await admin(env)
+    other = await second_tenant(env)
+    period_start, label = previous_period()
+    await prepare(env, headers, env.wa.tenant_id, fee=0)
+    when = mid_month(period_start)
+    await add_voice_call(env, env.wa.tenant_id, when, 120)
+    await add_voice_call(env, other, when, 60)
+    saved = await put(
+        env, headers, f"/periods/{label}", {"usd_inr": "88", "telephony_actual_paise": 9000}
+    )
+    assert saved.status_code == 200 and saved.json()["telephony_unallocated_paise"] == 0
+    rows = {r["tenant_id"]: r for r in saved.json()["rows"]}
+    mine, theirs = rows[str(env.wa.tenant_id)], rows[str(other)]
+    assert mine["voice_calls"] == 1 and mine["voice_call_seconds"] == 120
+    assert theirs["voice_calls"] == 1 and theirs["voice_call_seconds"] == 60
+    assert mine["telephony_paise"] == 6000 and theirs["telephony_paise"] == 3000
+    assert mine["telephony_paise"] + theirs["telephony_paise"] == 9000
+    generated = await post(
+        env, headers, "/invoices/generate", {"period": label, "tenant_id": str(env.wa.tenant_id)}
+    )
+    invoice = (await get(env, headers, f"/invoices/{generated.json()['invoices'][0]['id']}")).json()
+    assert invoice["telephony_paise"] == 6000
+    assert invoice["subtotal_paise"] == invoice["llm_paise"] + invoice["cloudrun_paise"] + 6000
+    line = next(line for line in invoice["lines"] if line["kind"] == "telephony")
+    assert line["detail"]["seconds"] == 120 and line["detail"]["calls"] == 1
+    assert line["detail"]["share_percent"] == "66.67"
+    assert line["unit"] == "minutes" and line["quantity"] == "2.0000"
+
+
+async def test_telephony_bill_with_no_calls_is_reported_as_unallocated(env: AgentEnv) -> None:
+    headers = await admin(env)
+    _, label = previous_period()
+    out = await put(
+        env, headers, f"/periods/{label}", {"usd_inr": "88", "telephony_actual_paise": 4000}
+    )
+    assert out.json()["telephony_unallocated_paise"] == 4000
+    cleared = await put(env, headers, f"/periods/{label}", {"usd_inr": "88"})
+    assert cleared.json()["telephony_actual_paise"] is None
+    assert cleared.json()["telephony_unallocated_paise"] == 0
 
 
 async def test_finalize_is_blocked_until_rates_and_details_are_complete(env: AgentEnv) -> None:

@@ -39,6 +39,10 @@ function hoursText(seconds: number): string {
   return (seconds / 3600).toFixed(2);
 }
 
+function minutesText(seconds: number): string {
+  return (seconds / 60).toFixed(2);
+}
+
 export function AdminBilling() {
   const [period, setPeriod] = useState(previousMonthIst());
   const [data, reload] = useApi(() => api.get<BillingPeriod>(`/admin/billing/periods/${period}`), [period]);
@@ -59,7 +63,13 @@ export function AdminBilling() {
         <Link to="/admin/billing/settings">{t.billSettingsLink}</Link>
       </div>
       <Async value={data} reload={reload}>
-        {(current) => <PeriodView key={`${current.period}-${current.usd_inr}-${current.cloudrun_actual_paise}`} data={current} reload={reload} />}
+        {(current) => (
+          <PeriodView
+            key={`${current.period}-${current.usd_inr}-${current.cloudrun_actual_paise}-${current.telephony_actual_paise}`}
+            data={current}
+            reload={reload}
+          />
+        )}
       </Async>
     </Screen>
   );
@@ -69,11 +79,14 @@ function PeriodView({ data, reload }: { data: BillingPeriod; reload: () => void 
   const toast = useToast();
   const [fx, setFx] = useState(data.usd_inr ? String(Number(data.usd_inr)) : "");
   const [actual, setActual] = useState(data.cloudrun_actual_paise === null ? "" : paiseToInput(data.cloudrun_actual_paise));
+  const [telActual, setTelActual] = useState(data.telephony_actual_paise === null ? "" : paiseToInput(data.telephony_actual_paise));
   const [busy, setBusy] = useState(false);
 
   const fxValid = fx.trim() === "" || isPositiveDecimal(fx);
   const actualPaise = actual.trim() === "" ? null : rupeesToPaise(actual);
   const actualValid = actual.trim() === "" || actualPaise !== null;
+  const telActualPaise = telActual.trim() === "" ? null : rupeesToPaise(telActual);
+  const telActualValid = telActual.trim() === "" || telActualPaise !== null;
   const canGenerate = data.usd_inr !== null && !busy;
 
   const savePeriod = async () => {
@@ -82,6 +95,7 @@ function PeriodView({ data, reload }: { data: BillingPeriod; reload: () => void 
       await api.put(`/admin/billing/periods/${data.period}`, {
         usd_inr: fx.trim() === "" ? null : fx.trim(),
         cloudrun_actual_paise: actualPaise,
+        telephony_actual_paise: telActualPaise,
       });
       toast.info(t.billPeriodSaved);
       reload();
@@ -122,13 +136,20 @@ function PeriodView({ data, reload }: { data: BillingPeriod; reload: () => void 
           {t.billUnallocated} {paiseToInput(data.cloudrun_unallocated_paise)}
         </p>
       )}
+      {data.telephony_unallocated_paise > 0 && (
+        <p className="banner">
+          {t.billTelUnallocated} {paiseToInput(data.telephony_unallocated_paise)}
+        </p>
+      )}
       <section className="card">
         <h2>{t.billPeriodSettings}</h2>
         <Field label={t.billUsdInr} value={fx} onChange={setFx} placeholder="88" />
         <Field label={t.billCloudActual} value={actual} onChange={setActual} placeholder="0.00" />
         <small>{t.billCloudActualHint}</small>
+        <Field label={t.billTelActual} value={telActual} onChange={setTelActual} placeholder="0.00" />
+        <small>{t.billTelActualHint}</small>
         <div className="row">
-          <button type="button" onClick={() => void savePeriod()} disabled={busy || !fxValid || !actualValid}>
+          <button type="button" onClick={() => void savePeriod()} disabled={busy || !fxValid || !actualValid || !telActualValid}>
             {t.billSavePeriod}
           </button>
           <button type="button" className="secondary" onClick={() => void generate(null)} disabled={!canGenerate}>
@@ -149,6 +170,8 @@ function PeriodView({ data, reload }: { data: BillingPeriod; reload: () => void 
                 <th>{t.billLlmCost}</th>
                 <th>{t.billCloudTime}</th>
                 <th>{t.billCloudCost}</th>
+                <th>{t.billCallTime}</th>
+                <th>{t.billCallCost}</th>
                 <th>{t.billDefaultFee}</th>
                 <th>{t.billInvoice}</th>
                 <th />
@@ -173,6 +196,12 @@ function PeriodView({ data, reload }: { data: BillingPeriod; reload: () => void 
                     <small>{row.jobs} jobs</small>
                   </td>
                   <td className="num">{row.cloudrun_paise === null ? "-" : formatPaise(row.cloudrun_paise)}</td>
+                  <td className="num">
+                    {minutesText(row.voice_call_seconds)} min
+                    <br />
+                    <small>{row.voice_calls} calls</small>
+                  </td>
+                  <td className="num">{row.telephony_paise === null ? "-" : formatPaise(row.telephony_paise)}</td>
                   <td className="num">{formatPaise(row.default_platform_fee_paise)}</td>
                   <td>
                     {row.invoice ? (
@@ -212,6 +241,8 @@ function PeriodView({ data, reload }: { data: BillingPeriod; reload: () => void 
                 <th className="num">{formatPaise(sum((r) => r.llm_paise))}</th>
                 <th className="num">{hoursText(sum((r) => r.compute_seconds))} h</th>
                 <th className="num">{formatPaise(sum((r) => r.cloudrun_paise))}</th>
+                <th className="num">{minutesText(sum((r) => r.voice_call_seconds))} min</th>
+                <th className="num">{formatPaise(sum((r) => r.telephony_paise))}</th>
                 <th className="num">{formatPaise(sum((r) => r.default_platform_fee_paise))}</th>
                 <th colSpan={2} />
               </tr>
@@ -491,6 +522,9 @@ function lineNote(line: InvoiceLine, invoice: Invoice): string | null {
   }
   if (line.kind === "cloudrun") {
     return invoice.cloudrun_basis === "actual" ? t.billBasisActual : t.billBasisEstimate;
+  }
+  if (line.kind === "telephony") {
+    return `${tokens(Number(line.detail.calls ?? 0))} calls`;
   }
   return null;
 }
