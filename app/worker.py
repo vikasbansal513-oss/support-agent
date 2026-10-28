@@ -66,7 +66,7 @@ async def schedule_periodic(factory: Factory, now: datetime | None = None) -> in
                     session,
                     row.id,
                     "fetch_gmail",
-                    idempotency_key=f"gmail:{minute_bucket(moment)}",
+                    idempotency_key=f"gmail:{minute_bucket(moment, 15)}",
                     max_attempts=1,
                 )
                 created += job is not None
@@ -75,7 +75,7 @@ async def schedule_periodic(factory: Factory, now: datetime | None = None) -> in
                 session,
                 tenant_id,
                 "integration_health",
-                idempotency_key=f"health:{minute_bucket(moment, 15)}",
+                idempotency_key=f"health:{minute_bucket(moment, 60)}",
                 max_attempts=1,
             )
             created += job is not None
@@ -101,11 +101,11 @@ async def schedule_periodic(factory: Factory, now: datetime | None = None) -> in
         for tenant in active:
             due: list[tuple[str, int]] = [("retention", 1440)]
             if tenant.handoffs:
-                due.append(("sla_check", 5))
+                due.append(("sla_check", 15))
             if tenant.inbound:
-                due += [("llm_latency_check", 15), ("unanswered_alert", 15)]
+                due += [("llm_latency_check", 60), ("unanswered_alert", 60)]
             if tenant.approvals:
-                due.append(("approval_sla", 10))
+                due.append(("approval_sla", 30))
             if tenant.writes:
                 due.append(("write_upkeep", 2))
             if tenant.privacy:
@@ -177,28 +177,6 @@ async def run_worker(
         outcome = await run_job(factory, job, me, transport)
         stats[outcome] += 1
         await heartbeat(factory)
-    return stats
-
-
-async def drain_queue(
-    factory: Factory,
-    max_seconds: float,
-    transport: httpx.AsyncBaseTransport | None = None,
-    worker: str | None = None,
-) -> dict[str, int]:
-    """Process whatever is already queued, right now - no heartbeat/schedule_periodic/reap
-    (those are the scheduled worker's job). Used to give an instant reply after a webhook
-    enqueues a job, instead of waiting for the next scheduled worker tick."""
-    settings = get_settings()
-    me = worker or worker_id()
-    deadline = time.monotonic() + max_seconds
-    stats = {"done": 0, "retry": 0, "needs_review": 0}
-    while time.monotonic() < deadline:
-        job = await queue.claim(factory, me, settings.job_lease_seconds, settings.job_tenant_limit)
-        if job is None:
-            break
-        outcome = await run_job(factory, job, me, transport)
-        stats[outcome] += 1
     return stats
 
 
