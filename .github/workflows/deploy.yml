@@ -117,7 +117,7 @@ jobs:
       MIGRATE_JOB: support-agent-migrate
       IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.GCP_ARTIFACT_REPO }}/support-agent:${{ github.event.workflow_run.head_sha || github.sha }}
       APP_ENV: ${{ inputs.environment || 'production' }}
-      COMMON_ENV: APP_ENV=${{ inputs.environment || 'production' }},APP_RELEASE=${{ github.event.workflow_run.head_sha || github.sha }},FRONTEND_URL=${{ vars.FRONTEND_URL }},PUBLIC_BASE_URL=${{ vars.PUBLIC_BASE_URL }},MAIL_FROM=${{ vars.MAIL_FROM }},GRIEVANCE_EMAIL=${{ vars.GRIEVANCE_EMAIL }},LLM_MODEL=${{ vars.LLM_MODEL }},LLM_PROVIDER=${{ vars.LLM_PROVIDER || 'anthropic' }}${{ vars.LLM_BASE_URL && format(',LLM_BASE_URL={0}', vars.LLM_BASE_URL) || '' }}
+      COMMON_ENV: APP_ENV=${{ inputs.environment || 'production' }},APP_RELEASE=${{ github.event.workflow_run.head_sha || github.sha }},FRONTEND_URL=${{ vars.FRONTEND_URL }},PUBLIC_BASE_URL=${{ vars.PUBLIC_BASE_URL }},MAIL_FROM=${{ vars.MAIL_FROM }},GRIEVANCE_EMAIL=${{ vars.GRIEVANCE_EMAIL }},LLM_MODEL=${{ vars.LLM_MODEL }},LLM_PROVIDER=${{ vars.LLM_PROVIDER || 'anthropic' }}${{ vars.LLM_BASE_URL && format(',LLM_BASE_URL={0}', vars.LLM_BASE_URL) || '' }},INSTANT_DRAIN_ENABLED=true
       APP_SECRETS: DATABASE_URL=database-url:latest,ENCRYPTION_KEY=encryption-key:latest,JWT_SECRET=jwt-secret:latest,ADMIN_JWT_SECRET=admin-jwt-secret:latest,LLM_API_KEY=llm-api-key:latest,BREVO_API_KEY=brevo-api-key:latest,GOOGLE_CLIENT_ID=google-client-id:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest,SENTRY_DSN=sentry-dsn:latest
     steps:
       - uses: actions/checkout@v4
