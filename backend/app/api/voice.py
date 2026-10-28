@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.auth.deps import require_user
 from app.auth.service import Principal
 from app.core.db import get_session_factory, session_scope
+from app.core.errors import AppError
 from app.voice import admin
 from app.voice.contracts import (
     VoiceCallDetail,
@@ -19,6 +20,12 @@ router = APIRouter(prefix="/voice", tags=["voice"])
 Factory = async_sessionmaker[AsyncSession]
 
 
+def _tenant(principal: Principal) -> uuid.UUID:
+    if principal.tenant_id is None:
+        raise AppError("E-AUTH-007")
+    return principal.tenant_id
+
+
 @router.get("/settings")
 async def get_voice_settings(
     principal: Principal = Depends(require_user),  # noqa: B008
@@ -27,7 +34,7 @@ async def get_voice_settings(
     async with session_scope(
         factory, tenant_id=principal.tenant_id, user_id=principal.user_id
     ) as s:
-        return await admin.get_settings_out(s, principal.tenant_id)
+        return await admin.get_settings_out(s, _tenant(principal))
 
 
 # Calling number/provider setup is admin-only now (platform admin dashboard,
