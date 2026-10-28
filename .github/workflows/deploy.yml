@@ -191,7 +191,12 @@ jobs:
       - name: Scheduler (worker every minute)
         run: |
           URI="https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT}/jobs/${WORKER_JOB}:run"
-          ARGS=(--location "$REGION" --project "$PROJECT" --schedule "* * * * *" --time-zone "Etc/UTC" \
+          # WhatsApp replies now go out instantly - the webhook itself processes the job inline
+          # before responding (see app/webhooks/whatsapp.py: _drain_now), so no --no-cpu-throttling
+          # is needed and the API service keeps cheap request-based CPU billing. This tick is just
+          # the safety net for anything that drain missed, plus the periodic Gmail poll /
+          # integration health check / reminders.
+          ARGS=(--location "$REGION" --project "$PROJECT" --schedule "*/10 * * * *" --time-zone "Etc/UTC" \
                 --uri "$URI" --http-method POST --oauth-service-account-email "$SCHEDULER_SA")
           gcloud scheduler jobs update http "${WORKER_JOB}-tick" "${ARGS[@]}" \
             || gcloud scheduler jobs create http "${WORKER_JOB}-tick" "${ARGS[@]}"
