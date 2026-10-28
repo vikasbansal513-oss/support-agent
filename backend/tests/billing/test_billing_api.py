@@ -119,15 +119,11 @@ async def add_job(env: AgentEnv, tenant_id: uuid.UUID, when: datetime, milliseco
         )
 
 
-async def add_voice_call(
-    env: AgentEnv, tenant_id: uuid.UUID, when: datetime, seconds: int
-) -> None:
+async def add_voice_call(env: AgentEnv, tenant_id: uuid.UUID, when: datetime, seconds: int) -> None:
     async with session_scope(env.owner_factory, tenant_id=tenant_id) as session:
         customer_id = (
             await session.execute(
-                text(
-                    "INSERT INTO customers (tenant_id, phone_e164) VALUES (:t, :p) RETURNING id"
-                ),
+                text("INSERT INTO customers (tenant_id, phone_e164) VALUES (:t, :p) RETURNING id"),
                 {"t": tenant_id, "p": f"+1{uuid.uuid4().int % 10**10:010d}"},
             )
         ).scalar_one()
