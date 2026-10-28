@@ -10,15 +10,19 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.channels import normalize
+from app.core.config import get_settings
 from app.core.db import get_session_factory, session_scope
 from app.core.errors import AppError, new_error_id
-from app.jobs import queue
+from app.jobs import handlers, queue
 from app.webhooks.security import check_ip_allowlist, request_ip, resolve_token
+from app.worker import drain_queue
 
 logger = logging.getLogger("app.webhooks.whatsapp")
 router = APIRouter(tags=["webhooks"])
 Factory = async_sessionmaker[AsyncSession]
 MAX_BODY_BYTES = 262_144
+INLINE_WORKER = "inline:whatsapp_webhook"
+INSTANT_DRAIN_ENABLED = get_settings().instant_drain_enabled
 
 _INSERT_EVENT = text(
     "INSERT INTO inbound_events (channel, external_id, raw_payload, status, skip_reason)"
@@ -31,6 +35,24 @@ def _digest(body: bytes) -> str:
     return hashlib.sha256(body).hexdigest()[:40]
 
 
+async def _drain_now(factory: Factory, job_id: uuid.UUID) -> None:
+    """Best-effort: process the just-enqueued job inline, on this request, instead of
+    waiting for the next worker tick. Cheap (request-based) billing, instant reply. If it
+    races with a worker tick or fails, the normal job-queue retry/worker path still covers
+    it - draining never replaces the queue, only speeds it up when it works."""
+    try:
+        if not handlers.inbound_runner_installed():
+            # API service (unlike worker.py's main()) never installs the real agent
+            # pipeline by default; a test may have installed its own fake runner instead,
+            # so only fill this in when nothing is installed yet - never override one.
+            from app.agent import runner
+
+            runner.install()
+        await drain_queue(factory, job_id, INLINE_WORKER)
+    except Exception:
+        logger.exception("inline drain failed, leaving job for the worker")
+
+
 async def _store(
     factory: Factory,
     tenant_id: uuid.UUID,
@@ -40,6 +62,7 @@ async def _store(
     reason: str | None,
     enqueue_job: bool,
 ) -> str:
+    job_id: uuid.UUID | None = None
     async with session_scope(factory, tenant_id=tenant_id) as session:
         row = (
             await session.execute(
@@ -56,15 +79,21 @@ async def _store(
         if row is None:
             return "duplicate"
         if enqueue_job:
-            await queue.enqueue(
+            job_id = await queue.enqueue(
                 session,
                 tenant_id,
                 "process_inbound",
                 {"inbound_event_id": str(row.id)},
                 idempotency_key=f"inb:{row.id}",
             )
-            return "queued"
-        return "skipped"
+        else:
+            return "skipped"
+    # outer transaction has committed by here, so the job row is now visible to the
+    # separate session claim_by_id() opens - draining earlier (inside the block above)
+    # would try to claim a row no other connection can see yet.
+    if job_id is not None and INSTANT_DRAIN_ENABLED:
+        await _drain_now(factory, job_id)
+    return "queued"
 
 
 @router.post("/webhooks/whatsapp/{token}")

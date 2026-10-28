@@ -66,7 +66,7 @@ async def schedule_periodic(factory: Factory, now: datetime | None = None) -> in
                     session,
                     row.id,
                     "fetch_gmail",
-                    idempotency_key=f"gmail:{minute_bucket(moment)}",
+                    idempotency_key=f"gmail:{minute_bucket(moment, 15)}",
                     max_attempts=1,
                 )
                 created += job is not None
@@ -75,7 +75,7 @@ async def schedule_periodic(factory: Factory, now: datetime | None = None) -> in
                 session,
                 tenant_id,
                 "integration_health",
-                idempotency_key=f"health:{minute_bucket(moment, 15)}",
+                idempotency_key=f"health:{minute_bucket(moment, 60)}",
                 max_attempts=1,
             )
             created += job is not None
@@ -101,11 +101,11 @@ async def schedule_periodic(factory: Factory, now: datetime | None = None) -> in
         for tenant in active:
             due: list[tuple[str, int]] = [("retention", 1440)]
             if tenant.handoffs:
-                due.append(("sla_check", 5))
+                due.append(("sla_check", 15))
             if tenant.inbound:
-                due += [("llm_latency_check", 15), ("unanswered_alert", 15)]
+                due += [("llm_latency_check", 60), ("unanswered_alert", 60)]
             if tenant.approvals:
-                due.append(("approval_sla", 10))
+                due.append(("approval_sla", 30))
             if tenant.writes:
                 due.append(("write_upkeep", 2))
             if tenant.privacy:
@@ -150,6 +150,20 @@ async def run_job(
         return "needs_review" if outcome.needs_review else "retry"
     finally:
         run_id_var.reset(token)
+
+
+async def drain_queue(factory: Factory, job_id: uuid.UUID, worker: str) -> bool:
+    """Process one just-enqueued job immediately, on the caller's own request, instead of
+    waiting for the next scheduled worker tick. A webhook calls this (gated behind
+    settings.instant_drain_enabled) so a reply goes out instantly on cheap request-based
+    billing; the scheduled worker tick stays as the fallback whenever this is skipped,
+    races with a tick, or fails - draining never replaces the queue, only speeds it up."""
+    settings = get_settings()
+    job = await queue.claim_by_id(factory, job_id, worker, settings.job_lease_seconds)
+    if job is None:
+        return False
+    outcome = await run_job(factory, job, worker)
+    return outcome == "done"
 
 
 async def run_worker(

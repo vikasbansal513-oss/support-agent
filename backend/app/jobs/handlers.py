@@ -50,6 +50,10 @@ def set_inbound_runner(runner: InboundRunner | None) -> None:
     _runner = runner
 
 
+def inbound_runner_installed() -> bool:
+    return _runner is not None
+
+
 async def _set_event(
     session: AsyncSession, event_id: uuid.UUID, status: str, reason: str | None = None
 ) -> None:

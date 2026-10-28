@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     gupshup_ip_allowlist: str = ""
     worker_max_seconds: int = Field(default=55, ge=5, le=3000)
+    instant_drain_enabled: bool = False
     job_lease_seconds: int = Field(default=120, ge=30, le=3600)
     job_tenant_limit: int = Field(default=2, ge=1, le=20)
     customer_flood_per_minute: int = Field(default=10, ge=2, le=200)

@@ -104,6 +104,38 @@ async def claim(
     return Job(row.id, row.tenant_id, row.kind, dict(row.payload), row.attempts, row.max_attempts)
 
 
+_CLAIM_BY_ID = text(
+    "UPDATE jobs SET status = 'processing', attempts = attempts + 1, lease_owner = :worker,"
+    " lease_expires_at = :lease, started_at = :now, updated_at = :now"
+    " WHERE id = :id AND status IN ('queued','deferred') AND run_after <= :now"
+    " RETURNING id, tenant_id, kind, payload, attempts, max_attempts"
+)
+
+
+async def claim_by_id(
+    factory: Factory, job_id: uuid.UUID, worker: str, lease_seconds: int
+) -> Job | None:
+    """Claim one specific job (by id) right after enqueueing it, for inline/same-request
+    processing. Returns None if it is already claimed (e.g. a worker tick got it first) or not
+    due yet; the normal worker loop remains the fallback in that case."""
+    now = timeutil.utc_now()
+    async with session_scope(factory, super_admin=True) as session:
+        row = (
+            await session.execute(
+                _CLAIM_BY_ID,
+                {
+                    "id": job_id,
+                    "worker": worker,
+                    "lease": now + timedelta(seconds=lease_seconds),
+                    "now": now,
+                },
+            )
+        ).first()
+    if row is None:
+        return None
+    return Job(row.id, row.tenant_id, row.kind, dict(row.payload), row.attempts, row.max_attempts)
+
+
 async def extend_lease(
     factory: Factory, job_id: uuid.UUID, worker: str, lease_seconds: int
 ) -> bool:
