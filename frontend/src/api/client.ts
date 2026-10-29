@@ -49,6 +49,15 @@ export function hasSession(): boolean {
   return session.accessToken !== null;
 }
 
+function readCookie(name: string): string | null {
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function csrfCookieName(realm: Realm): string {
+  return realm === "admin" ? "sa_admin_csrf" : "sa_csrf";
+}
+
 async function parseError(response: Response): Promise<ApiError> {
   let body: Record<string, unknown> = {};
   try {
@@ -97,16 +106,20 @@ async function refresh(): Promise<boolean> {
  * Called once on app startup (before any route renders) to restore a
  * session from the httponly refresh cookie, since the access token only
  * lives in JS memory and is lost on every full page load/reload (e.g. the
- * Gmail OAuth redirect round-trip). Tries the given realm's refresh
- * endpoint; does not touch the shared `refreshing` lock used by request().
+ * Gmail OAuth redirect round-trip). In-memory state is empty at this point,
+ * so the CSRF header is read from the readable sa_csrf/sa_admin_csrf
+ * cookie instead of `session.csrf`.
  */
 export async function restoreSession(realm: Realm): Promise<LoginOut | null> {
   const path = realm === "admin" ? "/admin/auth/refresh" : "/auth/refresh";
   try {
+    const headers = new Headers();
+    const csrf = readCookie(csrfCookieName(realm));
+    if (csrf) headers.set("X-CSRF-Token", csrf);
     const response = await fetch(baseUrl() + path, {
       method: "POST",
       credentials: "include",
-      headers: headersFor("POST", false, false),
+      headers,
     });
     if (!response.ok) return null;
     const out = (await response.json()) as LoginOut;
