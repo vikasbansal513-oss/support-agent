@@ -89,7 +89,9 @@ async def test_clearing_the_number_resets_carrier_and_confirmation(env: AgentEnv
         "/voice/public-number/confirm", json={"forwarding_confirmed": True}, headers=env.wa.headers
     )
     cleared = await env.client.put(
-        "/voice/public-number", json={"client_public_number": None, "carrier": None}, headers=env.wa.headers
+        "/voice/public-number",
+        json={"client_public_number": None, "carrier": None},
+        headers=env.wa.headers,
     )
     assert cleared.status_code == 200
     body = cleared.json()

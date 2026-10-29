@@ -1,4 +1,5 @@
 """Error catalog. Every API error: {code, message, error_id, severity}. Messages are safe for the end user (no internals)."""
+
 # code: (http, severity, message)
 ERRORS: dict[str, tuple[int, str, str]] = {
     "E-AUTH-001": (401, "warning", "Email ya password galat hai."),
@@ -30,13 +31,21 @@ ERRORS: dict[str, tuple[int, str, str]] = {
     "E-ACT-001": (409, "warning", "Is action par pehle hi faisla ho chuka hai."),
     "E-ACT-002": (409, "warning", "Customer ko bhejne ki 24 ghante ki window band hai."),
     "E-ACT-003": (409, "warning", "Customer ne messages band karwa diye hain."),
-    "E-ACT-005": (409, "warning", "Ye action ab is haalat me nahi hai (expire, pehle hi ho chuka ya galat confirm)."),
+    "E-ACT-005": (
+        409,
+        "warning",
+        "Ye action ab is haalat me nahi hai (expire, pehle hi ho chuka ya galat confirm).",
+    ),
     "E-ACT-006": (409, "warning", "Order badal gaya hai, action ab policy ke andar nahi."),
     "E-ACT-004": (502, "error", "Message bhej nahi paye. Thodi der baad try karein."),
     "E-HO-001": (409, "warning", "Ye handoff kisi aur ne le liya hai."),
     "E-ADM-001": (403, "warning", "Sirf platform admin ye kar sakta hai."),
     "E-ADM-002": (409, "warning", "Mode badalne ke liye shadow review pass hona zaroori hai."),
-    "E-ADM-003": (409, "warning", "Auto level ke liye tenant mode auto aur V2 policy publish honi chahiye."),
+    "E-ADM-003": (
+        409,
+        "warning",
+        "Auto level ke liye tenant mode auto aur V2 policy publish honi chahiye.",
+    ),
     "E-LIM-001": (402, "warning", "Is mahine ki conversation limit pahunch gayi."),
     "E-PRV-001": (409, "warning", "Is customer par privacy request pehle se khuli hai."),
     "E-SYS-001": (500, "critical", "Kuch gadbad hui. Error ID ke saath humein batayein."),

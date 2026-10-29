@@ -1,4 +1,5 @@
 """voice: client's own public/business number + carrier + forwarding_confirmed on voice_numbers"""
+
 from alembic import op
 
 revision = "0022"

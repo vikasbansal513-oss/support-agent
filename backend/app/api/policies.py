@@ -78,6 +78,8 @@ async def set_own_autonomy(
     """
     if body.level == "auto" and not body.confirmed:
         raise AppError("E-POL-004")
+    if principal.tenant_id is None:
+        raise AppError("E-AUTH-007")
     policy = await autonomy.set_level(
         factory, principal, principal.tenant_id, body.tool, body.level, body.reason
     )

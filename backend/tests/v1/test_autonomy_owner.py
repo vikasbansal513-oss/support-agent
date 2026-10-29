@@ -38,7 +38,12 @@ async def test_owner_turns_on_auto_for_own_tenant(env: AgentEnv) -> None:
     await setup(env, "approval", mode="auto")
     out = await env.client.put(
         "/policies/autonomy",
-        json={"tool": "order_cancel", "level": "auto", "reason": "pilot theek chala", "confirmed": True},
+        json={
+            "tool": "order_cancel",
+            "level": "auto",
+            "reason": "pilot theek chala",
+            "confirmed": True,
+        },
         headers=env.wa.headers,
     )
     assert out.status_code == 200 and out.json()["levels"]["order_cancel"] == "auto"
@@ -65,7 +70,12 @@ async def test_staff_role_cannot_set_autonomy(env: AgentEnv) -> None:
     staff = await agent_headers(env)
     out = await env.client.put(
         "/policies/autonomy",
-        json={"tool": "order_cancel", "level": "auto", "reason": "staff try kar raha", "confirmed": True},
+        json={
+            "tool": "order_cancel",
+            "level": "auto",
+            "reason": "staff try kar raha",
+            "confirmed": True,
+        },
         headers=staff,
     )
     assert out.status_code == 403
@@ -76,7 +86,12 @@ async def test_owner_blocked_when_tenant_mode_not_auto(env: AgentEnv) -> None:
     await setup(env, "approval", mode="draft")
     out = await env.client.put(
         "/policies/autonomy",
-        json={"tool": "order_cancel", "level": "auto", "reason": "jaldi chalu karna hai", "confirmed": True},
+        json={
+            "tool": "order_cancel",
+            "level": "auto",
+            "reason": "jaldi chalu karna hai",
+            "confirmed": True,
+        },
         headers=env.wa.headers,
     )
     assert out.status_code == 409 and error_code(out) == "E-ADM-003"
