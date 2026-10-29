@@ -179,15 +179,37 @@ function IntegrationCard({ kind, item, onChange }: { kind: IntegrationKind; item
   );
 }
 
+function LogisticsSection({ items, onChange }: { items: Integration[]; onChange: () => void }) {
+  const configuredFirst = COURIER_KINDS.find((kind) => items.find((i) => i.kind === kind)?.configured);
+  const [selected, setSelected] = useState<IntegrationKind>(configuredFirst ?? "shiprocket");
+  return (
+    <div className="card">
+      <h2 className="section-heading">{t.logisticsHeading}</h2>
+      <label className="field">
+        <span>{t.logisticsProvider}</span>
+        <select value={selected} onChange={(event) => setSelected(event.target.value as IntegrationKind)}>
+          {COURIER_KINDS.map((kind) => {
+            const configured = items.find((i) => i.kind === kind)?.configured ?? false;
+            return (
+              <option key={kind} value={kind}>
+                {LABEL[kind]}
+                {configured ? ` — ${t.logisticsConfigured}` : ""}
+              </option>
+            );
+          })}
+        </select>
+      </label>
+      <IntegrationCard key={selected} kind={selected} item={items.find((i) => i.kind === selected)} onChange={onChange} />
+    </div>
+  );
+}
+
 export function IntegrationsPanel({ items, onChange }: { items: Integration[]; onChange: () => void }) {
   return (
     <>
       <IntegrationCard kind="shopify" item={items.find((i) => i.kind === "shopify")} onChange={onChange} />
       <IntegrationCard kind="gupshup" item={items.find((i) => i.kind === "gupshup")} onChange={onChange} />
-      <h2 className="section-heading">{t.logisticsHeading}</h2>
-      {COURIER_KINDS.map((kind) => (
-        <IntegrationCard key={kind} kind={kind} item={items.find((i) => i.kind === kind)} onChange={onChange} />
-      ))}
+      <LogisticsSection items={items} onChange={onChange} />
       <IntegrationCard kind="gmail" item={items.find((i) => i.kind === "gmail")} onChange={onChange} />
     </>
   );

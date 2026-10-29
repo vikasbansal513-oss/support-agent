@@ -124,6 +124,8 @@ export const t = {
   courierHintShiprocket: "Shiprocket email:password",
   courierHintGeneric: "API key / token",
   logisticsHeading: "Logistics",
+  logisticsProvider: "Provider chunein",
+  logisticsConfigured: "set hai",
   policyTitle: "Policy",
   policyDraft: "Draft",
   policyPublished: "Published",
