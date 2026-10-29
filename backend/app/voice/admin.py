@@ -11,6 +11,8 @@ from app.core.audit import AuditEvent, record
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.voice.contracts import (
+    PublicNumberConfirmIn,
+    PublicNumberIn,
     VoiceCallDetail,
     VoiceCallOut,
     VoiceFeedbackIn,
@@ -22,11 +24,24 @@ from app.voice.contracts import (
 from app.voice.providers import provider_names
 
 
+def _forwarding_codes(called_number: str | None) -> tuple[str | None, str | None]:
+    """GSM call-forwarding codes: unconditional forward to the AI number, and to switch it off.
+
+    These are telecom-standard USSD codes (not carrier/app-specific) that work the same way
+    on Jio/Airtel/Vi/BSNL in India.
+    """
+    if not called_number:
+        return None, None
+    digits = called_number.lstrip("+")
+    return f"*21*{digits}#", "#21#"
+
+
 async def get_settings_out(session: AsyncSession, tenant_id: uuid.UUID) -> VoiceSettingsOut:
     row = (
         await session.execute(
             text(
-                "SELECT called_number, transfer_number, enabled, provider, telephony_mode"
+                "SELECT called_number, transfer_number, enabled, provider, telephony_mode,"
+                " client_public_number, carrier, forwarding_confirmed"
                 " FROM voice_numbers WHERE tenant_id = :t"
             ),
             {"t": tenant_id},
@@ -34,6 +49,7 @@ async def get_settings_out(session: AsyncSession, tenant_id: uuid.UUID) -> Voice
     ).first()
     if row is None:
         return VoiceSettingsOut(configured=False, providers=provider_names())
+    forwarding_code, forwarding_off_code = _forwarding_codes(row.called_number)
     return VoiceSettingsOut(
         configured=True,
         called_number=row.called_number,
@@ -42,6 +58,11 @@ async def get_settings_out(session: AsyncSession, tenant_id: uuid.UUID) -> Voice
         provider=row.provider,
         telephony_mode=row.telephony_mode,
         providers=provider_names(),
+        client_public_number=row.client_public_number,
+        carrier=row.carrier,
+        forwarding_confirmed=bool(row.forwarding_confirmed),
+        forwarding_code=forwarding_code,
+        forwarding_off_code=forwarding_off_code,
     )
 
 
@@ -58,19 +79,30 @@ async def put_settings(
         raise AppError("E-CONF-001", detail="called_number in use")
     mine = (
         await session.execute(
-            text("SELECT called_number FROM voice_numbers WHERE tenant_id = :t"), {"t": tenant_id}
+            text(
+                "SELECT called_number, client_public_number, carrier, forwarding_confirmed"
+                " FROM voice_numbers WHERE tenant_id = :t"
+            ),
+            {"t": tenant_id},
         )
     ).first()
     webhook_url: str | None = None
     if mine is None or mine.called_number != body.called_number or body.rotate_webhook:
         token = secrets.token_urlsafe(32)
+        # The AI (called_number) rotation is admin-only and unrelated to the client's own
+        # business number / forwarding setup — carry those fields over, don't wipe them.
+        keep_public_number = mine.client_public_number if mine is not None else None
+        keep_carrier = mine.carrier if mine is not None else None
+        keep_confirmed = bool(mine.forwarding_confirmed) if mine is not None else False
         await session.execute(
             text("DELETE FROM voice_numbers WHERE tenant_id = :t"), {"t": tenant_id}
         )
         await session.execute(
             text(
                 "INSERT INTO voice_numbers (called_number, webhook_token_hash, tenant_id, enabled,"
-                " transfer_number, provider, telephony_mode) VALUES (:n, :h, :tid, :e, :t, :p, :m)"
+                " transfer_number, provider, telephony_mode, client_public_number, carrier,"
+                " forwarding_confirmed)"
+                " VALUES (:n, :h, :tid, :e, :t, :p, :m, :cpn, :car, :fc)"
             ),
             {
                 "n": body.called_number,
@@ -80,6 +112,9 @@ async def put_settings(
                 "t": body.transfer_number,
                 "p": body.provider,
                 "m": body.telephony_mode,
+                "cpn": keep_public_number,
+                "car": keep_carrier,
+                "fc": keep_confirmed,
             },
         )
         webhook_url = f"{get_settings().public_base_url.rstrip('/')}/webhooks/voice/{token}"
@@ -246,3 +281,73 @@ async def stats(session: AsyncSession, days: int) -> VoiceStatsOut:
         feedback_bad=int(row.bad),
         agent_rate_percent=int(round(100 * int(row.handled) / calls)) if calls else 0,
     )
+
+
+async def put_public_number(
+    session: AsyncSession, tenant_id: uuid.UUID, principal: Principal, body: PublicNumberIn
+) -> VoiceSettingsOut:
+    """Owner sets/edits their own public business number + carrier (display/reference only).
+
+    Never touches `called_number` (the AI's real receiving number, admin-only). No provider
+    API call here — the client activates forwarding themselves from their own phone.
+    """
+    existing = (
+        await session.execute(
+            text("SELECT called_number FROM voice_numbers WHERE tenant_id = :t"), {"t": tenant_id}
+        )
+    ).first()
+    if existing is None:
+        raise AppError("E-NF-001")
+    await session.execute(
+        text(
+            "UPDATE voice_numbers SET client_public_number = :n, carrier = :c,"
+            " forwarding_confirmed = false, updated_at = now() WHERE tenant_id = :t"
+        ),
+        {"n": body.client_public_number, "c": body.carrier, "t": tenant_id},
+    )
+    await record(
+        session,
+        AuditEvent(
+            action="voice.public_number_changed",
+            entity_type="voice_numbers",
+            entity_id=str(tenant_id),
+            actor_user_id=principal.user_id,
+            actor_role=principal.role,
+        ),
+    )
+    return await get_settings_out(session, tenant_id)
+
+
+async def confirm_forwarding(
+    session: AsyncSession, tenant_id: uuid.UUID, principal: Principal, body: PublicNumberConfirmIn
+) -> VoiceSettingsOut:
+    """Owner confirms (or un-confirms) that they've dialled the forwarding code on their phone."""
+    row = (
+        await session.execute(
+            text("SELECT client_public_number FROM voice_numbers WHERE tenant_id = :t"),
+            {"t": tenant_id},
+        )
+    ).first()
+    if row is None:
+        raise AppError("E-NF-001")
+    if body.forwarding_confirmed and not row.client_public_number:
+        raise AppError("E-VAL-001")
+    await session.execute(
+        text(
+            "UPDATE voice_numbers SET forwarding_confirmed = :c, updated_at = now()"
+            " WHERE tenant_id = :t"
+        ),
+        {"c": body.forwarding_confirmed, "t": tenant_id},
+    )
+    await record(
+        session,
+        AuditEvent(
+            action="voice.forwarding_confirmed",
+            entity_type="voice_numbers",
+            entity_id=str(tenant_id),
+            new_value={"forwarding_confirmed": body.forwarding_confirmed},
+            actor_user_id=principal.user_id,
+            actor_role=principal.role,
+        ),
+    )
+    return await get_settings_out(session, tenant_id)

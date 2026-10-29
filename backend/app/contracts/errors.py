@@ -19,6 +19,7 @@ ERRORS: dict[str, tuple[int, str, str]] = {
     "E-POL-001": (409, "warning", "Publish se pehle regression pass hona zaroori hai."),
     "E-POL-002": (422, "warning", "Policy ke andar galti hai."),
     "E-POL-003": (409, "warning", "Sirf draft policy edit ho sakti hai."),
+    "E-POL-004": (422, "warning", "Auto mode chalu karne se pehle confirm karna zaroori hai."),
     "E-INT-001": (502, "error", "Integration se connection nahi hua. Credentials check karein."),
     "E-INT-002": (400, "warning", "Integration abhi set nahi hai."),
     "E-INT-003": (

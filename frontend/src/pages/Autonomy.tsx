@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api/client";
+import { useAuth } from "../auth/AuthContext";
 import type { Level, Limits, PolicyContent, Policy, Regression, WriteTool } from "../api/types";
 import { Async, Field, Screen } from "../components/common";
 import { useToast } from "../components/Toast";
@@ -32,8 +33,60 @@ async function publishContent(content: PolicyContent, baseVersion: number): Prom
   await api.post<Policy>(`/policies/${draft.id}/publish`);
 }
 
+function AutoConfirmModal({
+  tool,
+  onClose,
+  onDone,
+}: {
+  tool: WriteTool;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const toast = useToast();
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const confirm = async () => {
+    setBusy(true);
+    try {
+      await api.put("/policies/autonomy", {
+        tool,
+        level: "auto",
+        reason: reason.trim() || t[`tool_${tool}` as Key],
+        confirmed: true,
+      });
+      toast.info(t.autonomyAutoChanged);
+      onDone();
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="dialog" role="dialog" aria-modal="true">
+      <div className="card">
+        <h2>{t.autonomyAutoConfirmTitle}</h2>
+        <p>{t.autonomyAutoConfirmBody}</p>
+        <Field label={t.autonomyAutoConfirmReason} value={reason} onChange={setReason} placeholder={t[`tool_${tool}` as Key]} />
+        <div className="row">
+          <button type="button" disabled={busy || reason.trim().length < 5} onClick={() => void confirm()}>
+            {t.autonomyAutoConfirmGo}
+          </button>
+          <button type="button" className="secondary" disabled={busy} onClick={onClose}>
+            {t.cancel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Editor({ policy, latest, onDone }: { policy: Policy; latest: number; onDone: () => void }) {
   const toast = useToast();
+  const { user } = useAuth();
+  const isOwner = user?.role === "owner";
   const c = policy.content;
   const [levels, setLevels] = useState<Record<WriteTool, Level>>({
     address_update: c.autonomy?.address_update ?? "off",
@@ -46,6 +99,8 @@ function Editor({ policy, latest, onDone }: { policy: Policy; latest: number; on
     return Object.fromEntries(LIMIT_KEYS.map((k) => [k, String(base[k] / 100)])) as Record<keyof Limits, string>;
   });
   const [busy, setBusy] = useState(false);
+  const [autoTarget, setAutoTarget] = useState<WriteTool | null>(null);
+  const [turningOff, setTurningOff] = useState<WriteTool | null>(null);
 
   const save = async () => {
     setBusy(true);
@@ -68,6 +123,24 @@ function Editor({ policy, latest, onDone }: { policy: Policy; latest: number; on
     }
   };
 
+  const turnOffAuto = async (tool: WriteTool) => {
+    setTurningOff(tool);
+    try {
+      await api.put("/policies/autonomy", {
+        tool,
+        level: "approval",
+        reason: t[`tool_${tool}` as Key],
+        confirmed: false,
+      });
+      toast.info(t.autonomyAutoChanged);
+      onDone();
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setTurningOff(null);
+    }
+  };
+
   return (
     <form
       onSubmit={(event) => {
@@ -75,24 +148,43 @@ function Editor({ policy, latest, onDone }: { policy: Policy; latest: number; on
         void save();
       }}
     >
-      <p>{t.autonomyIntro}</p>
+      <p>{isOwner ? t.autonomyIntro : t.autonomyIntroStaff}</p>
       {TOOLS.map((tool) => {
         const current = c.autonomy?.[tool] ?? "off";
+        if (current === "auto") {
+          return (
+            <label key={tool} className="field">
+              <span>{t[`tool_${tool}` as Key]}</span>
+              <div className="row">
+                <strong>{t.autonomyAutoByAdmin}</strong>
+                {isOwner && (
+                  <button type="button" className="secondary" disabled={turningOff === tool} onClick={() => void turnOffAuto(tool)}>
+                    {t.level_approval}
+                  </button>
+                )}
+              </div>
+            </label>
+          );
+        }
         return (
           <label key={tool} className="field">
             <span>{t[`tool_${tool}` as Key]}</span>
-            {current === "auto" ? (
-              <strong>{t.autonomyAutoByAdmin}</strong>
-            ) : (
-              <select
-                aria-label={t[`tool_${tool}` as Key]}
-                value={levels[tool]}
-                onChange={(event) => setLevels({ ...levels, [tool]: event.target.value as Level })}
-              >
-                <option value="off">{t.level_off}</option>
-                <option value="approval">{t.level_approval}</option>
-              </select>
-            )}
+            <select
+              aria-label={t[`tool_${tool}` as Key]}
+              value={levels[tool]}
+              onChange={(event) => {
+                const value = event.target.value as Level;
+                if (value === "auto") {
+                  setAutoTarget(tool);
+                  return;
+                }
+                setLevels({ ...levels, [tool]: value });
+              }}
+            >
+              <option value="off">{t.level_off}</option>
+              <option value="approval">{t.level_approval}</option>
+              {isOwner && <option value="auto">{t.level_auto}</option>}
+            </select>
           </label>
         );
       })}
@@ -111,6 +203,16 @@ function Editor({ policy, latest, onDone }: { policy: Policy; latest: number; on
           {t.autonomySave}
         </button>
       </div>
+      {autoTarget && (
+        <AutoConfirmModal
+          tool={autoTarget}
+          onClose={() => setAutoTarget(null)}
+          onDone={() => {
+            setAutoTarget(null);
+            onDone();
+          }}
+        />
+      )}
     </form>
   );
 }

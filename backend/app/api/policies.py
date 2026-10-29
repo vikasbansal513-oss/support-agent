@@ -1,8 +1,8 @@
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.deps import require_owner, require_user
@@ -11,10 +11,22 @@ from app.contracts.contracts import RegressionOut
 from app.core.db import get_session_factory, session_scope
 from app.core.errors import AppError
 from app.policy import service
+from app.v1 import autonomy
 from app.v1.policy import PolicyDraftAnyIn, PolicyOutAny
 
 router = APIRouter(prefix="/policies", tags=["policies"])
 Factory = async_sessionmaker[AsyncSession]
+
+
+class AutonomyIn(BaseModel):
+    tool: Literal["address_update", "order_cancel", "exchange_request", "refund_create"]
+    level: Literal["off", "approval", "auto"]
+    reason: str = Field(min_length=5, max_length=300)
+    confirmed: bool = False
+
+
+class AutonomyOut(BaseModel):
+    levels: dict[str, str]
 
 
 def _parse(body: dict[str, Any]) -> PolicyDraftAnyIn:
@@ -47,6 +59,29 @@ async def create_policy(
         factory, tenant_id=principal.tenant_id, user_id=principal.user_id
     ) as s:
         return await service.create_draft(s, principal, parsed.content, parsed.base_version)
+
+
+@router.put("/autonomy")
+async def set_own_autonomy(
+    body: AutonomyIn,
+    principal: Principal = Depends(require_owner),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> AutonomyOut:
+    """Let a brand owner raise/lower their own write-tool autonomy (off/approval/auto).
+
+    `auto` still requires the tenant to already be graduated to `mode="auto"` by a
+    platform admin (set_level enforces E-ADM-003) and, here, an explicit `confirmed`
+    flag so a stray click can't silently switch a tool to unattended writes.
+
+    Registered before `/{policy_id}` below: FastAPI matches routes in declaration order,
+    and `/{policy_id}` would otherwise swallow this path and fail UUID parsing on "autonomy".
+    """
+    if body.level == "auto" and not body.confirmed:
+        raise AppError("E-POL-004")
+    policy = await autonomy.set_level(
+        factory, principal, principal.tenant_id, body.tool, body.level, body.reason
+    )
+    return AutonomyOut(levels=policy.autonomy.model_dump(mode="json"))
 
 
 @router.put("/{policy_id}")

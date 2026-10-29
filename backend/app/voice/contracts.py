@@ -4,6 +4,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 E164 = re.compile(r"^\+[1-9][0-9]{7,14}$")
+INDIAN_MOBILE = re.compile(r"^[6-9][0-9]{9}$")
+Carrier = Literal["jio", "airtel", "vi", "bsnl", "other"]
 
 
 class VoiceEventIn(BaseModel):
@@ -85,6 +87,33 @@ class VoiceSettingsOut(BaseModel):
     provider: str = "generic"
     telephony_mode: Literal["ready_made", "diy_plivo"] = "ready_made"
     providers: list[str] = Field(default_factory=list)
+    client_public_number: str | None = None
+    carrier: Carrier | None = None
+    forwarding_confirmed: bool = False
+    forwarding_code: str | None = None
+    forwarding_off_code: str | None = None
+
+
+class PublicNumberIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    client_public_number: str | None = None
+    carrier: Carrier | None = None
+
+    @field_validator("client_public_number")
+    @classmethod
+    def _indian_mobile(cls, value: str | None) -> str | None:
+        if value is None or value.strip() == "":
+            return None
+        cleaned = re.sub(r"[\s\-()]", "", value)
+        cleaned = re.sub(r"^(\+91|91|0)", "", cleaned)
+        if not INDIAN_MOBILE.match(cleaned):
+            raise ValueError("number must be a 10-digit Indian mobile number")
+        return cleaned
+
+
+class PublicNumberConfirmIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    forwarding_confirmed: bool
 
 
 class VoiceCallOut(BaseModel):

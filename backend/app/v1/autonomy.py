@@ -18,25 +18,21 @@ SetLevel = Literal["off", "approval", "auto"]
 
 async def set_level(
     factory: Factory,
-    admin: Principal,
+    actor: Principal,
     tenant_id: uuid.UUID,
     tool: str,
     level: SetLevel,
     reason: str,
 ) -> PolicyV2:
-    """Admin-only way to put a write tool on `auto`: a new published policy version, audited."""
+    """Put a write tool on `auto`/`approval`/`off`: a new published policy version, audited.
+
+    `actor` must already be scoped to `tenant_id` (platform admin impersonating the
+    tenant, or the tenant's own owner) so that `policy_service.publish` can read
+    `actor.tenant_id`.
+    """
     if tool not in WRITE_TOOLS:
         raise AppError("E-NF-001")
-    actor = Principal(
-        user_id=admin.user_id,
-        email=admin.email,
-        name=admin.name,
-        realm="admin",
-        role="super_admin",
-        tenant_id=tenant_id,
-        mfa_ok=True,
-    )
-    async with session_scope(factory, tenant_id=tenant_id, user_id=admin.user_id) as session:
+    async with session_scope(factory, tenant_id=tenant_id, user_id=actor.user_id) as session:
         mode = (
             await session.execute(text("SELECT mode FROM tenants WHERE id = :t"), {"t": tenant_id})
         ).scalar_one_or_none()
@@ -67,7 +63,7 @@ async def set_level(
                 "UPDATE tenants SET auto_enabled_by = CASE WHEN :a THEN CAST(:u AS uuid) ELSE NULL END,"
                 " auto_enabled_at = CASE WHEN :a THEN now() ELSE NULL END WHERE id = :t"
             ),
-            {"a": any_auto, "u": admin.user_id, "t": tenant_id},
+            {"a": any_auto, "u": actor.user_id, "t": tenant_id},
         )
         await record(
             session,
@@ -78,8 +74,8 @@ async def set_level(
                 old_value={"tool": tool, "level": current.autonomy.level(tool)},
                 new_value={"tool": tool, "level": level},
                 reason=reason,
-                actor_user_id=admin.user_id,
-                actor_role="super_admin",
+                actor_user_id=actor.user_id,
+                actor_role=actor.role,
             ),
             tenant_id=tenant_id,
         )

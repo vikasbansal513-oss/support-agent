@@ -146,33 +146,45 @@ function Editor({ policy, onSaved }: { policy: Policy; onSaved: () => void }) {
 
 function HistoryModal({ items, onClose }: { items: Policy[]; onClose: () => void }) {
   const [openId, setOpenId] = useState<string | null>(null);
+  const open = items.find((p) => p.id === openId) ?? null;
   return (
     <div className="dialog" role="dialog" aria-modal="true">
-      <div className="card">
-        <div className="row">
-          <h2>{t.policyHistoryTitle}</h2>
-          <button type="button" className="secondary" onClick={onClose}>
-            {t.cancel}
-          </button>
-        </div>
-        {items.length === 0 && <p className="empty">{t.policyNoHistory}</p>}
-        {items.map((p) => (
-          <div key={p.id} className="card">
-            <button
-              type="button"
-              className="secondary row"
-              style={{ width: "100%", justifyContent: "space-between" }}
-              onClick={() => setOpenId(openId === p.id ? null : p.id)}
-            >
-              <strong>v{p.version}</strong>
-              <Chip tone={p.status === "published" ? "ok" : undefined}>
-                {p.status === "draft" ? t.policyDraft : p.status === "published" ? t.policyPublished : t.policyArchived}
-              </Chip>
-              <small>{formatIst(p.published_at ?? p.created_at)}</small>
+      <div className="card dialog-card">
+        <div className="row dialog-card-header">
+          <h2>{open ? `v${open.version}` : t.policyHistoryTitle}</h2>
+          <div className="row">
+            {open && (
+              <button type="button" className="secondary" onClick={() => setOpenId(null)}>
+                {t.policyHistoryBack}
+              </button>
+            )}
+            <button type="button" className="secondary" onClick={onClose}>
+              {t.cancel}
             </button>
-            {openId === p.id && <Editor policy={p} onSaved={() => undefined} />}
           </div>
-        ))}
+        </div>
+        {open ? (
+          <Editor key={open.id} policy={open} onSaved={() => undefined} />
+        ) : (
+          <>
+            {items.length === 0 && <p className="empty">{t.policyNoHistory}</p>}
+            {items.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className="secondary row card"
+                style={{ width: "100%", justifyContent: "space-between" }}
+                onClick={() => setOpenId(p.id)}
+              >
+                <strong>v{p.version}</strong>
+                <Chip tone={p.status === "published" ? "ok" : undefined}>
+                  {p.status === "draft" ? t.policyDraft : p.status === "published" ? t.policyPublished : t.policyArchived}
+                </Chip>
+                <small>{formatIst(p.published_at ?? p.created_at)}</small>
+              </button>
+            ))}
+          </>
+        )}
       </div>
     </div>
   );

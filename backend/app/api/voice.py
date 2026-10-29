@@ -3,12 +3,14 @@ import uuid
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.auth.deps import require_user
+from app.auth.deps import require_owner, require_user
 from app.auth.service import Principal
 from app.core.db import get_session_factory, session_scope
 from app.core.errors import AppError
 from app.voice import admin
 from app.voice.contracts import (
+    PublicNumberConfirmIn,
+    PublicNumberIn,
     VoiceCallDetail,
     VoiceCallOut,
     VoiceFeedbackIn,
@@ -40,6 +42,35 @@ async def get_voice_settings(
 # Calling number/provider setup is admin-only now (platform admin dashboard,
 # PUT /admin/tenants/{tenant_id}/voice-settings in app.api.admin_tenants). Clients can
 # only read their current status above; they can no longer configure it themselves.
+#
+# The client's OWN public/business number is different: it's the number their customers
+# already have (shown on Google etc.), kept as-is. The owner sets it here purely so the
+# dashboard can show them the right call-forwarding code to dial from their own phone —
+# no provider call happens, called_number (the AI's number) is never touched by this route.
+
+
+@router.put("/public-number")
+async def set_public_number(
+    body: PublicNumberIn,
+    principal: Principal = Depends(require_owner),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> VoiceSettingsOut:
+    async with session_scope(
+        factory, tenant_id=principal.tenant_id, user_id=principal.user_id
+    ) as s:
+        return await admin.put_public_number(s, _tenant(principal), principal, body)
+
+
+@router.put("/public-number/confirm")
+async def confirm_public_number_forwarding(
+    body: PublicNumberConfirmIn,
+    principal: Principal = Depends(require_owner),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> VoiceSettingsOut:
+    async with session_scope(
+        factory, tenant_id=principal.tenant_id, user_id=principal.user_id
+    ) as s:
+        return await admin.confirm_forwarding(s, _tenant(principal), principal, body)
 
 
 @router.get("/calls")

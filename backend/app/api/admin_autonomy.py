@@ -31,5 +31,17 @@ async def set_autonomy(
     admin: Principal = Depends(require_admin),  # noqa: B008
     factory: Factory = Depends(get_session_factory),  # noqa: B008
 ) -> AutonomyOut:
-    policy = await autonomy.set_level(factory, admin, tenant_id, body.tool, body.level, body.reason)
+    # Admin's own Principal has tenant_id=None (cross-tenant); set_level's downstream
+    # policy_service.publish() needs a Principal scoped to the target tenant, so
+    # impersonate it here with the admin's own identity for the audit trail.
+    actor = Principal(
+        user_id=admin.user_id,
+        email=admin.email,
+        name=admin.name,
+        realm="admin",
+        role="super_admin",
+        tenant_id=tenant_id,
+        mfa_ok=True,
+    )
+    policy = await autonomy.set_level(factory, actor, tenant_id, body.tool, body.level, body.reason)
     return AutonomyOut(levels=policy.autonomy.model_dump(mode="json"))

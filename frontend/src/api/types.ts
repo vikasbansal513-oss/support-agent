@@ -440,6 +440,8 @@ export interface ToolKill {
   at: string | null;
 }
 
+export type Carrier = "jio" | "airtel" | "vi" | "bsnl" | "other";
+
 export interface VoiceSettings {
   configured: boolean;
   called_number: string | null;
@@ -449,6 +451,11 @@ export interface VoiceSettings {
   provider: string;
   telephony_mode: "ready_made" | "diy_plivo";
   providers: string[];
+  client_public_number: string | null;
+  carrier: Carrier | null;
+  forwarding_confirmed: boolean;
+  forwarding_code: string | null;
+  forwarding_off_code: string | null;
 }
 
 export interface VoiceCall {
