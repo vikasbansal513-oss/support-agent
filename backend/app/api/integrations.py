@@ -120,7 +120,7 @@ async def put_courier(
     principal: Principal = Depends(require_owner),  # noqa: B008
     factory: Factory = Depends(get_session_factory),  # noqa: B008
 ) -> IntegrationOut:
-    if kind not in ("shiprocket", "delhivery"):
+    if kind not in service.COURIER_KINDS:
         raise AppError("E-NF-001")
     try:
         parsed = CourierIn.model_validate(body)

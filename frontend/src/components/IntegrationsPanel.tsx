@@ -11,6 +11,26 @@ const LABEL: Record<IntegrationKind, string> = {
   gmail: "Gmail",
   shiprocket: "Shiprocket",
   delhivery: "Delhivery",
+  bluedart: "Blue Dart",
+  dtdc: "DTDC",
+  ecom_express: "Ecom Express",
+  xpressbees: "XpressBees",
+  shadowfax: "Shadowfax",
+};
+
+export const COURIER_KINDS: IntegrationKind[] = [
+  "shiprocket",
+  "delhivery",
+  "bluedart",
+  "dtdc",
+  "ecom_express",
+  "xpressbees",
+  "shadowfax",
+];
+
+const COURIER_HINT: Partial<Record<IntegrationKind, string>> = {
+  delhivery: t.courierHintDelhivery,
+  shiprocket: t.courierHintShiprocket,
 };
 
 function IntegrationCard({ kind, item, onChange }: { kind: IntegrationKind; item: Integration | undefined; onChange: () => void }) {
@@ -110,9 +130,9 @@ function IntegrationCard({ kind, item, onChange }: { kind: IntegrationKind; item
               <Field label={t.gupshupAppName} value={d} onChange={setD} />
             </>
           )}
-          {(kind === "shiprocket" || kind === "delhivery") && (
+          {COURIER_KINDS.includes(kind) && (
             <Field
-              label={`${t.courierCredential} (${kind === "delhivery" ? t.courierHintDelhivery : t.courierHintShiprocket})`}
+              label={`${t.courierCredential} (${COURIER_HINT[kind] ?? t.courierHintGeneric})`}
               type="password"
               value={a}
               onChange={setA}
@@ -135,7 +155,7 @@ function IntegrationCard({ kind, item, onChange }: { kind: IntegrationKind; item
         <div className="row">
           {editable && (
             <button type="button" className="secondary" onClick={() => setEditing(true)}>
-              {configured ? t.save : LABEL[kind]}
+              {configured ? t.editCredentials : LABEL[kind]}
             </button>
           )}
           {kind === "gmail" && (
@@ -160,12 +180,15 @@ function IntegrationCard({ kind, item, onChange }: { kind: IntegrationKind; item
 }
 
 export function IntegrationsPanel({ items, onChange }: { items: Integration[]; onChange: () => void }) {
-  const kinds: IntegrationKind[] = ["shopify", "gupshup", "shiprocket", "delhivery", "gmail"];
   return (
     <>
-      {kinds.map((kind) => (
+      <IntegrationCard kind="shopify" item={items.find((i) => i.kind === "shopify")} onChange={onChange} />
+      <IntegrationCard kind="gupshup" item={items.find((i) => i.kind === "gupshup")} onChange={onChange} />
+      <h2 className="section-heading">{t.logisticsHeading}</h2>
+      {COURIER_KINDS.map((kind) => (
         <IntegrationCard key={kind} kind={kind} item={items.find((i) => i.kind === kind)} onChange={onChange} />
       ))}
+      <IntegrationCard kind="gmail" item={items.find((i) => i.kind === "gmail")} onChange={onChange} />
     </>
   );
 }

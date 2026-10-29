@@ -131,7 +131,17 @@ export interface AgentStatus {
   integration_errors: string[];
 }
 
-export type IntegrationKind = "shopify" | "gupshup" | "gmail" | "shiprocket" | "delhivery";
+export type IntegrationKind =
+  | "shopify"
+  | "gupshup"
+  | "gmail"
+  | "shiprocket"
+  | "delhivery"
+  | "bluedart"
+  | "dtdc"
+  | "ecom_express"
+  | "xpressbees"
+  | "shadowfax";
 
 export interface Integration {
   kind: IntegrationKind;

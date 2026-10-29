@@ -19,7 +19,18 @@ Channel = Literal["whatsapp", "email"]
 Mode = Literal["shadow", "draft", "auto"]
 TenantStatus = Literal["pending_approval", "active", "paused", "suspended"]
 Role = Literal["owner", "agent"]
-IntegrationKind = Literal["shopify", "gupshup", "gmail", "shiprocket", "delhivery"]
+IntegrationKind = Literal[
+    "shopify",
+    "gupshup",
+    "gmail",
+    "shiprocket",
+    "delhivery",
+    "bluedart",
+    "dtdc",
+    "ecom_express",
+    "xpressbees",
+    "shadowfax",
+]
 Intent = Literal["order_status", "tracking", "other"]  # V0. V1 adds refund, cancel, exchange, address_change
 Sentiment = Literal["normal", "angry"]
 ActionStatus = Literal["claimed", "shadow", "draft", "sent", "failed", "needs_review", "rejected", "suppressed"]
@@ -597,7 +608,9 @@ class GupshupIn(Strict):
 
 
 class CourierIn(Strict):
-    credential: str = Field(min_length=6, max_length=400)  # Delhivery token, or Shiprocket "email:password"
+    # Delhivery/Blue Dart/DTDC/Ecom Express/XpressBees/Shadowfax: API token/key.
+    # Shiprocket: "email:password".
+    credential: str = Field(min_length=6, max_length=400)
 
 
 IntegrationIn = ShopifyIn | GupshupIn | CourierIn

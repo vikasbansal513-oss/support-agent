@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import type { Integration, Policy } from "../api/types";
 import { Async, Chip, Screen } from "../components/common";
-import { IntegrationsPanel } from "../components/IntegrationsPanel";
+import { COURIER_KINDS, IntegrationsPanel } from "../components/IntegrationsPanel";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
 import { t } from "../i18n";
@@ -40,7 +40,9 @@ export function Onboarding() {
       <Async value={list} reload={reload}>
         {(items) => {
           const ok = (kind: string) => items.some((i) => i.kind === kind && i.configured && i.status === "ok");
-          const courier = ok("shiprocket") || ok("delhivery");
+          const courier = COURIER_KINDS.some(
+            (kind) => items.some((i) => i.kind === kind && i.configured),
+          );
           const published = policies.state === "data" && policies.data.some((p) => p.status === "published");
           const steps: [string, boolean][] = [
             [t.stepShopify, ok("shopify")],

@@ -93,6 +93,30 @@ async function refresh(): Promise<boolean> {
   return refreshing;
 }
 
+/**
+ * Called once on app startup (before any route renders) to restore a
+ * session from the httponly refresh cookie, since the access token only
+ * lives in JS memory and is lost on every full page load/reload (e.g. the
+ * Gmail OAuth redirect round-trip). Tries the given realm's refresh
+ * endpoint; does not touch the shared `refreshing` lock used by request().
+ */
+export async function restoreSession(realm: Realm): Promise<LoginOut | null> {
+  const path = realm === "admin" ? "/admin/auth/refresh" : "/auth/refresh";
+  try {
+    const response = await fetch(baseUrl() + path, {
+      method: "POST",
+      credentials: "include",
+      headers: headersFor("POST", false, false),
+    });
+    if (!response.ok) return null;
+    const out = (await response.json()) as LoginOut;
+    applyLogin(out, realm);
+    return out;
+  } catch {
+    return null;
+  }
+}
+
 export async function request<T>(method: string, path: string, body?: unknown, retry = true): Promise<T> {
   const response = await fetch(baseUrl() + path, {
     method,

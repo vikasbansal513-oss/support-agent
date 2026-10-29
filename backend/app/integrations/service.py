@@ -25,12 +25,29 @@ from app.core.crypto import Crypto
 from app.core.db import session_scope
 from app.core.errors import AppError
 from app.core.masking import secret_hint
-from app.integrations.courier import CourierClient, DelhiveryClient, ShiprocketClient
+from app.integrations.courier import (
+    CourierClient,
+    DelhiveryClient,
+    NotVerifiedCourierClient,
+    ShiprocketClient,
+)
 from app.integrations.gmail import GmailUpstreamError, HttpGmailClient
 from app.integrations.http import DbCallRecorder, ExternalHttp
 from app.integrations.shopify import ShopifyClient
 
-KINDS: tuple[IntegrationKind, ...] = ("shopify", "gupshup", "gmail", "shiprocket", "delhivery")
+# Couriers jinki asli tracking API verify/connect ho chuki hai (apni client class hai).
+VERIFIED_COURIER_KINDS: tuple[IntegrationKind, ...] = ("shiprocket", "delhivery")
+# Saare couriers jo PUT /integrations/{kind} se configure ho sakte hain (verified + not-yet-verified).
+COURIER_KINDS: tuple[IntegrationKind, ...] = (
+    "shiprocket",
+    "delhivery",
+    "bluedart",
+    "dtdc",
+    "ecom_express",
+    "xpressbees",
+    "shadowfax",
+)
+KINDS: tuple[IntegrationKind, ...] = ("shopify", "gupshup", "gmail", *COURIER_KINDS)
 Factory = async_sessionmaker[AsyncSession]
 
 
@@ -156,17 +173,18 @@ async def put_shopify(
 async def put_courier(
     session: AsyncSession, principal: Principal, kind: IntegrationKind, body: CourierIn
 ) -> IntegrationOut:
-    if kind == "delhivery":
-        config: dict[str, str] = {}
-        secret = {"token": body.credential}
-        source = body.credential
-    else:
+    if kind == "shiprocket":
         login, sep, password = body.credential.partition(":")
         if not sep or "@" not in login or len(password) < 3:
             raise AppError("E-VAL-001", detail="credential")
-        config = {"login": login}
+        config: dict[str, str] = {"login": login}
         secret = {"email": login, "password": password}
         source = password
+    else:
+        # delhivery + bluedart/dtdc/ecom_express/xpressbees/shadowfax: single API token/key.
+        config = {}
+        secret = {"token": body.credential}
+        source = body.credential
     await store_secret(session, kind, config, secret, source)
     await _audit(session, principal, kind, "integration.set")
     return _out(kind, await _load(session, kind), _hint(source))
@@ -243,7 +261,9 @@ def build_courier(
 ) -> CourierClient:
     if kind == "delhivery":
         return DelhiveryClient(http, secret["token"])
-    return ShiprocketClient(http, tenant_id, secret["email"], secret["password"])
+    if kind == "shiprocket":
+        return ShiprocketClient(http, tenant_id, secret["email"], secret["password"])
+    return NotVerifiedCourierClient(kind)
 
 
 async def run_probe(
@@ -296,6 +316,14 @@ async def probe_integration(
             auth_error = not ok
         except GmailUpstreamError:
             ok = False
+    elif kind not in VERIFIED_COURIER_KINDS:
+        # Not yet wired to a real courier API - say so plainly instead of a
+        # misleading "auth_error" (credentials weren't even checked).
+        return ProbeResultOut(
+            ok=False,
+            detail="Credential save hai. Is courier ki asli tracking API abhi connect/verify nahi hui.",
+            error_code="E-INT-003",
+        )
     else:
         client = build_courier(kind, tenant_id, config, secret, http)
         ok = await client.probe()

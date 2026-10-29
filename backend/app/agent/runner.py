@@ -63,7 +63,7 @@ async def _tool_box(factory: Factory, tenant_id: uuid.UUID, transport: Any) -> T
     async with session_scope(factory, tenant_id=tenant_id) as session:
         loaded = {
             kind: await integrations.load_secret(session, kind)
-            for kind in ("shopify", "shiprocket", "delhivery")
+            for kind in ("shopify", *integrations.COURIER_KINDS)
         }
     for kind, item in loaded.items():
         if item is None:
@@ -75,7 +75,7 @@ async def _tool_box(factory: Factory, tenant_id: uuid.UUID, transport: Any) -> T
 
             shopify = ShopifyClient(http, config["shop_domain"], secret["access_token"])
         else:
-            couriers[kind] = integrations.build_courier(kind, tenant_id, config, secret, http)  # type: ignore[arg-type]
+            couriers[kind] = integrations.build_courier(kind, tenant_id, config, secret, http)
     return LiveV1ToolBox(tenant_id=tenant_id, shopify=shopify, couriers=couriers)
 
 

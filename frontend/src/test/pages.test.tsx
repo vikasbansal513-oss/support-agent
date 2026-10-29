@@ -81,7 +81,7 @@ describe("login", () => {
 });
 
 describe("guard", () => {
-  it("redirects anonymous users to login", () => {
+  it("redirects anonymous users to login", async () => {
     mockFetch(() => undefined);
     renderApp(
       <Routes>
@@ -90,7 +90,10 @@ describe("guard", () => {
       </Routes>,
       "/",
     );
-    expect(screen.getByText("login page")).toBeInTheDocument();
+    // AuthProvider tries to restore a session from the refresh cookie on
+    // mount (see AuthContext.tsx) before Guard decides anything, so the
+    // redirect lands after that resolves, not on the first render.
+    await waitFor(() => expect(screen.getByText("login page")).toBeInTheDocument());
     expect(screen.queryByText("secret")).toBeNull();
   });
 });
@@ -186,7 +189,13 @@ describe("privacy and notices", () => {
     const user = userEvent.setup();
     await user.type(screen.getByLabelText(t.privacySubject), "+919876543210");
     await user.click(screen.getByRole("button", { name: t.privacyCreate }));
-    await waitFor(() => expect(calls.some((c) => c.method === "POST" && (c.body as { kind: string }).kind === "export")).toBe(true));
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (c) => c.method === "POST" && c.url.endsWith("/privacy/requests") && (c.body as { kind: string } | undefined)?.kind === "export",
+        ),
+      ).toBe(true),
+    );
   });
 
   it("shows the draft banner on legal pages", async () => {

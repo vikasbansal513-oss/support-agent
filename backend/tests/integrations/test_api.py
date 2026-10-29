@@ -56,7 +56,18 @@ async def test_list_empty_then_put_shopify_masks_secret(
 ) -> None:
     headers, _ = await owner(api, mailer, runtime_factory)
     listed = (await api.get("/integrations", headers=headers)).json()
-    assert [i["kind"] for i in listed] == ["shopify", "gupshup", "gmail", "shiprocket", "delhivery"]
+    assert [i["kind"] for i in listed] == [
+        "shopify",
+        "gupshup",
+        "gmail",
+        "shiprocket",
+        "delhivery",
+        "bluedart",
+        "dtdc",
+        "ecom_express",
+        "xpressbees",
+        "shadowfax",
+    ]
     assert all(not i["configured"] and i["status"] == "not_configured" for i in listed)
     put = await api.put("/integrations/shopify", json=SHOP, headers=headers)
     assert put.status_code == 200, put.text

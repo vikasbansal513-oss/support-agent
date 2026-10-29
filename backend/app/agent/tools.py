@@ -68,9 +68,13 @@ class LiveToolBox:
         return self._log("tracking_lookup", {"awb": awb}, await client.track(awb))
 
     def _pick(self, courier_hint: str | None) -> CourierClient | None:
-        hint = (courier_hint or "").lower()
+        # Normalize to letters/digits only so multi-word courier names
+        # ("Ecom Express" -> kind "ecom_express") still match the hint
+        # Shopify gives, regardless of spaces/underscores/case.
+        hint = "".join(ch for ch in (courier_hint or "").lower() if ch.isalnum())
         for kind, client in self.couriers.items():
-            if kind in hint:
+            normalized_kind = "".join(ch for ch in kind.lower() if ch.isalnum())
+            if normalized_kind and normalized_kind in hint:
                 return client
         if len(self.couriers) == 1:
             return next(iter(self.couriers.values()))

@@ -79,6 +79,34 @@ class DelhiveryClient:
             return _fail("upstream_error")
 
 
+COURIER_LABELS: dict[str, str] = {
+    "bluedart": "Blue Dart",
+    "dtdc": "DTDC",
+    "ecom_express": "Ecom Express",
+    "xpressbees": "XpressBees",
+    "shadowfax": "Shadowfax",
+}
+
+
+class NotVerifiedCourierClient:
+    """Credential store ho jata hai, par in couriers ki asli tracking API
+    (endpoint, auth shape) abhi kisi bhi asli account par verify/connect
+    nahi hui hai. Real API shape invent nahi karte (CLAUDE.md niyam) -
+    isliye track() hamesha saaf "not_verified" batata hai, kabhi fake
+    status nahi deta. Jab kisi provider ka asli API verify ho jaye, usse
+    DelhiveryClient/ShiprocketClient jaisi apni client class milni
+    chahiye aur build_courier() me wahi use honi chahiye."""
+
+    def __init__(self, kind: str) -> None:
+        self.label = COURIER_LABELS.get(kind, kind)
+
+    async def probe(self) -> bool:
+        return False
+
+    async def track(self, awb: str) -> ToolResult:
+        return _fail("not_verified")
+
+
 class ShiprocketClient:
     BASE = "https://apiv2.shiprocket.in/v1/external"
 

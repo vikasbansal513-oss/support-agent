@@ -292,7 +292,7 @@ async def fetch_gmail(ctx: JobContext) -> dict[str, Any]:
 async def integration_health(ctx: JobContext) -> dict[str, Any]:
     tenant_id = ctx.job.tenant_id
     checked: dict[str, bool] = {}
-    kinds: tuple[IntegrationKind, ...] = ("shopify", "shiprocket", "delhivery", "gmail")
+    kinds: tuple[IntegrationKind, ...] = ("shopify", "gmail", *integrations.COURIER_KINDS)
     for kind in kinds:
         async with session_scope(ctx.factory, tenant_id=tenant_id) as session:
             exists = (

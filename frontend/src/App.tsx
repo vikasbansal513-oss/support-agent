@@ -26,7 +26,8 @@ import { Security } from "./pages/Security";
 import type { ReactElement } from "react";
 
 export function Guard({ access, children }: { access: Access; children: ReactElement }) {
-  const { user, realm } = useAuth();
+  const { user, realm, loading } = useAuth();
+  if (loading) return null;
   if (access === "public") return children;
   if (!user) return <Navigate to={access === "admin" ? "/admin/login" : "/login"} replace />;
   if (access === "admin") return realm === "admin" ? children : <Navigate to="/admin/login" replace />;

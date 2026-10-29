@@ -144,9 +144,44 @@ function Editor({ policy, onSaved }: { policy: Policy; onSaved: () => void }) {
   );
 }
 
+function HistoryModal({ items, onClose }: { items: Policy[]; onClose: () => void }) {
+  const [openId, setOpenId] = useState<string | null>(null);
+  return (
+    <div className="dialog" role="dialog" aria-modal="true">
+      <div className="card">
+        <div className="row">
+          <h2>{t.policyHistoryTitle}</h2>
+          <button type="button" className="secondary" onClick={onClose}>
+            {t.cancel}
+          </button>
+        </div>
+        {items.length === 0 && <p className="empty">{t.policyNoHistory}</p>}
+        {items.map((p) => (
+          <div key={p.id} className="card">
+            <button
+              type="button"
+              className="secondary row"
+              style={{ width: "100%", justifyContent: "space-between" }}
+              onClick={() => setOpenId(openId === p.id ? null : p.id)}
+            >
+              <strong>v{p.version}</strong>
+              <Chip tone={p.status === "published" ? "ok" : undefined}>
+                {p.status === "draft" ? t.policyDraft : p.status === "published" ? t.policyPublished : t.policyArchived}
+              </Chip>
+              <small>{formatIst(p.published_at ?? p.created_at)}</small>
+            </button>
+            {openId === p.id && <Editor policy={p} onSaved={() => undefined} />}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function PolicySettings() {
   const toast = useToast();
   const [list, reload] = useApi(() => api.get<Policy[]>("/policies"));
+  const [showHistory, setShowHistory] = useState(false);
   const create = useSubmit(async () => {
     const latest = list.state === "data" ? list.data[0] : undefined;
     const base = latest?.content;
@@ -158,11 +193,35 @@ export function PolicySettings() {
   }, toast.error);
   return (
     <Screen title={t.policyTitle}>
-      <button type="button" disabled={create.busy} onClick={() => void create.run()}>
-        {t.policyNew}
-      </button>
       <Async value={list} reload={reload}>
-        {(items) => <>{items.map((p) => <Editor key={`${p.id}-${p.status}`} policy={p} onSaved={reload} />)}</>}
+        {(items) => {
+          // Sirf live policy (draft agar edit chal raha hai, warna published) saamne
+          // dikhti hai. Baaki (archived / purani) "Version history" ke peeche rehti hain.
+          const draft = items.find((p) => p.status === "draft");
+          const published = items.find((p) => p.status === "published");
+          const current = draft ?? published;
+          const history = items.filter((p) => p.status !== "draft" && p.id !== current?.id);
+          return (
+            <>
+              {history.length > 0 && (
+                <button type="button" className="secondary" onClick={() => setShowHistory(true)}>
+                  {t.policyHistoryLink}
+                </button>
+              )}
+              {current ? (
+                <Editor key={`${current.id}-${current.status}`} policy={current} onSaved={reload} />
+              ) : (
+                <p className="empty">{t.policyEmpty}</p>
+              )}
+              {!draft && (
+                <button type="button" disabled={create.busy} onClick={() => void create.run()}>
+                  {current ? t.policyEdit : t.policyNew}
+                </button>
+              )}
+              {showHistory && <HistoryModal items={history} onClose={() => setShowHistory(false)} />}
+            </>
+          );
+        }}
       </Async>
     </Screen>
   );

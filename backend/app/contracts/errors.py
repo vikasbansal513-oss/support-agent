@@ -21,6 +21,11 @@ ERRORS: dict[str, tuple[int, str, str]] = {
     "E-POL-003": (409, "warning", "Sirf draft policy edit ho sakti hai."),
     "E-INT-001": (502, "error", "Integration se connection nahi hua. Credentials check karein."),
     "E-INT-002": (400, "warning", "Integration abhi set nahi hai."),
+    "E-INT-003": (
+        400,
+        "warning",
+        "Credential save ho gaya, par is courier ki asli tracking API abhi connect/verify nahi hui.",
+    ),
     "E-ACT-001": (409, "warning", "Is action par pehle hi faisla ho chuka hai."),
     "E-ACT-002": (409, "warning", "Customer ko bhejne ki 24 ghante ki window band hai."),
     "E-ACT-003": (409, "warning", "Customer ne messages band karwa diye hain."),
