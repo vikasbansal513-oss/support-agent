@@ -22,6 +22,14 @@ COOKIE_NAMES: dict[Realm, tuple[str, str]] = {
     "admin": ("sa_admin_refresh", "/"),
 }
 
+# Readable (non-httponly) twin of COOKIE_NAMES: holds the CSRF value so a
+# fresh page load (empty JS memory) can still send X-CSRF-Token on the
+# first /auth/refresh call. See cookies.set_csrf_cookie.
+CSRF_COOKIE_NAMES: dict[Realm, tuple[str, str]] = {
+    "brand": ("sa_csrf", "/"),
+    "admin": ("sa_admin_csrf", "/"),
+}
+
 
 def client_ip(request: Request) -> str:
     hops = get_settings().trusted_proxy_hops
