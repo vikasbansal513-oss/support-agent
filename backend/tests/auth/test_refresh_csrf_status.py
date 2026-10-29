@@ -36,7 +36,7 @@ async def test_refresh_cookie_attributes_and_no_token_in_cookie(
     _, logged = await _session(client, mailer, runtime_factory)
     header = logged.headers["set-cookie"].lower()
     assert "sa_refresh=" in header and "httponly" in header and "secure" in header
-    assert "samesite=none" in header and "path=/auth" in header
+    assert "samesite=none" in header and "path=/" in header
     assert logged.json()["access_token"] not in header
 
 

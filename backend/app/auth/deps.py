@@ -11,8 +11,15 @@ from app.core.db import get_session_factory, session_scope
 from app.core.errors import AppError
 
 COOKIE_NAMES: dict[Realm, tuple[str, str]] = {
-    "brand": ("sa_refresh", "/auth"),
-    "admin": ("sa_admin_refresh", "/admin/auth"),
+    # Path is "/" (not the backend's own "/auth" / "/admin/auth" route prefix):
+    # when the frontend reaches us through the Vercel same-origin proxy
+    # (rewrite "/api/:path*" -> backend), the browser sees the Set-Cookie as a
+    # response to "https://<frontend>/api/auth/...", so a cookie scoped to
+    # "/auth" never matches later requests to "/api/auth/refresh" and the
+    # cookie is silently never sent back. Realm isolation is by cookie NAME
+    # (sa_refresh vs sa_admin_refresh), not by Path, so "/" is safe for both.
+    "brand": ("sa_refresh", "/"),
+    "admin": ("sa_admin_refresh", "/"),
 }
 
 

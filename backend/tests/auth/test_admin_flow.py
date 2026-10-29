@@ -151,7 +151,7 @@ async def test_admin_cookie_name_and_path_differ(
     email = await make_admin(runtime_factory)
     logged = await login(client, email, admin=True)
     header = logged.headers["set-cookie"].lower()
-    assert "sa_admin_refresh=" in header and "path=/admin/auth" in header
+    assert "sa_admin_refresh=" in header and "path=/" in header
     brand_path = await client.post("/auth/refresh", headers=refresh_headers(logged))
     assert brand_path.status_code == 401
 
