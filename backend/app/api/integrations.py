@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 import httpx
@@ -23,6 +24,7 @@ from app.integrations import gmail_oauth, service
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 Factory = async_sessionmaker[AsyncSession]
+logger = logging.getLogger("app.integrations")
 
 
 class GmailConnectOut(BaseModel):
@@ -59,12 +61,20 @@ async def gmail_callback(
 ) -> RedirectResponse:
     base = get_settings().frontend_url.rstrip("/")
     result = "error"
-    if code and state and not error:
+    if error:
+        logger.warning("gmail connect: google returned error", extra={"google_error": error})
+    elif code and state:
         try:
             await gmail_oauth.complete_connect(factory, code, state, transport)
             result = "connected"
-        except AppError:
+        except AppError as exc:
+            logger.warning(
+                "gmail connect failed",
+                extra={"error_code": exc.code, "detail": exc.detail},
+            )
             result = "error"
+    else:
+        logger.warning("gmail connect: missing code/state", extra={"has_code": bool(code), "has_state": bool(state)})
     return RedirectResponse(f"{base}/settings/integrations?gmail={result}", status_code=303)
 
 
@@ -72,7 +82,6 @@ async def gmail_callback(
 async def gmail_disconnect(
     principal: Principal = Depends(require_owner),  # noqa: B008
     factory: Factory = Depends(get_session_factory),  # noqa: B008
-    transport: httpx.AsyncBaseTransport | None = Depends(service.get_transport),  # noqa: B008
 ) -> IntegrationOut:
     if principal.tenant_id is None:
         raise AppError("E-AUTH-007")
