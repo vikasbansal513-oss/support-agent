@@ -62,7 +62,10 @@ async def gmail_callback(
     base = get_settings().frontend_url.rstrip("/")
     result = "error"
     if error:
-        logger.warning("gmail connect: google returned error", extra={"google_error": error})
+        logger.warning(
+            "gmail connect: google returned error",
+            extra={"google_error": error},
+        )
     elif code and state:
         try:
             await gmail_oauth.complete_connect(factory, code, state, transport)
@@ -74,7 +77,10 @@ async def gmail_callback(
             )
             result = "error"
     else:
-        logger.warning("gmail connect: missing code/state", extra={"has_code": bool(code), "has_state": bool(state)})
+        logger.warning(
+            "gmail connect: missing code/state",
+            extra={"has_code": bool(code), "has_state": bool(state)},
+        )
     return RedirectResponse(f"{base}/settings/integrations?gmail={result}", status_code=303)
 
 
@@ -82,6 +88,7 @@ async def gmail_callback(
 async def gmail_disconnect(
     principal: Principal = Depends(require_owner),  # noqa: B008
     factory: Factory = Depends(get_session_factory),  # noqa: B008
+    transport: httpx.AsyncBaseTransport | None = Depends(service.get_transport),  # noqa: B008
 ) -> IntegrationOut:
     if principal.tenant_id is None:
         raise AppError("E-AUTH-007")
