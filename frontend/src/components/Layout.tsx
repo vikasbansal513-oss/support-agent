@@ -15,6 +15,7 @@ export function Layout() {
           ["/admin/alerts", t.navAlerts],
           ["/admin/control-tower", t.navControlTower],
           ["/admin/billing", t.navBilling],
+          ["/admin/security", t.navSecurity],
         ]
       : [
           ["/", t.navDashboard],

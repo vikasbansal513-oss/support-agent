@@ -22,7 +22,14 @@ from app.contracts.contracts import (
     TrackingFacts,
 )
 from app.core.masking import redact_for_llm
-from app.llm.client import LlmClient, LlmInvalid, LlmUnavailable, load_prompt, split_prompt
+from app.llm.client import (
+    LlmAuthError,
+    LlmClient,
+    LlmInvalid,
+    LlmUnavailable,
+    load_prompt,
+    split_prompt,
+)
 from app.llm.guard import wrap_untrusted
 from app.v1.policy import AnyPolicy, parse_any
 
@@ -44,6 +51,7 @@ WHY_STUCK = {
     "PRESS": "Customer ne media ya social media ki baat ki.",
     "POLICY_MISSING": "Is brand ki policy publish nahi hui.",
     "LLM_UNAVAILABLE": "AI service jawab nahi de payi.",
+    "LLM_AUTH_ERROR": "AI provider ki API key ya model configuration galat hai, admin ko check karna hai.",
     "INVALID_LLM_OUTPUT": "AI ka jawab samajh nahi aaya.",
     "LOW_CONFIDENCE": "Message ka matlab clear nahi tha.",
     "MIXED_INTENT": "Ek se zyada cheezein poochhi gayi.",
@@ -60,6 +68,7 @@ ACK_BY_REASON = {
     "HUMAN_REQUESTED": "human_requested_ack",
     "TOOL_FAILED": "tool_unavailable_ack",
     "LLM_UNAVAILABLE": "tool_unavailable_ack",
+    "LLM_AUTH_ERROR": "tool_unavailable_ack",
 }
 
 
@@ -250,6 +259,8 @@ def build_graph(deps: GraphDeps) -> Any:
                 schema=Classification,
                 prompt_version=CLASSIFY_VERSION,
             )
+        except LlmAuthError:
+            return _flag(state, "LLM_AUTH_ERROR")
         except LlmUnavailable:
             return _flag(state, "LLM_UNAVAILABLE")
         except LlmInvalid:

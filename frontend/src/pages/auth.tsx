@@ -8,7 +8,7 @@ import { useToast } from "../components/Toast";
 import { t } from "../i18n";
 
 function LoginForm({ realm }: { realm: Realm }) {
-  const { login, verifyMfa, user } = useAuth();
+  const { login, verifyMfa, user, realm: currentRealm, loading } = useAuth();
   const navigate = useNavigate();
   const toast = useToast();
   const [email, setEmail] = useState("");
@@ -18,7 +18,8 @@ function LoginForm({ realm }: { realm: Realm }) {
   const [busy, setBusy] = useState(false);
   const home = realm === "admin" ? "/admin" : "/";
 
-  if (user) return <Navigate to={home} replace />;
+  if (loading) return <div className="auth"><p className="loading">{t.loading}</p></div>;
+  if (user && currentRealm === realm) return <Navigate to={home} replace />;
 
   const fail = (err: unknown) => {
     if (err instanceof ApiError && err.code === "E-AUTH-009") {

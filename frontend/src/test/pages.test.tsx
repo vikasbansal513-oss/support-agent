@@ -31,7 +31,7 @@ const STATS = {
 
 async function loginFirst() {
   const user = userEvent.setup();
-  await user.type(screen.getByLabelText(t.email), "o@brand.example");
+  await user.type(await screen.findByLabelText(t.email), "o@brand.example");
   await user.type(screen.getByLabelText(t.password), "correct horse battery");
   await user.click(screen.getByRole("button", { name: t.login }));
   return user;

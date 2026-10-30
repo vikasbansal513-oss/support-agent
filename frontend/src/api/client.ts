@@ -111,7 +111,7 @@ async function refresh(): Promise<boolean> {
  * so the CSRF header is read from the readable sa_csrf/sa_admin_csrf
  * cookie instead of `session.csrf`.
  */
-export async function restoreSession(realm: Realm): Promise<LoginOut | null> {
+export async function restoreSession(realm: Realm, activate = true): Promise<LoginOut | null> {
   const path = realm === "admin" ? "/admin/auth/refresh" : "/auth/refresh";
   try {
     const headers = new Headers();
@@ -124,7 +124,7 @@ export async function restoreSession(realm: Realm): Promise<LoginOut | null> {
     });
     if (!response.ok) return null;
     const out = (await response.json()) as LoginOut;
-    applyLogin(out, realm);
+    if (activate) applyLogin(out, realm);
     return out;
   } catch {
     return null;

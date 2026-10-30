@@ -54,13 +54,16 @@ async def load_effective(factory: Factory) -> EffectiveLlm:
         return env
     if row is None:
         return env
-    api_key = env.api_key
+    api_key = ""
     if row.api_key_enc:
         try:
             api_key = Crypto(get_settings().encryption_key).decrypt(row.api_key_enc)
         except CryptoError:
             logger.error("llm settings key decrypt failed")
-            return env
+    elif row.provider == env.provider:
+        api_key = env.api_key
+    else:
+        logger.error("llm settings have no key for the selected provider")
     return EffectiveLlm(row.provider, row.model, api_key, row.base_url, "dashboard")
 
 

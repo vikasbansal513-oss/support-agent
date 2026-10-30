@@ -46,6 +46,8 @@ class AnthropicProvider:
         self.model = model
 
     async def complete(self, system: str, user: str, max_tokens: int) -> RawCompletion:
+        if not self._key:
+            raise ProviderError("auth_error")
         try:
             response = await self._http.request(
                 "POST",
@@ -101,6 +103,8 @@ class OpenAICompatProvider:
         self.model = model
 
     async def complete(self, system: str, user: str, max_tokens: int) -> RawCompletion:
+        if not self._key:
+            raise ProviderError("auth_error")
         try:
             response = await self._http.request(
                 "POST",

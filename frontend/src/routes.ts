@@ -40,4 +40,5 @@ export const ROUTES: RouteDef[] = [
   { path: "/admin/billing", access: "admin", screen: "AdminBilling" },
   { path: "/admin/billing/settings", access: "admin", screen: "AdminBillingSettings" },
   { path: "/admin/billing/invoices/:id", access: "admin", screen: "AdminInvoice" },
+  { path: "/admin/security", access: "admin", screen: "AdminSecurity" },
 ];

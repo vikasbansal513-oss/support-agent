@@ -1,6 +1,6 @@
 {
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://support-agent-807652707800.asia-south1.run.app/:path*" },
+    { "source": "/api/:path*", "destination": "https://support-agent-tfvu734waa-el.a.run.app/:path*" },
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "headers": [

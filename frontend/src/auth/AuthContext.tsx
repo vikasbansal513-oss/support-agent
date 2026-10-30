@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useLocation } from "react-router-dom";
 import { applyLogin, clearSession, logoutRequest, publicPost, restoreSession, setSessionLostHandler } from "../api/client";
 import type { LoginOut, MfaChallenge, Realm, User } from "../api/types";
 
@@ -18,8 +19,12 @@ function isChallenge(value: LoginOut | MfaChallenge): value is MfaChallenge {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const location = useLocation();
+  const requestedRealm: Realm = location.pathname === "/admin" || location.pathname.startsWith("/admin/")
+    ? "admin"
+    : "brand";
   const [user, setUser] = useState<User | null>(null);
-  const [realm, setRealm] = useState<Realm>("brand");
+  const [realm, setRealm] = useState<Realm>(requestedRealm);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -27,34 +32,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => setSessionLostHandler(null);
   }, []);
 
-  // Restore session from the httponly refresh cookie on every app startup
-  // (first load, and every full page reload — e.g. coming back from the
-  // Gmail OAuth redirect). The access token lives only in JS memory, so
-  // without this the Guard sees user=null and bounces to /login before
-  // this ever gets a chance to run via a failed request.
+  // Restore only the session realm requested by the current route. This keeps
+  // an existing Brand cookie from taking precedence over Admin routes (and
+  // vice versa), while retaining independent HttpOnly refresh cookies.
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
+    setUser(null);
+    setRealm(requestedRealm);
+    clearSession();
+
     (async () => {
-      const brand = await restoreSession("brand");
+      const restored = await restoreSession(requestedRealm, false);
       if (cancelled) return;
-      if (brand) {
-        setRealm("brand");
-        setUser(brand.user);
-        setLoading(false);
-        return;
-      }
-      const admin = await restoreSession("admin");
-      if (cancelled) return;
-      if (admin) {
-        setRealm("admin");
-        setUser(admin.user);
+      if (restored) {
+        applyLogin(restored, requestedRealm);
+        setUser(restored.user);
       }
       setLoading(false);
     })();
+
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [requestedRealm]);
 
   const login = useCallback(async (email: string, password: string, target: Realm) => {
     const path = target === "admin" ? "/admin/auth/login" : "/auth/login";

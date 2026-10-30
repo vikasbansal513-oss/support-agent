@@ -27,6 +27,10 @@ class LlmUnavailable(Exception):
     pass
 
 
+class LlmAuthError(LlmUnavailable):
+    pass
+
+
 class LlmInvalid(Exception):
     pass
 
@@ -191,6 +195,9 @@ class LlmClient:
                 await self._record(
                     tenant_id, run_id, purpose, prompt_version, started, "error", None
                 )
+                if exc.kind == "auth_error":
+                    logger.error("llm auth failed", extra={"provider": self._provider.name})
+                    raise LlmAuthError(exc.kind) from exc
                 raise LlmUnavailable(exc.kind) from exc
             try:
                 parsed = schema.model_validate(extract_json(completion.text))

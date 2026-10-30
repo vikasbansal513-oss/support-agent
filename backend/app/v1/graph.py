@@ -23,7 +23,14 @@ from app.agent.validate import pick_language
 from app.contracts.contracts import OrderFacts, ToolResult
 from app.core import timeutil
 from app.core.masking import redact_for_llm
-from app.llm.client import LlmClient, LlmInvalid, LlmUnavailable, load_prompt, split_prompt
+from app.llm.client import (
+    LlmAuthError,
+    LlmClient,
+    LlmInvalid,
+    LlmUnavailable,
+    load_prompt,
+    split_prompt,
+)
 from app.llm.guard import wrap_untrusted
 from app.v1 import reply as reply_layer
 from app.v1 import templates as t
@@ -261,6 +268,8 @@ def build_graph_v1(deps: V1Deps) -> Any:
                 schema=Plan,
                 prompt_version=PLAN_VERSION,
             )
+        except LlmAuthError:
+            return _flag(state, "LLM_AUTH_ERROR")
         except LlmUnavailable:
             return _flag(state, "LLM_UNAVAILABLE")
         except LlmInvalid:

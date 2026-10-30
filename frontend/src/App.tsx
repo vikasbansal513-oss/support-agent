@@ -77,6 +77,7 @@ export function AppRoutes() {
         <Route path="/admin/billing" element={guarded("admin", <AdminBilling />)} />
         <Route path="/admin/billing/settings" element={guarded("admin", <AdminBillingSettings />)} />
         <Route path="/admin/billing/invoices/:id" element={guarded("admin", <AdminInvoice />)} />
+        <Route path="/admin/security" element={guarded("admin", <Security />)} />
       </Route>
       <Route path="*" element={<p className="empty">{t.notFound}</p>} />
     </Routes>
