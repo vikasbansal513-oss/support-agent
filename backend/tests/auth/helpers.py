@@ -52,6 +52,21 @@ def new_ip() -> str:
     return f"10.{octets[0]}.{octets[1]}.{octets[2]}"
 
 
+def _unique_brand(email: str) -> str:
+    """Derive a unique brand name from the email's local part.
+
+    Each call to active_user() creates a new tenant row whose slug must be
+    UNIQUE in the database.  Using a fixed default ("Test Brand") risks a
+    slug collision when multiple tests share the same session-scoped DB
+    (e.g. pytest -n 2 --dist loadfile assigns several files to the same
+    worker).  Deriving the brand from the already-unique email prefix
+    guarantees a distinct slug for every signup without touching production
+    code or DB constraints.
+    """
+    local = email.split("@")[0]  # e.g. "user-a3b4c5d6e7"
+    return f"Brand {local}"
+
+
 async def signup(
     client: httpx.AsyncClient, email: str, brand: str = "Test Brand", password: str = PASSWORD
 ) -> httpx.Response:
@@ -80,7 +95,7 @@ async def active_user(
     client: httpx.AsyncClient, mailer: MemoryMailer, factory: Factory, email: str | None = None
 ) -> str:
     email = email or new_email()
-    response = await signup(client, email)
+    response = await signup(client, email, brand=_unique_brand(email))
     assert response.status_code == 202, response.text
     verify = await client.post("/auth/verify-email", json={"token": mailer.last_token(email)})
     assert verify.status_code == 200, verify.text
