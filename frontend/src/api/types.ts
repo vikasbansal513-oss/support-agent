@@ -533,6 +533,20 @@ export interface BillingRates {
   unpriced: { provider: string; model: string }[];
 }
 
+export type SpeechProvider = "sarvam_stt" | "google_stt" | "sarvam_tts" | "google_tts";
+
+export interface SpeechRate {
+  provider: SpeechProvider;
+  unit: string;
+  rate_inr: string;
+  active: boolean;
+  updated_at: string;
+}
+
+export interface SpeechRatesOut {
+  rates: SpeechRate[];
+}
+
 export interface BillingProfile {
   tenant_id: string;
   tenant_name: string;

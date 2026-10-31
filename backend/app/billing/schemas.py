@@ -92,6 +92,24 @@ class LlmRatesOut(BaseModel):
     unpriced: list[ModelRef]
 
 
+SpeechProvider = Literal["sarvam_stt", "google_stt", "sarvam_tts", "google_tts"]
+
+
+class SpeechRateIn(Strict):
+    provider: SpeechProvider
+    unit: str = Field(min_length=1, max_length=40, pattern=r"^[a-z0-9_]{1,40}$")
+    rate_inr: Annotated[Decimal, Field(ge=0, le=1_000_000, max_digits=18, decimal_places=6)]
+    active: bool = True
+
+
+class SpeechRateOut(SpeechRateIn):
+    updated_at: datetime
+
+
+class SpeechRatesOut(BaseModel):
+    rates: list[SpeechRateOut]
+
+
 class ProfileIn(Strict):
     legal_name: str = Field(default="", max_length=200)
     address: str = Field(default="", max_length=500)

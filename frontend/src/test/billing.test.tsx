@@ -91,7 +91,7 @@ describe("billing pages", () => {
     renderApp(<AdminBilling />, "/admin/billing");
     const fx = await screen.findByLabelText(/USD/i);
     fireEvent.change(fx, { target: { value: "90" } });
-    fireEvent.click(screen.getAllByRole("button").find((b) => b.className !== "secondary" && b.textContent !== "")!);
+    fireEvent.click(screen.getByRole("button", { name: "Mahine ke rate save karein" }));
     await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
     const put = calls.find((c) => c.method === "PUT")!;
     expect(put.body).toEqual({ usd_inr: "90", cloudrun_actual_paise: null, telephony_actual_paise: null });

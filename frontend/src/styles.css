@@ -73,6 +73,16 @@ th, td { text-align: left; padding: .5rem; border-bottom: 1px solid var(--line);
 .bar { height: 10px; border-radius: 6px; background: var(--line); overflow: hidden; }
 .bar > div { height: 100%; background: var(--brand); }
 .bar.full > div { background: var(--urgent); }
+.tabs { display: flex; gap: .25rem; border-bottom: 1px solid var(--line); margin-bottom: 1rem; overflow-x: auto; }
+.tabs button { background: transparent; border: 0; border-bottom: 3px solid transparent; border-radius: 0; color: var(--muted); padding: .6rem .9rem; min-height: 40px; }
+.tabs button.active { color: var(--brand); border-bottom-color: var(--brand); font-weight: 600; }
+.subtabs { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: 1rem; }
+.subtabs button { background: var(--card); border: 1px solid var(--line); color: var(--muted); padding: .45rem .8rem; min-height: 36px; border-radius: 999px; }
+.subtabs button.active { background: var(--brand); color: #fff; border-color: var(--brand); }
+.breakrow { display: grid; grid-template-columns: 160px 1fr 110px 48px; gap: .6rem; align-items: center; margin: .6rem 0; }
+@media (max-width: 640px) {
+  .breakrow { grid-template-columns: 100px 1fr 90px 36px; font-size: .85rem; }
+}
 .verdicts { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
 @media (max-width: 640px) {
   .layout main { padding: .75rem; }

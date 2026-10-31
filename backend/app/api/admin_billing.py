@@ -22,6 +22,9 @@ from app.billing.schemas import (
     PeriodOut,
     ProfileIn,
     ProfileRowOut,
+    SpeechRateIn,
+    SpeechRateOut,
+    SpeechRatesOut,
 )
 from app.core.db import get_session_factory, session_scope
 from app.core.errors import AppError
@@ -73,6 +76,25 @@ async def save_rate(
 ) -> LlmRateOut:
     async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
         return await service.save_rate(session, body, admin.user_id)
+
+
+@router.get("/speech-rates")
+async def read_speech_rates(
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> SpeechRatesOut:
+    async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
+        return await service.load_speech_rates(session)
+
+
+@router.put("/speech-rates")
+async def save_speech_rate(
+    body: SpeechRateIn,
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> SpeechRateOut:
+    async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
+        return await service.save_speech_rate(session, body, admin.user_id)
 
 
 @router.get("/profiles")

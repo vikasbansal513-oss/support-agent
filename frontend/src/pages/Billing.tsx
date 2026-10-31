@@ -11,13 +11,16 @@ import type {
   GenerateResult,
   Invoice,
   InvoiceLine,
+  SpeechProvider,
+  SpeechRate,
+  SpeechRatesOut,
 } from "../api/types";
 import { GST_STATES, flagText, isPositiveDecimal, paiseToInput, previousMonthIst, stateName, tokens } from "../billing";
 import { Async, Chip, Empty, Field, Screen } from "../components/common";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
 import { formatPaise, rupeesToPaise } from "../format";
-import { t } from "../i18n";
+import { t, type Key } from "../i18n";
 
 function StateSelect({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   return (
@@ -43,8 +46,11 @@ function minutesText(seconds: number): string {
   return (seconds / 60).toFixed(2);
 }
 
+type OverviewTab = "overview" | "invoices" | "usage";
+
 export function AdminBilling() {
   const [period, setPeriod] = useState(previousMonthIst());
+  const [tab, setTab] = useState<OverviewTab>("overview");
   const [data, reload] = useApi(() => api.get<BillingPeriod>(`/admin/billing/periods/${period}`), [period]);
   return (
     <Screen title={t.billTitle}>
@@ -62,12 +68,24 @@ export function AdminBilling() {
         </label>
         <Link to="/admin/billing/settings">{t.billSettingsLink}</Link>
       </div>
+      <div className="tabs" role="tablist">
+        <button type="button" role="tab" className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>
+          {t.billTabOverview}
+        </button>
+        <button type="button" role="tab" className={tab === "invoices" ? "active" : ""} onClick={() => setTab("invoices")}>
+          {t.billTabInvoices}
+        </button>
+        <button type="button" role="tab" className={tab === "usage" ? "active" : ""} onClick={() => setTab("usage")}>
+          {t.billTabUsage}
+        </button>
+      </div>
       <Async value={data} reload={reload}>
         {(current) => (
           <PeriodView
             key={`${current.period}-${current.usd_inr}-${current.cloudrun_actual_paise}-${current.telephony_actual_paise}`}
             data={current}
             reload={reload}
+            tab={tab}
           />
         )}
       </Async>
@@ -75,12 +93,13 @@ export function AdminBilling() {
   );
 }
 
-function PeriodView({ data, reload }: { data: BillingPeriod; reload: () => void }) {
+function PeriodView({ data, reload, tab }: { data: BillingPeriod; reload: () => void; tab: OverviewTab }) {
   const toast = useToast();
   const [fx, setFx] = useState(data.usd_inr ? String(Number(data.usd_inr)) : "");
   const [actual, setActual] = useState(data.cloudrun_actual_paise === null ? "" : paiseToInput(data.cloudrun_actual_paise));
   const [telActual, setTelActual] = useState(data.telephony_actual_paise === null ? "" : paiseToInput(data.telephony_actual_paise));
   const [busy, setBusy] = useState(false);
+  const [invoiceFilter, setInvoiceFilter] = useState<"all" | "draft" | "final">("all");
 
   const fxValid = fx.trim() === "" || isPositiveDecimal(fx);
   const actualPaise = actual.trim() === "" ? null : rupeesToPaise(actual);
@@ -121,8 +140,14 @@ function PeriodView({ data, reload }: { data: BillingPeriod; reload: () => void 
 
   const unpriced = Array.from(new Set(data.rows.flatMap((row) => row.unpriced_models)));
   const sum = (pick: (row: BillingPeriodRow) => number | null) => data.rows.reduce((total, row) => total + (pick(row) ?? 0), 0);
+  const llmTotal = sum((r) => r.llm_paise);
+  const cloudTotal = sum((r) => r.cloudrun_paise);
+  const telTotal = sum((r) => r.telephony_paise);
+  const feeTotal = sum((r) => r.default_platform_fee_paise);
+  const grandTotal = Math.max(1, llmTotal + cloudTotal + telTotal + feeTotal);
+  const pct = (value: number) => Math.round((value / grandTotal) * 100);
 
-  return (
+  const banners = (
     <>
       {data.usd_inr === null && <p className="banner">{t.billFxMissing}</p>}
       {!data.period_ended && <p className="banner">{t.billPeriodRunning}</p>}
@@ -141,159 +166,369 @@ function PeriodView({ data, reload }: { data: BillingPeriod; reload: () => void 
           {t.billTelUnallocated} {paiseToInput(data.telephony_unallocated_paise)}
         </p>
       )}
-      <section className="card">
-        <h2>{t.billPeriodSettings}</h2>
-        <Field label={t.billUsdInr} value={fx} onChange={setFx} placeholder="88" />
-        <Field label={t.billCloudActual} value={actual} onChange={setActual} placeholder="0.00" />
-        <small>{t.billCloudActualHint}</small>
-        <Field label={t.billTelActual} value={telActual} onChange={setTelActual} placeholder="0.00" />
-        <small>{t.billTelActualHint}</small>
-        <div className="row">
-          <button type="button" onClick={() => void savePeriod()} disabled={busy || !fxValid || !actualValid || !telActualValid}>
-            {t.billSavePeriod}
-          </button>
-          <button type="button" className="secondary" onClick={() => void generate(null)} disabled={!canGenerate}>
-            {t.billGenerateAll}
-          </button>
+    </>
+  );
+
+  if (tab === "overview") {
+    return (
+      <>
+        {banners}
+        <div className="grid">
+          <div className="stat">
+            <span className="stat-value">{formatPaise(cloudTotal)}</span>
+            <span className="stat-label">{t.billKpiCloud}</span>
+          </div>
+          <div className="stat">
+            <span className="stat-value">{formatPaise(llmTotal)}</span>
+            <span className="stat-label">{t.billKpiLlm}</span>
+          </div>
+          <div className="stat">
+            <span className="stat-value">{formatPaise(telTotal)}</span>
+            <span className="stat-label">{t.billKpiTelephony}</span>
+          </div>
+          <div className="stat">
+            <span className="stat-value">{formatPaise(feeTotal)}</span>
+            <span className="stat-label">{t.billKpiFee}</span>
+          </div>
         </div>
-      </section>
-      {data.rows.length === 0 ? (
-        <Empty>{t.noRows}</Empty>
-      ) : (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>{t.brandName}</th>
-                <th>{t.billCalls}</th>
-                <th>{t.billTokens}</th>
-                <th>{t.billLlmCost}</th>
-                <th>{t.billCloudTime}</th>
-                <th>{t.billCloudCost}</th>
-                <th>{t.billCallTime}</th>
-                <th>{t.billCallCost}</th>
-                <th>{t.billDefaultFee}</th>
-                <th>{t.billInvoice}</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {data.rows.map((row) => (
-                <tr key={row.tenant_id}>
-                  <td>
-                    {row.name}
-                    <br />
-                    <small>{row.slug}</small>
-                  </td>
-                  <td className="num">{tokens(row.calls)}</td>
-                  <td className="num">
-                    {tokens(row.input_tokens)} / {tokens(row.output_tokens)}
-                  </td>
-                  <td className="num">{row.llm_paise === null ? "-" : formatPaise(row.llm_paise)}</td>
-                  <td className="num">
-                    {hoursText(row.compute_seconds)} h
-                    <br />
-                    <small>{row.jobs} jobs</small>
-                  </td>
-                  <td className="num">{row.cloudrun_paise === null ? "-" : formatPaise(row.cloudrun_paise)}</td>
-                  <td className="num">
-                    {minutesText(row.voice_call_seconds)} min
-                    <br />
-                    <small>{row.voice_calls} calls</small>
-                  </td>
-                  <td className="num">{row.telephony_paise === null ? "-" : formatPaise(row.telephony_paise)}</td>
-                  <td className="num">{formatPaise(row.default_platform_fee_paise)}</td>
-                  <td>
-                    {row.invoice ? (
-                      <>
-                        <Chip tone={row.invoice.status === "final" ? "ok" : "warn"}>{row.invoice.status === "final" ? t.billStatus_final : t.billStatus_draft}</Chip>
+        <section className="card">
+          <h2>{t.billBreakdownTitle}</h2>
+          <p className="empty" style={{ margin: "0 0 .5rem" }}>
+            {t.billBreakdownSub}
+          </p>
+          <div className="breakrow">
+            <span>{t.billKpiCloud}</span>
+            <div className="bar">
+              <div style={{ width: `${pct(cloudTotal)}%` }} />
+            </div>
+            <b>{formatPaise(cloudTotal)}</b>
+            <span className="empty">{pct(cloudTotal)}%</span>
+          </div>
+          <div className="breakrow">
+            <span>{t.billKpiLlm}</span>
+            <div className="bar">
+              <div style={{ width: `${pct(llmTotal)}%` }} />
+            </div>
+            <b>{formatPaise(llmTotal)}</b>
+            <span className="empty">{pct(llmTotal)}%</span>
+          </div>
+          <div className="breakrow">
+            <span>{t.billKpiTelephony}</span>
+            <div className="bar">
+              <div style={{ width: `${pct(telTotal)}%` }} />
+            </div>
+            <b>{formatPaise(telTotal)}</b>
+            <span className="empty">{pct(telTotal)}%</span>
+          </div>
+          <div className="breakrow">
+            <span>{t.billKpiFee}</span>
+            <div className="bar">
+              <div style={{ width: `${pct(feeTotal)}%` }} />
+            </div>
+            <b>{formatPaise(feeTotal)}</b>
+            <span className="empty">{pct(feeTotal)}%</span>
+          </div>
+        </section>
+        <section className="card">
+          <h2>{t.billPeriodSettings}</h2>
+          <Field label={t.billUsdInr} value={fx} onChange={setFx} placeholder="88" />
+          <Field label={t.billCloudActual} value={actual} onChange={setActual} placeholder="0.00" />
+          <small>{t.billCloudActualHint}</small>
+          <Field label={t.billTelActual} value={telActual} onChange={setTelActual} placeholder="0.00" />
+          <small>{t.billTelActualHint}</small>
+          <div className="row">
+            <button type="button" onClick={() => void savePeriod()} disabled={busy || !fxValid || !actualValid || !telActualValid}>
+              {t.billSavePeriod}
+            </button>
+            <button type="button" className="secondary" onClick={() => void generate(null)} disabled={!canGenerate}>
+              {t.billGenerateAll}
+            </button>
+          </div>
+        </section>
+        <section className="card">
+          <h2>{t.billClientWiseTitle}</h2>
+          <p className="empty" style={{ margin: "0 0 .5rem" }}>
+            {t.billClientWiseSub}
+          </p>
+          {data.rows.length === 0 ? (
+            <Empty>{t.noRows}</Empty>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>{t.brandName}</th>
+                    <th className="num">{t.billCloudCost}</th>
+                    <th className="num">{t.billLlmCost}</th>
+                    <th className="num">{t.billCallCost}</th>
+                    <th className="num">{t.billDefaultFee}</th>
+                    <th>{t.billInvoice}</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.rows.map((row) => (
+                    <tr key={row.tenant_id}>
+                      <td>
+                        {row.name}
                         <br />
-                        <small>{row.invoice.invoice_no ?? "-"}</small> {formatPaise(row.invoice.total_paise)}
-                      </>
-                    ) : (
-                      "-"
-                    )}
-                  </td>
-                  <td>
-                    <div className="row">
-                      {row.invoice?.status !== "final" && (
-                        <button type="button" className="secondary" disabled={!canGenerate} onClick={() => void generate(row.tenant_id)} aria-label={`${t.billGenerateOne} ${row.name}`}>
-                          {t.billGenerateOne}
-                        </button>
-                      )}
-                      {row.invoice && (
-                        <Link to={`/admin/billing/invoices/${row.invoice.id}`} aria-label={`${t.billOpenInvoice} ${row.name}`}>
+                        <small>{row.slug}</small>
+                      </td>
+                      <td className="num">{row.cloudrun_paise === null ? "-" : formatPaise(row.cloudrun_paise)}</td>
+                      <td className="num">{row.llm_paise === null ? "-" : formatPaise(row.llm_paise)}</td>
+                      <td className="num">{row.telephony_paise === null ? "-" : formatPaise(row.telephony_paise)}</td>
+                      <td className="num">{formatPaise(row.default_platform_fee_paise)}</td>
+                      <td>
+                        {row.invoice ? (
+                          <>
+                            <Chip tone={row.invoice.status === "final" ? "ok" : "warn"}>{row.invoice.status === "final" ? t.billStatus_final : t.billStatus_draft}</Chip>
+                            <br />
+                            <small>{row.invoice.invoice_no ?? "-"}</small> {formatPaise(row.invoice.total_paise)}
+                          </>
+                        ) : (
+                          "-"
+                        )}
+                      </td>
+                      <td>
+                        <div className="row">
+                          {row.invoice?.status !== "final" && (
+                            <button type="button" className="secondary" disabled={!canGenerate} onClick={() => void generate(row.tenant_id)} aria-label={`${t.billGenerateOne} ${row.name}`}>
+                              {t.billGenerateOne}
+                            </button>
+                          )}
+                          {row.invoice && (
+                            <Link to={`/admin/billing/invoices/${row.invoice.id}`} aria-label={`${t.billOpenInvoice} ${row.name}`}>
+                              {t.billOpenInvoice}
+                            </Link>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      </>
+    );
+  }
+
+  if (tab === "invoices") {
+    const withInvoice = data.rows.filter((row) => row.invoice !== null);
+    const filtered = withInvoice.filter((row) => invoiceFilter === "all" || row.invoice?.status === invoiceFilter);
+    return (
+      <>
+        {banners}
+        <p className="banner">{t.billPaymentNote}</p>
+        <section className="card">
+          <h2>{t.billInvoicesTitle}</h2>
+          <p className="empty" style={{ margin: "0 0 .5rem" }}>
+            {t.billInvoicesSub}
+          </p>
+          <div className="subtabs">
+            <button type="button" className={invoiceFilter === "all" ? "active" : ""} onClick={() => setInvoiceFilter("all")}>
+              {t.billInvoiceFilterAll} ({withInvoice.length})
+            </button>
+            <button type="button" className={invoiceFilter === "draft" ? "active" : ""} onClick={() => setInvoiceFilter("draft")}>
+              {t.billInvoiceFilterDraft} ({withInvoice.filter((r) => r.invoice?.status === "draft").length})
+            </button>
+            <button type="button" className={invoiceFilter === "final" ? "active" : ""} onClick={() => setInvoiceFilter("final")}>
+              {t.billInvoiceFilterFinal} ({withInvoice.filter((r) => r.invoice?.status === "final").length})
+            </button>
+          </div>
+          {filtered.length === 0 ? (
+            <Empty>{t.noRows}</Empty>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>{t.billInvNo}</th>
+                    <th>{t.brandName}</th>
+                    <th>{t.billForPeriod}</th>
+                    <th className="num">{t.billAmount}</th>
+                    <th>{t.billInvoice}</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((row) => (
+                    <tr key={row.tenant_id}>
+                      <td>{row.invoice?.invoice_no ?? "-"}</td>
+                      <td>
+                        {row.name} <small>{row.slug}</small>
+                      </td>
+                      <td>{data.period}</td>
+                      <td className="num">{formatPaise(row.invoice?.total_paise ?? 0)}</td>
+                      <td>
+                        <Chip tone={row.invoice?.status === "final" ? "ok" : "warn"}>{row.invoice?.status === "final" ? t.billStatus_final : t.billStatus_draft}</Chip>
+                      </td>
+                      <td>
+                        <Link to={`/admin/billing/invoices/${row.invoice?.id}`} aria-label={`${t.billOpenInvoice} ${row.name}`}>
                           {t.billOpenInvoice}
                         </Link>
-                      )}
-                    </div>
-                  </td>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      </>
+    );
+  }
+
+  return (
+    <>
+      {banners}
+      <section className="card">
+        <h2>{t.billUsageTitle}</h2>
+        <p className="empty" style={{ margin: "0 0 .5rem" }}>
+          {t.billUsageSub}
+        </p>
+        {data.rows.length === 0 ? (
+          <Empty>{t.noRows}</Empty>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>{t.brandName}</th>
+                  <th>{t.billCalls}</th>
+                  <th>{t.billTokens}</th>
+                  <th>{t.billLlmCost}</th>
+                  <th>{t.billCloudTime}</th>
+                  <th>{t.billCloudCost}</th>
+                  <th>{t.billCallTime}</th>
+                  <th>{t.billCallCost}</th>
                 </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr>
-                <th>{t.billTotals}</th>
-                <th className="num">{tokens(sum((r) => r.calls))}</th>
-                <th className="num">
-                  {tokens(sum((r) => r.input_tokens))} / {tokens(sum((r) => r.output_tokens))}
-                </th>
-                <th className="num">{formatPaise(sum((r) => r.llm_paise))}</th>
-                <th className="num">{hoursText(sum((r) => r.compute_seconds))} h</th>
-                <th className="num">{formatPaise(sum((r) => r.cloudrun_paise))}</th>
-                <th className="num">{minutesText(sum((r) => r.voice_call_seconds))} min</th>
-                <th className="num">{formatPaise(sum((r) => r.telephony_paise))}</th>
-                <th className="num">{formatPaise(sum((r) => r.default_platform_fee_paise))}</th>
-                <th colSpan={2} />
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      )}
+              </thead>
+              <tbody>
+                {data.rows.map((row) => (
+                  <tr key={row.tenant_id}>
+                    <td>
+                      {row.name}
+                      <br />
+                      <small>{row.slug}</small>
+                    </td>
+                    <td className="num">{tokens(row.calls)}</td>
+                    <td className="num">
+                      {tokens(row.input_tokens)} / {tokens(row.output_tokens)}
+                    </td>
+                    <td className="num">{row.llm_paise === null ? "-" : formatPaise(row.llm_paise)}</td>
+                    <td className="num">
+                      {hoursText(row.compute_seconds)} h
+                      <br />
+                      <small>{row.jobs} jobs</small>
+                    </td>
+                    <td className="num">{row.cloudrun_paise === null ? "-" : formatPaise(row.cloudrun_paise)}</td>
+                    <td className="num">
+                      {minutesText(row.voice_call_seconds)} min
+                      <br />
+                      <small>{row.voice_calls} calls</small>
+                    </td>
+                    <td className="num">{row.telephony_paise === null ? "-" : formatPaise(row.telephony_paise)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th>{t.billTotals}</th>
+                  <th className="num">{tokens(sum((r) => r.calls))}</th>
+                  <th className="num">
+                    {tokens(sum((r) => r.input_tokens))} / {tokens(sum((r) => r.output_tokens))}
+                  </th>
+                  <th className="num">{formatPaise(llmTotal)}</th>
+                  <th className="num">{hoursText(sum((r) => r.compute_seconds))} h</th>
+                  <th className="num">{formatPaise(cloudTotal)}</th>
+                  <th className="num">{minutesText(sum((r) => r.voice_call_seconds))} min</th>
+                  <th className="num">{formatPaise(telTotal)}</th>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </section>
     </>
   );
 }
 
+type SettingTab = "cloud" | "llm" | "speech" | "company" | "brands" | "plivo";
+const SETTING_TABS: [SettingTab, Key][] = [
+  ["cloud", "billSettingTabCloud"],
+  ["llm", "billSettingTabLlm"],
+  ["speech", "billSettingTabSpeech"],
+  ["company", "billSettingTabCompany"],
+  ["brands", "billSettingTabBrands"],
+  ["plivo", "billSettingTabPlivo"],
+];
+
 export function AdminBillingSettings() {
+  const [tab, setTab] = useState<SettingTab>("cloud");
   const [settings, reloadSettings] = useApi(() => api.get<BillingSettings>("/admin/billing/settings"));
   const [rates, reloadRates] = useApi(() => api.get<BillingRates>("/admin/billing/llm-rates"));
+  const [speech, reloadSpeech] = useApi(() => api.get<SpeechRatesOut>("/admin/billing/speech-rates"));
   const [profiles, reloadProfiles] = useApi(() => api.get<BillingProfile[]>("/admin/billing/profiles"));
   const [fill, setFill] = useState<{ provider: string; model: string } | null>(null);
   return (
     <Screen title={t.billSettingsTitle}>
       <Link to="/admin/billing">{t.billBack}</Link>
-      <Async value={settings} reload={reloadSettings}>
-        {(current) => <SettingsForm key={current.updated_at ?? "new"} current={current} onSaved={reloadSettings} />}
-      </Async>
-      <h2>{t.billRatesTitle}</h2>
-      <Async value={rates} reload={reloadRates}>
-        {(current) => <RatesPanel current={current} fill={fill} onFill={setFill} onSaved={() => { setFill(null); reloadRates(); }} />}
-      </Async>
-      <h2>{t.billProfilesTitle}</h2>
-      <Async value={profiles} reload={reloadProfiles}>
-        {(list) =>
-          list.length === 0 ? (
-            <Empty>{t.noRows}</Empty>
-          ) : (
-            <>
-              {list.map((profile) => (
-                <ProfileForm key={`${profile.tenant_id}-${profile.legal_name}-${profile.state_code}-${profile.default_platform_fee_paise}`} profile={profile} onSaved={reloadProfiles} />
-              ))}
-            </>
-          )
-        }
-      </Async>
+      <div className="tabs" role="tablist">
+        {SETTING_TABS.map(([key, label]) => (
+          <button key={key} type="button" role="tab" className={tab === key ? "active" : ""} onClick={() => setTab(key)}>
+            {t[label]}
+          </button>
+        ))}
+      </div>
+      {tab === "cloud" && (
+        <Async value={settings} reload={reloadSettings}>
+          {(current) => <CloudRunForm key={current.updated_at ?? "new"} current={current} onSaved={reloadSettings} />}
+        </Async>
+      )}
+      {tab === "llm" && (
+        <Async value={rates} reload={reloadRates}>
+          {(current) => <RatesPanel current={current} fill={fill} onFill={setFill} onSaved={() => { setFill(null); reloadRates(); }} />}
+        </Async>
+      )}
+      {tab === "speech" && (
+        <Async value={speech} reload={reloadSpeech}>
+          {(current) => <SpeechRatesPanel current={current} onSaved={reloadSpeech} />}
+        </Async>
+      )}
+      {tab === "company" && (
+        <Async value={settings} reload={reloadSettings}>
+          {(current) => <CompanyForm key={current.updated_at ?? "new"} current={current} onSaved={reloadSettings} />}
+        </Async>
+      )}
+      {tab === "brands" && (
+        <Async value={profiles} reload={reloadProfiles}>
+          {(list) =>
+            list.length === 0 ? (
+              <Empty>{t.noRows}</Empty>
+            ) : (
+              <>
+                {list.map((profile) => (
+                  <ProfileForm key={`${profile.tenant_id}-${profile.legal_name}-${profile.state_code}-${profile.default_platform_fee_paise}`} profile={profile} onSaved={reloadProfiles} />
+                ))}
+              </>
+            )
+          }
+        </Async>
+      )}
+      {tab === "plivo" && <PlivoPanel />}
     </Screen>
   );
 }
 
-function SettingsForm({ current, onSaved }: { current: BillingSettings; onSaved: () => void }) {
+function useSettingsForm(current: BillingSettings) {
   const toast = useToast();
   const [form, setForm] = useState(current);
   const [busy, setBusy] = useState(false);
   const set = <K extends keyof BillingSettings>(key: K, value: BillingSettings[K]) => setForm({ ...form, [key]: value });
 
-  const save = async () => {
+  const save = async (onSaved: () => void) => {
     setBusy(true);
     try {
       const { updated_at: _ignored, ...body } = form;
@@ -308,6 +543,11 @@ function SettingsForm({ current, onSaved }: { current: BillingSettings; onSaved:
     }
   };
 
+  return { form, set, busy, save };
+}
+
+function CompanyForm({ current, onSaved }: { current: BillingSettings; onSaved: () => void }) {
+  const { form, set, busy, save } = useSettingsForm(current);
   return (
     <>
       <section className="card">
@@ -330,18 +570,30 @@ function SettingsForm({ current, onSaved }: { current: BillingSettings; onSaved:
         </label>
         <Field label={t.billGstRate} value={form.gst_rate_percent} onChange={(v) => set("gst_rate_percent", v)} />
         {form.gst_enabled && form.seller_gstin === "" && <p className="banner">{t.billGstNoGstin}</p>}
-      </section>
-      <section className="card">
-        <h2>{t.billCloudParams}</h2>
-        <Field label={t.billVcpu} value={form.cloudrun_vcpu} onChange={(v) => set("cloudrun_vcpu", v)} />
-        <Field label={t.billGib} value={form.cloudrun_gib} onChange={(v) => set("cloudrun_gib", v)} />
-        <Field label={t.billUsdVcpu} value={form.cloudrun_usd_per_vcpu_second} onChange={(v) => set("cloudrun_usd_per_vcpu_second", v)} />
-        <Field label={t.billUsdGib} value={form.cloudrun_usd_per_gib_second} onChange={(v) => set("cloudrun_usd_per_gib_second", v)} />
-        <button type="button" onClick={() => void save()} disabled={busy}>
+        <button type="button" onClick={() => void save(onSaved)} disabled={busy}>
           {t.save}
         </button>
       </section>
     </>
+  );
+}
+
+function CloudRunForm({ current, onSaved }: { current: BillingSettings; onSaved: () => void }) {
+  const { form, set, busy, save } = useSettingsForm(current);
+  return (
+    <section className="card">
+      <h2>{t.billCloudParams}</h2>
+      <Field label={t.billVcpu} value={form.cloudrun_vcpu} onChange={(v) => set("cloudrun_vcpu", v)} />
+      <Field label={t.billGib} value={form.cloudrun_gib} onChange={(v) => set("cloudrun_gib", v)} />
+      <Field label={t.billUsdVcpu} value={form.cloudrun_usd_per_vcpu_second} onChange={(v) => set("cloudrun_usd_per_vcpu_second", v)} />
+      <Field label={t.billUsdGib} value={form.cloudrun_usd_per_gib_second} onChange={(v) => set("cloudrun_usd_per_gib_second", v)} />
+      <small>{t.billCloudActualHint}</small>
+      <div className="row" style={{ marginTop: ".5rem" }}>
+        <button type="button" onClick={() => void save(onSaved)} disabled={busy}>
+          {t.save}
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -393,6 +645,7 @@ function RatesPanel({
 
   return (
     <section className="card">
+      <h2>{t.billRatesTitle}</h2>
       {current.unpriced.length > 0 && (
         <p className="banner">
           {t.billUnpriced}
@@ -449,6 +702,89 @@ function RatesPanel({
       <button type="button" onClick={() => void save()} disabled={!valid}>
         {t.billRateSave}
       </button>
+    </section>
+  );
+}
+
+const SPEECH_PROVIDERS: SpeechProvider[] = ["sarvam_stt", "google_stt", "sarvam_tts", "google_tts"];
+
+function SpeechRatesPanel({ current, onSaved }: { current: SpeechRatesOut; onSaved: () => void }) {
+  const byProvider = new Map(current.rates.map((r) => [r.provider, r]));
+  return (
+    <section className="card">
+      <h2>{t.billSpeechTitle}</h2>
+      <p className="banner">{t.billSpeechNote}</p>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>{t.billSpeechProvider}</th>
+              <th>{t.billSpeechUnit}</th>
+              <th className="num">{t.billSpeechRate}</th>
+              <th>{t.billSpeechActive}</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {SPEECH_PROVIDERS.map((provider) => (
+              <SpeechRateRow key={provider} provider={provider} existing={byProvider.get(provider) ?? null} onSaved={onSaved} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function SpeechRateRow({ provider, existing, onSaved }: { provider: SpeechProvider; existing: SpeechRate | null; onSaved: () => void }) {
+  const toast = useToast();
+  const [unit, setUnit] = useState(existing?.unit ?? "");
+  const [rate, setRate] = useState(existing ? String(Number(existing.rate_inr)) : "");
+  const [active, setActive] = useState(existing?.active ?? true);
+  const valid = unit.trim() !== "" && /^\d+(\.\d{1,6})?$/.test(rate.trim());
+
+  const save = async () => {
+    try {
+      await api.put<SpeechRate>("/admin/billing/speech-rates", {
+        provider,
+        unit: unit.trim(),
+        rate_inr: rate.trim(),
+        active,
+      });
+      toast.info(t.billSpeechSaved);
+      onSaved();
+    } catch (err) {
+      toast.error(err);
+    }
+  };
+
+  return (
+    <tr>
+      <td>{t[`billSpeech_${provider}` as Key]}</td>
+      <td>
+        <input aria-label={`${t.billSpeechUnit} ${provider}`} value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="per_minute" />
+      </td>
+      <td className="num">
+        <input aria-label={`${t.billSpeechRate} ${provider}`} value={rate} onChange={(e) => setRate(e.target.value)} placeholder="0.00" />
+      </td>
+      <td>
+        <input type="checkbox" aria-label={`${t.billSpeechActive} ${provider}`} checked={active} onChange={(e) => setActive(e.target.checked)} />
+      </td>
+      <td>
+        <button type="button" className="secondary" onClick={() => void save()} disabled={!valid}>
+          {t.billSpeechSave}
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+function PlivoPanel() {
+  return (
+    <section className="card">
+      <h2>{t.billPlivoTitle}</h2>
+      <p className="banner">{t.billPlivoNote}</p>
+      <Link to="/admin/billing">{t.billPlivoGoOverview}</Link>
     </section>
   );
 }

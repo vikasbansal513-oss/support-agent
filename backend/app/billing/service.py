@@ -28,6 +28,9 @@ from app.billing.schemas import (
     ProfileIn,
     ProfileRowOut,
     SellerOut,
+    SpeechRateIn,
+    SpeechRateOut,
+    SpeechRatesOut,
 )
 from app.core import timeutil
 from app.core.audit import AuditEvent, record
@@ -78,6 +81,17 @@ _UNPRICED = text(
     " AND (c.input_tokens > 0 OR c.output_tokens > 0) AND NOT EXISTS"
     " (SELECT 1 FROM billing_llm_rates r WHERE r.provider = c.provider AND r.model = c.model)"
     " ORDER BY c.provider, c.model"
+)
+_SPEECH_RATES = text(
+    "SELECT provider, unit, rate_inr, active, updated_at FROM billing_speech_rates"
+    " ORDER BY provider"
+)
+_SPEECH_RATE_UPSERT = text(
+    "INSERT INTO billing_speech_rates (provider, unit, rate_inr, active, updated_by, updated_at)"
+    " VALUES (:provider, :unit, :rate, :active, :u, now())"
+    " ON CONFLICT (provider) DO UPDATE SET unit = :unit, rate_inr = :rate, active = :active,"
+    " updated_by = :u, updated_at = now()"
+    " RETURNING provider, unit, rate_inr, active, updated_at"
 )
 _PROFILES = text(
     "SELECT t.id AS tenant_id, t.name AS tenant_name, t.slug, COALESCE(p.legal_name, '') AS legal_name,"
@@ -253,6 +267,40 @@ async def save_rate(session: AsyncSession, body: LlmRateIn, admin_id: uuid.UUID)
         output_usd_per_million=row.output_usd_per_million,
         updated_at=row.updated_at,
     )
+
+
+async def load_speech_rates(session: AsyncSession) -> SpeechRatesOut:
+    rows = (await session.execute(_SPEECH_RATES)).all()
+    return SpeechRatesOut(rates=[SpeechRateOut(**r._mapping) for r in rows])
+
+
+async def save_speech_rate(
+    session: AsyncSession, body: SpeechRateIn, admin_id: uuid.UUID
+) -> SpeechRateOut:
+    row = (
+        await session.execute(
+            _SPEECH_RATE_UPSERT,
+            {
+                "provider": body.provider,
+                "unit": body.unit,
+                "rate": body.rate_inr,
+                "active": body.active,
+                "u": admin_id,
+            },
+        )
+    ).one()
+    await record(
+        session,
+        AuditEvent(
+            action="admin.billing_speech_rate_changed",
+            entity_type="billing_speech_rate",
+            entity_id=body.provider,
+            new_value={"unit": body.unit, "rate_inr": str(body.rate_inr), "active": body.active},
+            actor_user_id=admin_id,
+            actor_role="super_admin",
+        ),
+    )
+    return SpeechRateOut(**row._mapping)
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
