@@ -196,7 +196,7 @@ jobs:
           # is needed and the API service keeps cheap request-based CPU billing. This tick is just
           # the safety net for anything that drain missed, plus the periodic Gmail poll /
           # integration health check / reminders.
-          ARGS=(--location "$REGION" --project "$PROJECT" --schedule "*/10 * * * *" --time-zone "Etc/UTC" \
+          ARGS=(--location "$REGION" --project "$PROJECT" --schedule "*/60 * * * *" --time-zone "Etc/UTC" \
                 --uri "$URI" --http-method POST --oauth-service-account-email "$SCHEDULER_SA")
           gcloud scheduler jobs update http "${WORKER_JOB}-tick" "${ARGS[@]}" \
             || gcloud scheduler jobs create http "${WORKER_JOB}-tick" "${ARGS[@]}"
