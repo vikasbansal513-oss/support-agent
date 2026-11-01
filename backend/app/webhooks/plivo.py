@@ -56,7 +56,7 @@ async def plivo_call_status(
         except ValueError:
             fields = {}
     else:
-        fields = dict((await request.form()))
+        fields = dict(await request.form())
     if settings.plivo_auth_token:
         signature = request.headers.get("X-Plivo-Signature-V2", "")
         nonce = request.headers.get("X-Plivo-Signature-V2-Nonce", "")

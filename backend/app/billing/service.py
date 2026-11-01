@@ -231,11 +231,9 @@ _LINE_INSERT = text(
     " unit, amount_paise, detail) VALUES (:t, :i, :pos, :kind, :descr, :qty, :unit, :amount,"
     " CAST(:detail AS jsonb))"
 )
-_PAID_AMOUNT = (
-    "COALESCE((SELECT sum(amount_paise) FROM invoice_payments WHERE invoice_id = i.id), 0)"
-)
+_PAID_AMOUNT = "COALESCE((SELECT sum(amount_paise) FROM invoice_payments WHERE invoice_id = i.id), 0)"
 _INVOICE = text(
-    "SELECT i.id, i.tenant_id, t.name AS tenant_name, i.period_start, i.status, i.doc_type,"
+    "SELECT i.id, i.tenant_id, t.name AS tenant_name, i.period_start, i.status, i.doc_type,"  # noqa: S608
     " i.invoice_no, i.invoice_date, i.due_date, i.paid_at, i.cancelled_at, i.cancelled_reason,"
     f" {_PAID_AMOUNT} AS paid_amount_paise, i.usd_inr, i.cloudrun_basis,"
     " i.llm_paise, i.cloudrun_paise, i.telephony_paise, i.speech_paise, i.platform_fee_paise,"
@@ -249,7 +247,7 @@ _INVOICE_LOCKED = text(
     " WHERE id = :i FOR UPDATE"
 )
 _INVOICES_FOR_PERIOD = text(
-    "SELECT i.tenant_id, i.id, i.status, i.invoice_no, i.due_date, i.paid_at, i.total_paise,"
+    "SELECT i.tenant_id, i.id, i.status, i.invoice_no, i.due_date, i.paid_at, i.total_paise,"  # noqa: S608
     " i.cancelled_at, "
     f"{_PAID_AMOUNT} AS paid_amount_paise"
     " FROM invoices i WHERE i.period_start = :p"

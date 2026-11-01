@@ -1052,7 +1052,7 @@ function GcpImportPanel() {
   const parseRows = () => {
     const lines = raw.trim().split("\n").filter((l) => l.trim() !== "");
     if (lines.length < 2) return [];
-    const header = lines[0].split(",").map((h) => h.trim());
+    const header = (lines[0] ?? "").split(",").map((h) => h.trim());
     return lines.slice(1).map((line) => {
       const cells = line.split(",");
       const row: Record<string, string> = {};
