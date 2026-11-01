@@ -131,6 +131,7 @@ def test_migration_up_down_up_and_runtime_grants() -> None:
                 "billing_llm_rates",
                 "billing_periods",
                 "invoice_counters",
+                "billing_speech_rates",
                 "tenant_billing_profiles",
                 "invoices",
                 "invoice_lines",
@@ -155,4 +156,4 @@ def test_alembic_version_table_kept_out_of_public(test_db: TestDb) -> None:
         await engine.dispose()
         return list(rows)
 
-    assert asyncio.run(versions()) == ["0022"]
+    assert asyncio.run(versions()) == ["0024"]

@@ -31,6 +31,7 @@ GLOBAL_TABLE_ALLOWLIST = (
     "billing_llm_rates",
     "billing_periods",
     "invoice_counters",
+    "billing_speech_rates",
 )
 
 _engine: AsyncEngine | None = None

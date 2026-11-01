@@ -200,8 +200,9 @@ async def call_detail(session: AsyncSession, call_id: uuid.UUID) -> VoiceCallDet
         await session.execute(
             text(
                 "SELECT m.created_at, m.content, e.raw_payload->'voice_reply'->>'say' AS say,"
-                " e.created_at AS replied_at FROM messages m JOIN inbound_events e"
-                " ON e.id = m.inbound_event_id WHERE m.conversation_id = :c AND m.channel = 'voice'"
+                " COALESCE(e.processed_at, e.received_at) AS replied_at FROM messages m"
+                " JOIN inbound_events e ON e.id = m.inbound_event_id"
+                " WHERE m.conversation_id = :c AND m.channel = 'voice'"
                 " AND m.direction = 'in' AND m.created_at >= :s"
             ),
             {"c": row.conversation_id, "s": row.started_at},

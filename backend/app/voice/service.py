@@ -938,7 +938,7 @@ async def _finish_turn(
         await session.execute(
             text(
                 "UPDATE inbound_events SET raw_payload = raw_payload || CAST(:r AS jsonb),"
-                " status = 'processed' WHERE id = :i"
+                " status = 'processed', processed_at = now() WHERE id = :i"
             ),
             {"r": json.dumps({"voice_reply": reply.model_dump(mode="json")}), "i": event_id},
         )
