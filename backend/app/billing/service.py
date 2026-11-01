@@ -231,7 +231,9 @@ _LINE_INSERT = text(
     " unit, amount_paise, detail) VALUES (:t, :i, :pos, :kind, :descr, :qty, :unit, :amount,"
     " CAST(:detail AS jsonb))"
 )
-_PAID_AMOUNT = "COALESCE((SELECT sum(amount_paise) FROM invoice_payments WHERE invoice_id = i.id), 0)"
+_PAID_AMOUNT = (
+    "COALESCE((SELECT sum(amount_paise) FROM invoice_payments WHERE invoice_id = i.id), 0)"
+)
 _INVOICE = text(
     "SELECT i.id, i.tenant_id, t.name AS tenant_name, i.period_start, i.status, i.doc_type,"  # noqa: S608
     " i.invoice_no, i.invoice_date, i.due_date, i.paid_at, i.cancelled_at, i.cancelled_reason,"
@@ -404,7 +406,9 @@ _GCP_UNALLOC_INSERT = text(
     "INSERT INTO gcp_unallocated_costs (billing_period, category, amount_usd, reason)"
     " VALUES (:p, :category, :amount, :reason) RETURNING id"
 )
-_GCP_UNALLOC_CLEAR = text("DELETE FROM gcp_unallocated_costs WHERE billing_period = :p AND NOT resolved")
+_GCP_UNALLOC_CLEAR = text(
+    "DELETE FROM gcp_unallocated_costs WHERE billing_period = :p AND NOT resolved"
+)
 _GCP_UNALLOC_LIST = text(
     "SELECT id, billing_period, category, amount_usd, reason, resolved FROM gcp_unallocated_costs"
     " WHERE billing_period = :p ORDER BY resolved, amount_usd DESC"
@@ -796,7 +800,9 @@ def price_telephony(
         )
         rental = rental_cost_by_tenant.get(tenant_id, 0)
         calling = shares.get(tenant_id, 0)
-        result[tenant_id] = Telephony(calling + rental, usage.seconds, usage.calls, share, basis, rental)
+        result[tenant_id] = Telephony(
+            calling + rental, usage.seconds, usage.calls, share, basis, rental
+        )
     return result
 
 
@@ -975,7 +981,12 @@ async def period_overview(session: AsyncSession, period_start: date) -> PeriodOu
             tenant_id=r.tenant_id,
             status=r.status,
             payment_status=_pay_status(
-                r.status, r.due_date, r.paid_at, r.cancelled_at, int(r.paid_amount_paise), int(r.total_paise)
+                r.status,
+                r.due_date,
+                r.paid_at,
+                r.cancelled_at,
+                int(r.paid_amount_paise),
+                int(r.total_paise),
             ),
             invoice_no=r.invoice_no,
             due_date=r.due_date,
@@ -1597,8 +1608,10 @@ async def _paid_sum(session: AsyncSession, invoice_id: uuid.UUID) -> int:
     return int(
         (
             await session.execute(
-                text("SELECT COALESCE(sum(amount_paise), 0) FROM invoice_payments"
-                     " WHERE invoice_id = :i"),
+                text(
+                    "SELECT COALESCE(sum(amount_paise), 0) FROM invoice_payments"
+                    " WHERE invoice_id = :i"
+                ),
                 {"i": invoice_id},
             )
         ).scalar_one()
@@ -1630,7 +1643,9 @@ async def mark_paid(
             )
     else:
         await session.execute(_PAYMENTS_DELETE, {"i": invoice_id})
-    row = (await session.execute(_MARK_PAID, {"i": invoice_id, "paid": paid, "u": admin_id})).first()
+    row = (
+        await session.execute(_MARK_PAID, {"i": invoice_id, "paid": paid, "u": admin_id})
+    ).first()
     if row is None:
         raise AppError("E-NF-001")
     await record(
@@ -1691,9 +1706,7 @@ async def record_payment(
 async def delete_payment(
     session: AsyncSession, invoice_id: uuid.UUID, payment_id: uuid.UUID, admin_id: uuid.UUID
 ) -> InvoiceOut:
-    row = (
-        await session.execute(_PAYMENT_DELETE_ONE, {"pid": payment_id, "i": invoice_id})
-    ).first()
+    row = (await session.execute(_PAYMENT_DELETE_ONE, {"pid": payment_id, "i": invoice_id})).first()
     if row is None:
         raise AppError("E-NF-001")
     info = await _invoice_tenant_and_total(session, invoice_id)

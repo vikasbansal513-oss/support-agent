@@ -42,6 +42,11 @@ UP = [
     'ALTER TABLE "billing_cost_categories" FORCE ROW LEVEL SECURITY',
     'CREATE POLICY super_admin_only ON "billing_cost_categories"'
     " USING (app_is_super_admin()) WITH CHECK (app_is_super_admin())",
+    # FORCE ROW LEVEL SECURITY applies even to the table owner/migration role, so the
+    # seed INSERT below needs the super-admin session flag set for this transaction
+    # (transaction_per_migration=True in migrations/env.py keeps this scoped to this
+    # migration only - it is not left "on" for anything after).
+    "SET LOCAL app.is_super_admin = 'on'",
     "INSERT INTO billing_cost_categories (category, unit, attribution, sort_order) VALUES"
     " ('Services CPU', 'vCPU-second', 'Direct', 1),"
     " ('Services Memory', 'GiB-second', 'Direct', 2),"
