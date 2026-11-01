@@ -36,6 +36,7 @@ from app.core.db import check_rls_safety, get_session_factory, session_scope
 from app.core.errors import AppError, install_error_handlers
 from app.core.logging import configure_logging
 from app.core.monitoring import init_monitoring
+from app.webhooks import plivo as plivo_webhook
 from app.webhooks import voice as voice_webhook
 from app.webhooks import whatsapp
 
@@ -101,6 +102,7 @@ def create_app() -> FastAPI:
     application.include_router(admin_control_tower.router)
     application.include_router(whatsapp.router)
     application.include_router(voice_webhook.router)
+    application.include_router(plivo_webhook.router)
     application.include_router(system_router)
     return application
 

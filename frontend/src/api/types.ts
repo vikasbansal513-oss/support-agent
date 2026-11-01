@@ -501,6 +501,11 @@ export interface VoiceCallDetail extends VoiceCall {
   turns: VoiceTurn[];
 }
 
+export type BillingExportStatus = "not_connected" | "connected";
+export type ReconciliationCycle = "monthly" | "daily_preview_monthly_final";
+export type UnallocatedHandling = "keep_unallocated" | "manual_review";
+export type SharedAllocationPolicy = "per_sku" | "usage_weighted";
+
 export interface BillingSettings {
   seller_name: string;
   seller_address: string;
@@ -508,6 +513,7 @@ export interface BillingSettings {
   seller_gstin: string;
   seller_email: string;
   seller_phone: string;
+  seller_pincode: string;
   payment_details: string;
   sac_code: string;
   invoice_prefix: string;
@@ -517,7 +523,29 @@ export interface BillingSettings {
   cloudrun_gib: string;
   cloudrun_usd_per_vcpu_second: string;
   cloudrun_usd_per_gib_second: string;
+  billing_export_status: BillingExportStatus;
+  billing_export_ref: string;
+  reconciliation_cycle: ReconciliationCycle;
+  unallocated_handling: UnallocatedHandling;
+  shared_allocation_policy: SharedAllocationPolicy;
+  plivo_outbound_inr_per_min: string;
+  plivo_inbound_inr_per_min: string;
+  plivo_number_rental_inr_per_month: string;
   updated_at: string | null;
+}
+
+export interface CostCategory {
+  category: string;
+  unit: string;
+  usd_rate: string;
+  attribution: string;
+  active: boolean;
+  sort_order: number;
+  updated_at: string;
+}
+
+export interface CostCategoriesOut {
+  categories: CostCategory[];
 }
 
 export interface BillingLlmRate {
@@ -547,6 +575,8 @@ export interface SpeechRatesOut {
   rates: SpeechRate[];
 }
 
+export type BillingStatus = "enabled" | "paused";
+
 export interface BillingProfile {
   tenant_id: string;
   tenant_name: string;
@@ -557,14 +587,26 @@ export interface BillingProfile {
   gstin: string;
   email: string;
   default_platform_fee_paise: number;
+  cloud_enabled: boolean;
+  llm_enabled: boolean;
+  plivo_enabled: boolean;
+  payment_due_days: number;
+  auto_generate_draft: boolean;
+  billing_status: BillingStatus;
 }
+
+export type PaymentStatus = "draft" | "paid" | "partially_paid" | "unpaid" | "overdue" | "cancelled";
+export type TelephonyBasis = "actual" | "cdr_computed" | "estimate" | "none";
 
 export interface InvoiceSummary {
   id: string;
   tenant_id: string;
   status: "draft" | "final";
+  payment_status: PaymentStatus;
   invoice_no: string | null;
+  due_date: string | null;
   total_paise: number;
+  paid_amount_paise: number;
 }
 
 export interface BillingPeriodRow {
@@ -581,6 +623,9 @@ export interface BillingPeriodRow {
   voice_calls: number;
   voice_call_seconds: number;
   telephony_paise: number | null;
+  telephony_basis: TelephonyBasis;
+  speech_paise: number;
+  number_rental_paise: number;
   default_platform_fee_paise: number;
   unpriced_models: string[];
   invoice: InvoiceSummary | null;
@@ -604,12 +649,21 @@ export interface BillingFlag {
 
 export interface InvoiceLine {
   position: number;
-  kind: "llm" | "cloudrun" | "telephony" | "platform_fee";
+  kind: "llm" | "cloudrun" | "telephony" | "speech" | "platform_fee";
   description: string;
   quantity: string;
   unit: string;
   amount_paise: number;
   detail: Record<string, unknown>;
+}
+
+export interface InvoicePayment {
+  id: string;
+  amount_paise: number;
+  paid_on: string;
+  method: string;
+  note: string;
+  created_at: string;
 }
 
 export interface InvoiceSeller {
@@ -638,14 +692,23 @@ export interface Invoice {
   period: string;
   period_start: string;
   status: "draft" | "final";
+  payment_status: PaymentStatus;
   doc_type: "tax_invoice" | "proforma";
   invoice_no: string | null;
   invoice_date: string | null;
+  due_date: string | null;
+  paid_at: string | null;
+  paid_amount_paise: number;
+  balance_due_paise: number;
+  cancelled_at: string | null;
+  cancelled_reason: string;
+  payments: InvoicePayment[];
   usd_inr: string;
   cloudrun_basis: "estimate" | "actual";
   llm_paise: number;
   cloudrun_paise: number;
   telephony_paise: number;
+  speech_paise: number;
   platform_fee_paise: number;
   subtotal_paise: number;
   gst_rate_percent: string;
@@ -667,4 +730,105 @@ export interface GenerateResult {
   generated: number;
   skipped_final: number;
   invoices: InvoiceSummary[];
+}
+
+export interface PlivoNumberAssignment {
+  id: string;
+  plivo_number: string;
+  tenant_id: string;
+  assigned_from: string;
+  assigned_to: string | null;
+  monthly_rate_paise: number;
+  created_at: string;
+}
+
+export interface PlivoCall {
+  id: string;
+  call_uuid: string;
+  tenant_id: string | null;
+  direction: "inbound" | "outbound";
+  from_number: string;
+  to_number: string;
+  duration_seconds: number;
+  billed_seconds: number;
+  call_status: string;
+  computed_cost_paise: number;
+  billing_period: string;
+  created_at: string;
+}
+
+export interface PlivoCallsOut {
+  calls: PlivoCall[];
+}
+
+export interface SpeechUsageRecord {
+  id: string;
+  tenant_id: string;
+  voice_call_id: string | null;
+  provider: SpeechProvider;
+  quantity: string;
+  unit: string;
+  cost_paise: number;
+  billing_period: string;
+  created_at: string;
+}
+
+export interface SpeechUsageListOut {
+  records: SpeechUsageRecord[];
+}
+
+export interface GcpUsageEvent {
+  id: string;
+  tenant_id: string | null;
+  category: string;
+  quantity: string;
+  unit: string;
+  cost_usd: string;
+  billing_period: string;
+  created_at: string;
+}
+
+export interface GcpUsageEventsOut {
+  events: GcpUsageEvent[];
+}
+
+export interface GcpImportRow {
+  billing_account?: string;
+  service?: string;
+  sku?: string;
+  usage_quantity?: string;
+  usage_unit?: string;
+  cost_usd?: string;
+  credits_usd?: string;
+  currency?: string;
+  resource_name?: string;
+}
+
+export interface GcpImportResult {
+  import_batch_id: string;
+  inserted: number;
+  duplicate_skipped: number;
+  imported_total_usd: string;
+}
+
+export interface GcpReconciliation {
+  billing_period: string;
+  imported_total_usd: string;
+  metered_total_usd: string;
+  allocated_usd: string;
+  unallocated_usd: string;
+  created_at: string;
+}
+
+export interface GcpUnallocated {
+  id: string;
+  billing_period: string;
+  category: string;
+  amount_usd: string;
+  reason: string;
+  resolved: boolean;
+}
+
+export interface GcpUnallocatedListOut {
+  items: GcpUnallocated[];
 }

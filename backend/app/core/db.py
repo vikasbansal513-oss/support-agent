@@ -32,6 +32,10 @@ GLOBAL_TABLE_ALLOWLIST = (
     "billing_periods",
     "invoice_counters",
     "billing_speech_rates",
+    "billing_cost_categories",
+    "gcp_billing_import_rows",
+    "gcp_reconciliation_runs",
+    "gcp_unallocated_costs",
 )
 
 _engine: AsyncEngine | None = None

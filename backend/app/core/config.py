@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
     gupshup_ip_allowlist: str = ""
+    plivo_auth_token: str = ""
     worker_max_seconds: int = Field(default=55, ge=5, le=3000)
     instant_drain_enabled: bool = False
     job_lease_seconds: int = Field(default=120, ge=30, le=3600)

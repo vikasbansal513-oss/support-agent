@@ -137,3 +137,49 @@ def gstin_problem(gstin: str, state_code: str) -> str | None:
 
 def format_invoice_no(prefix: str, fy: str, number: int) -> str:
     return f"{prefix}/{fy}/{number:04d}"
+
+
+PaymentStatusV2 = Literal["draft", "paid", "partially_paid", "unpaid", "overdue", "cancelled"]
+
+
+def payment_status(
+    status: Literal["draft", "final"],
+    due_date: date | None,
+    paid_at: datetime | None,
+    today: date,
+    *,
+    cancelled: bool = False,
+    paid_amount_paise: int = 0,
+    total_paise: int = 0,
+) -> PaymentStatusV2:
+    """Six-state payment status. Backward compatible: callers that only pass the first four
+    positional args (no payments ledger, no cancellation) get the original draft/paid/unpaid/
+    overdue behaviour unchanged."""
+    if cancelled:
+        return "cancelled"
+    if status == "draft":
+        return "draft"
+    if total_paise > 0 and paid_amount_paise >= total_paise:
+        return "paid"
+    if paid_amount_paise > 0:
+        return "partially_paid"
+    if paid_at is not None:
+        return "paid"
+    if due_date is not None and due_date < today:
+        return "overdue"
+    return "unpaid"
+
+
+def plivo_call_cost_paise(
+    direction: Literal["inbound", "outbound"],
+    billed_seconds: int,
+    inbound_inr_per_min: Decimal,
+    outbound_inr_per_min: Decimal,
+) -> int:
+    rate = outbound_inr_per_min if direction == "outbound" else inbound_inr_per_min
+    minutes = Decimal(billed_seconds) / Decimal(60)
+    return round_paise(minutes * rate)
+
+
+def speech_usage_cost_paise(quantity: Decimal, rate_inr: Decimal) -> int:
+    return round_paise(quantity * rate_inr)

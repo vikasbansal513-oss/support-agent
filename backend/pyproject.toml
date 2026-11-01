@@ -19,6 +19,7 @@ dependencies = [
   "PyJWT",
   "pyotp",
   "sentry-sdk",
+  "reportlab",
 ]
 
 [project.optional-dependencies]

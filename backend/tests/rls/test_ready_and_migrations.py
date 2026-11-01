@@ -132,11 +132,20 @@ def test_migration_up_down_up_and_runtime_grants() -> None:
                 "billing_periods",
                 "invoice_counters",
                 "billing_speech_rates",
+                "billing_cost_categories",
                 "tenant_billing_profiles",
                 "invoices",
                 "invoice_lines",
                 "brand_quotas",
                 "alerts",
+                "invoice_payments",
+                "plivo_number_assignments",
+                "plivo_call_records",
+                "speech_usage_records",
+                "gcp_usage_events",
+                "gcp_billing_import_rows",
+                "gcp_reconciliation_runs",
+                "gcp_unallocated_costs",
             ]
         )
         assert can_mutate is False
@@ -156,4 +165,4 @@ def test_alembic_version_table_kept_out_of_public(test_db: TestDb) -> None:
         await engine.dispose()
         return list(rows)
 
-    assert asyncio.run(versions()) == ["0024"]
+    assert asyncio.run(versions()) == ["0026"]

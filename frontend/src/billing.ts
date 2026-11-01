@@ -1,4 +1,4 @@
-import type { BillingFlag } from "./api/types";
+import type { BillingFlag, PaymentStatus } from "./api/types";
 import { t, type Key } from "./i18n";
 
 const IST = "Asia/Kolkata";
@@ -76,4 +76,10 @@ export function flagText(flag: BillingFlag): string {
 
 export function tokens(value: number): string {
   return value.toLocaleString("en-IN");
+}
+
+export function paymentStatusTone(status: PaymentStatus): "ok" | "warn" | "urgent" {
+  if (status === "paid") return "ok";
+  if (status === "overdue" || status === "cancelled") return "urgent";
+  return "warn";
 }
