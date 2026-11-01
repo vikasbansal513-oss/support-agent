@@ -9,7 +9,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.platypus import Flowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.billing.schemas import InvoiceOut
 
@@ -33,7 +33,7 @@ def render_invoice_pdf(invoice: InvoiceOut) -> bytes:
         leftMargin=16 * mm,
         rightMargin=16 * mm,
     )
-    story: list[Flowable] = []
+    story: list[object] = []
     heading = "TAX INVOICE" if invoice.doc_type == "tax_invoice" else "PROFORMA INVOICE"
     if invoice.status == "draft":
         heading = f"{heading} (DRAFT - not final)"
