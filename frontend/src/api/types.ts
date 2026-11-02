@@ -1000,3 +1000,227 @@ export interface GcpUnallocated {
 export interface GcpUnallocatedListOut {
   items: GcpUnallocated[];
 }
+
+// ---------------------------------------------------------------- Usage intelligence
+export type DatePreset = "today" | "this_week" | "this_month" | "previous_month" | "custom";
+
+export interface UsageRange {
+  preset: DatePreset;
+  start: string;
+  end: string;
+}
+
+export interface CostBreakdown {
+  llm_cost_inr: string;
+  cloudrun_cost_inr: string;
+  speech_cost_inr: string;
+  plivo_cost_inr: string;
+  other_gcp_cost_inr: string;
+  total_operating_cost_inr: string;
+}
+
+export interface BillingOverview {
+  range: UsageRange;
+  total_revenue_inr: string;
+  total_client_usage_cost_inr: string;
+  costs: CostBreakdown;
+  gross_profit_inr: string;
+  profit_margin_percent: string;
+  unallocated_infra_cost_inr: string;
+  active_clients: number;
+  unpriced_llm_models: string[];
+  note: string;
+}
+
+export interface MessageUsage {
+  incoming: number;
+  outgoing: number;
+  total: number;
+}
+
+export interface AgentPerformance {
+  total_tasks: number;
+  completed: number;
+  failed: number;
+  pending: number;
+  success_rate_percent: string;
+  avg_execution_seconds: string;
+  total_execution_seconds: string;
+  retry_count: number;
+  cost_per_successful_task_inr: string;
+}
+
+export interface ClientBillingSummary {
+  tenant_id: string;
+  tenant_name: string;
+  slug: string;
+  billing_status: string;
+  messages_total: number;
+  total_operating_cost_inr: string;
+  client_revenue_inr: string;
+  gross_profit_inr: string;
+  profit_margin_percent: string;
+}
+
+export interface LlmUsageLine {
+  provider: string;
+  model: string;
+  api_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  input_cost_inr: string;
+  output_cost_inr: string;
+  total_cost_inr: string;
+  priced: boolean;
+}
+
+export interface GcpUsageLine {
+  category: string;
+  quantity: string;
+  unit: string;
+  cost_usd: string;
+  cost_inr: string;
+}
+
+export interface OtherServiceCost {
+  plivo_outbound_inr: string;
+  plivo_inbound_inr: string;
+  plivo_number_rental_inr: string;
+  stt_cost_inr: string;
+  tts_cost_inr: string;
+  other_third_party_inr: string;
+}
+
+export interface ClientFinancialSummary {
+  total_llm_cost_inr: string;
+  total_cloud_cost_inr: string;
+  total_calling_cost_inr: string;
+  total_other_cost_inr: string;
+  total_operating_cost_inr: string;
+  client_revenue_inr: string;
+  gross_profit_inr: string;
+  profit_margin_percent: string;
+}
+
+export interface ClientInfo {
+  tenant_id: string;
+  tenant_name: string;
+  slug: string;
+  active_brands: number;
+  plan: string;
+  billing_status: string;
+  billing_period: string;
+}
+
+export interface ClientBillingDetail {
+  range: UsageRange;
+  client: ClientInfo;
+  messages: MessageUsage;
+  agent_performance: AgentPerformance;
+  llm_usage: LlmUsageLine[];
+  gcp_usage: GcpUsageLine[];
+  other_costs: OtherServiceCost;
+  financial_summary: ClientFinancialSummary;
+}
+
+export type LedgerEventType =
+  | "message"
+  | "llm_call"
+  | "agent_execution"
+  | "gcp_usage"
+  | "plivo_call"
+  | "speech_usage";
+
+export interface UsageLedgerRow {
+  event_id: string;
+  tenant_id: string | null;
+  tenant_name: string;
+  event_type: LedgerEventType;
+  service_provider: string;
+  service_name: string;
+  resource_name: string;
+  quantity: string;
+  unit: string;
+  started_at: string;
+  ended_at: string | null;
+  duration_seconds: string | null;
+  actual_cost_inr: string | null;
+  estimated_cost_inr: string | null;
+  status: string;
+  created_at: string;
+}
+
+export interface UsageLedgerOut {
+  range: UsageRange;
+  rows: UsageLedgerRow[];
+  next_cursor: string | null;
+  note: string;
+}
+
+export type ReportType =
+  | "client_usage"
+  | "llm"
+  | "gcp"
+  | "plivo"
+  | "agent_performance"
+  | "profitability"
+  | "actual_vs_estimated"
+  | "unallocated";
+
+export interface ReportOut {
+  columns: string[];
+  rows: string[][];
+}
+
+export type UsageMetric = "messages_month" | "total_cost_inr_month" | "llm_cost_inr_month";
+
+export interface UsageLimit {
+  id: string;
+  tenant_id: string;
+  metric: UsageMetric;
+  limit_value: string;
+  active: boolean;
+  updated_at: string;
+}
+
+export interface UsageLimitsOut {
+  limits: UsageLimit[];
+}
+
+export interface UsageLimitStatus {
+  tenant_id: string;
+  tenant_name: string;
+  metric: UsageMetric;
+  limit_value: string;
+  current_value: string;
+  percent_used: string;
+  breached_70: boolean;
+  breached_90: boolean;
+  breached_100: boolean;
+}
+
+export interface UsageLimitStatusesOut {
+  statuses: UsageLimitStatus[];
+}
+
+export interface BillingExportSyncStatus {
+  status: BillingExportStatus;
+  project_ref: string;
+  last_sync_at: string | null;
+  last_sync_rows: number;
+  last_error: string;
+  import_batches: number;
+  note: string;
+}
+
+export interface ClientUsageOut {
+  range: UsageRange;
+  messages: MessageUsage;
+  agent_performance: AgentPerformance;
+  llm_cost_inr: string;
+  cloud_cost_inr: string;
+  calling_cost_inr: string;
+  total_usage_cost_inr: string;
+  billing_history: ClientFinancialSummary[];
+}

@@ -1,10 +1,15 @@
 import { api } from "../api/client";
-import type { AgentStatus, DashboardStats, Usage } from "../api/types";
+import type { AgentStatus, ClientUsageOut, DashboardStats, Usage } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { Async, Chip, Empty, Screen, StatCard, useSubmit } from "../components/common";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
 import { t, type Key } from "../i18n";
+
+function formatInrSimple(value: string): string {
+  const n = Number(value);
+  return Number.isNaN(n) ? "-" : `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
 
 export function Dashboard() {
   const { user } = useAuth();
@@ -12,6 +17,7 @@ export function Dashboard() {
   const [stats, reloadStats] = useApi(() => api.get<DashboardStats>("/dashboard/stats"));
   const [usage] = useApi(() => api.get<Usage>("/usage"));
   const [status, reloadStatus] = useApi(() => api.get<AgentStatus>("/agent/status"));
+  const [billingUsage] = useApi(() => api.get<ClientUsageOut>("/dashboard/billing-usage"));
   const owner = user?.role === "owner";
 
   const toggle = (paused: boolean) =>
@@ -86,6 +92,24 @@ export function Dashboard() {
             <></>
           )
         }
+      </Async>
+      <Async value={billingUsage}>
+        {(b) => (
+          <div className="card pad">
+            <div className="card-head">
+              <h2 className="card-title">{t.myUsageTitle}</h2>
+              <span className="card-sub">{b.range.start} to {b.range.end}</span>
+            </div>
+            <div className="stats">
+              <StatCard icon="chat" label={t.intelMessages} value={b.messages.total} />
+              <StatCard icon="check-square" label={t.intelTasksTotal} value={b.agent_performance.total_tasks} />
+              <StatCard icon="file" label={t.myUsageLlmCost} value={formatInrSimple(b.llm_cost_inr)} />
+              <StatCard icon="package" label={t.myUsageCloudCost} value={formatInrSimple(b.cloud_cost_inr)} />
+              <StatCard icon="phone" label={t.myUsageCallingCost} value={formatInrSimple(b.calling_cost_inr)} />
+              <StatCard icon="file" label={t.myUsageTotalCost} value={formatInrSimple(b.total_usage_cost_inr)} />
+            </div>
+          </div>
+        )}
       </Async>
     </Screen>
   );

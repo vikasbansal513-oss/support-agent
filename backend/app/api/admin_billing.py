@@ -1,14 +1,29 @@
 import uuid
 from datetime import date
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.deps import require_admin
 from app.auth.service import Principal
 from app.billing import calc, service
+from app.billing import usage as usage_service
 from app.billing.pdf import render_invoice_pdf
+from app.billing.usage_schemas import (
+    BillingExportSyncStatusOut,
+    ClientBillingOut,
+    ClientBillingSummaryOut,
+    DatePreset,
+    OverviewOut,
+    ReportType,
+    UsageLedgerFilterIn,
+    UsageLedgerOut,
+    UsageLimitIn,
+    UsageLimitOut,
+    UsageLimitsOut,
+    UsageLimitStatusesOut,
+)
 from app.billing.schemas import (
     BillingSettingsIn,
     BillingSettingsOut,
@@ -428,3 +443,190 @@ async def resolve_unallocated(
     async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
         await service.resolve_unallocated(session, item_id, body.resolved, admin.user_id)
     return {"ok": True}
+
+
+# ================================================================== Usage Intelligence
+# (sections A-C, F, H, J of the usage-metering spec -- all still under Admin -> Billing,
+# per the "do not create another top-level menu" requirement)
+
+# ---------------------------------------------------------------- A. Billing Overview
+@router.get("/overview")
+async def read_overview(
+    preset: DatePreset = Query(default="this_month"),
+    start: date | None = None,
+    end: date | None = None,
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> OverviewOut:
+    """Date-range-filterable financial overview (Total Revenue/Cost/Profit/Margin) --
+    distinct from the existing monthly-only GET /periods/{period} (invoice generation uses
+    that one; this one is read-only platform-wide intelligence for any date range)."""
+    async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
+        return await usage_service.overview(session, preset, start, end)
+
+
+# ---------------------------------------------------------------- B. Client-wise billing
+@router.get("/clients")
+async def list_clients(
+    preset: DatePreset = Query(default="this_month"),
+    start: date | None = None,
+    end: date | None = None,
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> list[ClientBillingSummaryOut]:
+    async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
+        return await usage_service.list_clients(session, preset, start, end)
+
+
+@router.get("/clients/{tenant_id}")
+async def read_client(
+    tenant_id: uuid.UUID,
+    preset: DatePreset = Query(default="this_month"),
+    start: date | None = None,
+    end: date | None = None,
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> ClientBillingOut:
+    async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
+        return await usage_service.client_detail(session, tenant_id, preset, start, end)
+
+
+# ---------------------------------------------------------------- C. Usage Ledger
+def _ledger_filter(
+    tenant_id: uuid.UUID | None,
+    event_type: str | None,
+    service_provider: str | None,
+    service_name: str | None,
+    start: date,
+    end: date,
+    limit: int,
+) -> UsageLedgerFilterIn:
+    return UsageLedgerFilterIn(
+        tenant_id=tenant_id,
+        event_type=event_type,  # type: ignore[arg-type]
+        service_provider=service_provider,
+        service_name=service_name,
+        start=start,
+        end=end,
+        limit=limit,
+    )
+
+
+@router.get("/usage-ledger")
+async def read_usage_ledger(
+    start: date,
+    end: date,
+    tenant_id: uuid.UUID | None = None,
+    event_type: str | None = None,
+    service_provider: str | None = None,
+    service_name: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> UsageLedgerOut:
+    body = _ledger_filter(tenant_id, event_type, service_provider, service_name, start, end, limit)
+    async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
+        return await usage_service.usage_ledger(session, body)
+
+
+@router.get("/usage-ledger/export.csv")
+async def export_usage_ledger_csv(
+    start: date,
+    end: date,
+    tenant_id: uuid.UUID | None = None,
+    event_type: str | None = None,
+    service_provider: str | None = None,
+    service_name: str | None = None,
+    limit: int = Query(default=500, ge=1, le=500),
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> Response:
+    body = _ledger_filter(tenant_id, event_type, service_provider, service_name, start, end, limit)
+    async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
+        out = await usage_service.usage_ledger(session, body)
+    csv_text = usage_service.ledger_to_csv(out)
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="usage-ledger.csv"'},
+    )
+
+
+# ---------------------------------------------------------------- Reports (section 9)
+# Excel: a plain CSV opens natively in Excel/Sheets; this project has no openpyxl/xlsxwriter
+# dependency, so "Excel export" here means a CSV Excel can open, same convention already used
+# for /admin/audit-log/export.csv. Not a missing feature -- see README "Abhi verify nahi hua"
+# if a real .xlsx is ever required.
+@router.get("/reports/{report_type}")
+async def read_report(
+    report_type: ReportType,
+    preset: DatePreset = Query(default="this_month"),
+    start: date | None = None,
+    end: date | None = None,
+    tenant_id: uuid.UUID | None = None,
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> dict[str, list[str] | list[list[str]]]:
+    async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
+        report = await usage_service.build_report(session, report_type, preset, start, end, tenant_id)
+    return {"columns": report.columns, "rows": report.rows}
+
+
+@router.get("/reports/{report_type}/export.csv")
+async def export_report_csv(
+    report_type: ReportType,
+    preset: DatePreset = Query(default="this_month"),
+    start: date | None = None,
+    end: date | None = None,
+    tenant_id: uuid.UUID | None = None,
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> Response:
+    async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
+        report = await usage_service.build_report(session, report_type, preset, start, end, tenant_id)
+    csv_text = usage_service.report_to_csv(report)
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{report_type}.csv"'},
+    )
+
+
+# ---------------------------------------------------------------- Usage limits + alerts (10)
+@router.get("/usage-limits")
+async def list_usage_limits(
+    tenant_id: uuid.UUID | None = None,
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> UsageLimitsOut:
+    async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
+        return await usage_service.list_usage_limits(session, tenant_id)
+
+
+@router.put("/usage-limits")
+async def save_usage_limit(
+    body: UsageLimitIn,
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> UsageLimitOut:
+    async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
+        return await usage_service.save_usage_limit(session, body, admin.user_id)
+
+
+@router.get("/usage-limits/status")
+async def usage_limit_status(
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> UsageLimitStatusesOut:
+    async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
+        return await usage_service.usage_limit_statuses(session)
+
+
+# ---------------------------------------------------------------- GCP Billing Export status (6)
+@router.get("/gcp/export-status")
+async def gcp_export_status(
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> BillingExportSyncStatusOut:
+    async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
+        return await usage_service.billing_export_status(session)

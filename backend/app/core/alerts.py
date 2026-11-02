@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.billing import usage as billing_usage
+
 _UPSERT = text(
     "INSERT INTO alerts (tenant_id, kind, severity, message, dedupe_key)"
     " VALUES (:t, :k, :s, :m, :d)"
@@ -329,6 +331,48 @@ async def scan_and_upsert(session: AsyncSession) -> None:
                 text(
                     "UPDATE alerts SET status = 'resolved', resolved_at = now(), updated_at = now()"
                     " WHERE status = 'open' AND kind = 'quota_breach' AND dedupe_key = :d"
+                ),
+                {"d": dedupe},
+            )
+
+    # Admin-configured per-client usage limits (messages/month, total cost/month, LLM
+    # cost/month) -- see Billing > Alerts & Limits. Same numbers as
+    # GET /admin/billing/usage-limits/status, computed once here and reused by that endpoint
+    # would be ideal, but keeping this self-contained avoids a request-scoped session reuse
+    # across modules; the SQL is cheap (one calendar month of data).
+    limit_statuses = (await billing_usage.usage_limit_statuses(session)).statuses
+    for status in limit_statuses:
+        dedupe = f"usage_limit:{status.tenant_id}:{status.metric}"
+        if status.breached_100:
+            await _upsert(
+                session,
+                Condition(
+                    kind="usage_limit_breach",
+                    severity="critical",
+                    message=f"{status.tenant_name} ne '{status.metric}' limit cross kar diya"
+                    f" ({status.current_value}/{status.limit_value}, {status.percent_used}%).",
+                    dedupe_key=dedupe,
+                    tenant_id=str(status.tenant_id),
+                ),
+            )
+        elif status.breached_90 or status.breached_70:
+            await _upsert(
+                session,
+                Condition(
+                    kind="usage_limit_breach",
+                    severity="warning",
+                    message=f"{status.tenant_name} apni '{status.metric}' limit ka"
+                    f" {status.percent_used}% use kar chuka hai"
+                    f" ({status.current_value}/{status.limit_value}).",
+                    dedupe_key=dedupe,
+                    tenant_id=str(status.tenant_id),
+                ),
+            )
+        else:
+            await session.execute(
+                text(
+                    "UPDATE alerts SET status = 'resolved', resolved_at = now(), updated_at = now()"
+                    " WHERE status = 'open' AND kind = 'usage_limit_breach' AND dedupe_key = :d"
                 ),
                 {"d": dedupe},
             )

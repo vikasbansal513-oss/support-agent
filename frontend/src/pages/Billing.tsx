@@ -43,6 +43,7 @@ import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
 import { formatPaise, rupeesToPaise } from "../format";
 import { t, type Key } from "../i18n";
+import { BillingIntel } from "./BillingIntel";
 
 function StateSelect({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   return (
@@ -68,7 +69,7 @@ function minutesText(seconds: number): string {
   return (seconds / 60).toFixed(2);
 }
 
-type OverviewTab = "overview" | "invoices" | "usage";
+type OverviewTab = "overview" | "invoices" | "usage" | "intel";
 
 export function AdminBilling() {
   const [period, setPeriod] = useState(previousMonthIst());
@@ -100,17 +101,24 @@ export function AdminBilling() {
         <button type="button" role="tab" className={tab === "usage" ? "active" : ""} onClick={() => setTab("usage")}>
           {t.billTabUsage}
         </button>
+        <button type="button" role="tab" className={tab === "intel" ? "active" : ""} onClick={() => setTab("intel")}>
+          {t.billTabIntel}
+        </button>
       </div>
-      <Async value={data} reload={reload}>
-        {(current) => (
-          <PeriodView
-            key={`${current.period}-${current.usd_inr}-${current.cloudrun_actual_paise}-${current.telephony_actual_paise}`}
-            data={current}
-            reload={reload}
-            tab={tab}
-          />
-        )}
-      </Async>
+      {tab === "intel" ? (
+        <BillingIntel />
+      ) : (
+        <Async value={data} reload={reload}>
+          {(current) => (
+            <PeriodView
+              key={`${current.period}-${current.usd_inr}-${current.cloudrun_actual_paise}-${current.telephony_actual_paise}`}
+              data={current}
+              reload={reload}
+              tab={tab}
+            />
+          )}
+        </Async>
+      )}
     </Screen>
   );
 }

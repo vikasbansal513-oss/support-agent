@@ -4,6 +4,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.deps import require_user
 from app.auth.service import Principal
+from app.billing import usage as billing_usage
+from app.billing.usage_schemas import ClientUsageOut
 from app.channels.identity import usage_period
 from app.contracts.contracts import DashboardStatsOut, UsageOut
 from app.core import timeutil
@@ -92,3 +94,17 @@ async def usage(
         limit=limit,
         limit_reached=used >= limit,
     )
+
+
+@router.get("/dashboard/billing-usage")
+async def billing_usage_view(
+    principal: Principal = Depends(require_user),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> ClientUsageOut:
+    """Client's own current-month usage + cost, for the Dashboard. Reads cross-tenant-admin
+    tables (gcp_usage_events, plivo_call_records, speech_usage_records, invoices, billing
+    settings) under a super-admin session because those tables are admin-only RLS, but every
+    query inside billing_usage.client_usage() is filtered to `principal.tenant_id` -- a client
+    can never see another tenant's numbers through this endpoint."""
+    async with session_scope(factory, super_admin=True, user_id=principal.user_id) as session:
+        return await billing_usage.client_usage(session, principal.tenant_id)
