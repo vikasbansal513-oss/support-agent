@@ -33,6 +33,25 @@ const COURIER_HINT: Partial<Record<IntegrationKind, string>> = {
   shiprocket: t.courierHintShiprocket,
 };
 
+const LOGO_CLASS: Partial<Record<IntegrationKind, string>> = {
+  shopify: "shopify",
+  gupshup: "whatsapp",
+  gmail: "gmail",
+  shiprocket: "shiprocket",
+};
+const LOGO_CHAR: Record<IntegrationKind, string> = {
+  shopify: "S",
+  gupshup: "W",
+  gmail: "G",
+  shiprocket: "SR",
+  delhivery: "D",
+  bluedart: "BD",
+  dtdc: "DT",
+  ecom_express: "EE",
+  xpressbees: "XB",
+  shadowfax: "SF",
+};
+
 function IntegrationCard({ kind, item, onChange }: { kind: IntegrationKind; item: Integration | undefined; onChange: () => void }) {
   const toast = useToast();
   const [editing, setEditing] = useState(false);
@@ -82,99 +101,104 @@ function IntegrationCard({ kind, item, onChange }: { kind: IntegrationKind; item
   const editable = kind !== "gmail";
   const configured = item?.configured ?? false;
   return (
-    <div className="card">
-      <div className="row">
-        <h2>{LABEL[kind]}</h2>
-        <Chip tone={item?.status === "ok" ? "ok" : item?.status === "auth_error" ? "urgent" : undefined}>{item?.status ?? "not_configured"}</Chip>
+    <div className="card integration-card">
+      <div className="integration-row">
+        <span className={`integration-logo ${LOGO_CLASS[kind] ?? ""}`}>{LOGO_CHAR[kind]}</span>
+        <div className="integration-main">
+          <h2>
+            {LABEL[kind]}
+            <Chip tone={item?.status === "ok" ? "ok" : item?.status === "auth_error" ? "urgent" : undefined}>{item?.status ?? "not_configured"}</Chip>
+          </h2>
+          {kind === "gmail" && configured && item?.config.address && (
+            <p>
+              {t.gmailConnectedAs}: {item.config.address}
+            </p>
+          )}
+          {kind === "gmail" && item?.status === "auth_error" && <p className="banner">{t.gmailAuthError}</p>}
+          {kind !== "gmail" && configured && item?.secret_hint && (
+            <p>
+              {t.secretSet}: {item.secret_hint}
+            </p>
+          )}
+          {item?.last_error_code && <p className="banner">{item.last_error_code}</p>}
+          {webhook && (
+            <div className="banner">
+              <strong>{t.webhookUrl}</strong>
+              <p style={{ wordBreak: "break-all" }}>{webhook}</p>
+              <button type="button" className="small" onClick={() => void navigator.clipboard.writeText(webhook)}>
+                {t.copy}
+              </button>
+            </div>
+          )}
+          {probe && <p>{probe.ok ? t.testOk : `${probe.error_code ?? ""} ${probe.detail ?? ""}`}</p>}
+          {editing && editable && (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void save.run();
+              }}
+            >
+              {kind === "shopify" && (
+                <>
+                  <Field label={t.shopDomain} value={a} onChange={setA} required />
+                  <Field label={t.accessToken} type="password" value={b} onChange={setB} autoComplete="off" required />
+                </>
+              )}
+              {kind === "gupshup" && (
+                <>
+                  <Field label={t.gupshupUser} value={a} onChange={setA} required />
+                  <Field label={t.gupshupPassword} type="password" value={b} onChange={setB} autoComplete="off" required />
+                  <Field label={t.sourceNumber} value={c} onChange={setC} required />
+                  <Field label={t.gupshupAppName} value={d} onChange={setD} />
+                </>
+              )}
+              {COURIER_KINDS.includes(kind) && (
+                <Field
+                  label={`${t.courierCredential} (${COURIER_HINT[kind] ?? t.courierHintGeneric})`}
+                  type="password"
+                  value={a}
+                  onChange={setA}
+                  autoComplete="off"
+                  required
+                />
+              )}
+              <small>{t.secretWriteOnly}</small>
+              <div className="row">
+                <button type="submit" className="small" disabled={save.busy}>
+                  {t.save}
+                </button>
+                <button type="button" className="secondary small" onClick={() => setEditing(false)}>
+                  {t.cancel}
+                </button>
+              </div>
+            </form>
+          )}
+          {!editing && (
+            <div className="integration-actions">
+              {editable && (
+                <button type="button" className="secondary small" onClick={() => setEditing(true)}>
+                  {configured ? t.editCredentials : LABEL[kind]}
+                </button>
+              )}
+              {kind === "gmail" && (
+                <button type="button" className="small" disabled={connectGmail.busy} onClick={() => void connectGmail.run()}>
+                  {configured ? t.gmailReconnect : t.gmailConnect}
+                </button>
+              )}
+              {kind === "gmail" && configured && (
+                <button type="button" className="secondary small" disabled={disconnectGmail.busy} onClick={() => void disconnectGmail.run()}>
+                  {t.gmailDisconnect}
+                </button>
+              )}
+              {configured && (
+                <button type="button" className="small" disabled={test.busy} onClick={() => void test.run()}>
+                  {t.testConnection}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
-      {kind === "gmail" && configured && item?.config.address && (
-        <p>
-          {t.gmailConnectedAs}: {item.config.address}
-        </p>
-      )}
-      {kind === "gmail" && item?.status === "auth_error" && <p className="banner">{t.gmailAuthError}</p>}
-      {kind !== "gmail" && configured && item?.secret_hint && (
-        <p>
-          {t.secretSet}: {item.secret_hint}
-        </p>
-      )}
-      {item?.last_error_code && <p className="banner">{item.last_error_code}</p>}
-      {webhook && (
-        <div className="banner">
-          <strong>{t.webhookUrl}</strong>
-          <p style={{ wordBreak: "break-all" }}>{webhook}</p>
-          <button type="button" onClick={() => void navigator.clipboard.writeText(webhook)}>
-            {t.copy}
-          </button>
-        </div>
-      )}
-      {probe && <p>{probe.ok ? t.testOk : `${probe.error_code ?? ""} ${probe.detail ?? ""}`}</p>}
-      {editing && editable && (
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void save.run();
-          }}
-        >
-          {kind === "shopify" && (
-            <>
-              <Field label={t.shopDomain} value={a} onChange={setA} required />
-              <Field label={t.accessToken} type="password" value={b} onChange={setB} autoComplete="off" required />
-            </>
-          )}
-          {kind === "gupshup" && (
-            <>
-              <Field label={t.gupshupUser} value={a} onChange={setA} required />
-              <Field label={t.gupshupPassword} type="password" value={b} onChange={setB} autoComplete="off" required />
-              <Field label={t.sourceNumber} value={c} onChange={setC} required />
-              <Field label={t.gupshupAppName} value={d} onChange={setD} />
-            </>
-          )}
-          {COURIER_KINDS.includes(kind) && (
-            <Field
-              label={`${t.courierCredential} (${COURIER_HINT[kind] ?? t.courierHintGeneric})`}
-              type="password"
-              value={a}
-              onChange={setA}
-              autoComplete="off"
-              required
-            />
-          )}
-          <small>{t.secretWriteOnly}</small>
-          <div className="row">
-            <button type="submit" disabled={save.busy}>
-              {t.save}
-            </button>
-            <button type="button" className="secondary" onClick={() => setEditing(false)}>
-              {t.cancel}
-            </button>
-          </div>
-        </form>
-      )}
-      {!editing && (
-        <div className="row">
-          {editable && (
-            <button type="button" className="secondary" onClick={() => setEditing(true)}>
-              {configured ? t.editCredentials : LABEL[kind]}
-            </button>
-          )}
-          {kind === "gmail" && (
-            <button type="button" disabled={connectGmail.busy} onClick={() => void connectGmail.run()}>
-              {configured ? t.gmailReconnect : t.gmailConnect}
-            </button>
-          )}
-          {kind === "gmail" && configured && (
-            <button type="button" className="secondary" disabled={disconnectGmail.busy} onClick={() => void disconnectGmail.run()}>
-              {t.gmailDisconnect}
-            </button>
-          )}
-          {configured && (
-            <button type="button" disabled={test.busy} onClick={() => void test.run()}>
-              {t.testConnection}
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -183,10 +207,10 @@ function LogisticsSection({ items, onChange }: { items: Integration[]; onChange:
   const configuredFirst = COURIER_KINDS.find((kind) => items.find((i) => i.kind === kind)?.configured);
   const [selected, setSelected] = useState<IntegrationKind>(configuredFirst ?? "shiprocket");
   return (
-    <div className="card">
-      <h2 className="section-heading">{t.logisticsHeading}</h2>
+    <div className="card pad">
+      <h2 className="card-title">{t.logisticsHeading}</h2>
       <label className="field">
-        <span>{t.logisticsProvider}</span>
+        <span className="field-label">{t.logisticsProvider}</span>
         <select value={selected} onChange={(event) => setSelected(event.target.value as IntegrationKind)}>
           {COURIER_KINDS.map((kind) => {
             const configured = items.find((i) => i.kind === kind)?.configured ?? false;
@@ -199,7 +223,9 @@ function LogisticsSection({ items, onChange }: { items: Integration[]; onChange:
           })}
         </select>
       </label>
-      <IntegrationCard key={selected} kind={selected} item={items.find((i) => i.kind === selected)} onChange={onChange} />
+      <div className="nested-provider">
+        <IntegrationCard key={selected} kind={selected} item={items.find((i) => i.kind === selected)} onChange={onChange} />
+      </div>
     </div>
   );
 }

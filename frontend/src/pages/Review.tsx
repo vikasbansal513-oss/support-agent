@@ -38,8 +38,8 @@ function ReviewCard({ action, draftMode, onDone }: { action: Action; draftMode: 
       </p>
       <div className="bubble bubble-out unsent">{action.body_text}</div>
       <label className="field">
-        <span>{t.note}</span>
-        <input value={note} maxLength={500} onChange={(event) => setNote(event.target.value)} />
+        <span className="field-label">{t.note}</span>
+        <input className="input" value={note} maxLength={500} onChange={(event) => setNote(event.target.value)} />
       </label>
       <div className="verdicts">
         <button type="button" disabled={correct.busy} onClick={() => void correct.run()}>

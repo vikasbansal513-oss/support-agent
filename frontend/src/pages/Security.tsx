@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { MfaStatus } from "../api/types";
 import { Async, Field, Screen, useSubmit } from "../components/common";
+import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
 import { t } from "../i18n";
@@ -55,33 +56,38 @@ function MfaCard({ status, onChange }: { status: MfaStatus; onChange: () => void
   }, toast.error);
 
   return (
-    <div className="card">
-      <h2>{status.enabled ? t.mfaOn : t.mfaOff}</h2>
+    <div className="card security-mfa">
+      <span className="security-icon">
+        <Icon name="shield" />
+      </span>
+      <div className="security-copy">
+        <h2>{status.enabled ? t.mfaOn : t.mfaOff}</h2>
+        {setup && <p>{t.mfaScan}</p>}
+        {setup && <QrBlock uri={setup.otpauth_uri} />}
+        {setup && <Field label={t.mfaCode} value={code} onChange={setCode} autoComplete="one-time-code" />}
+        {status.enabled && (
+          <>
+            <p>
+              {t.recoveryRemaining}: {status.recovery_remaining}
+            </p>
+            <Field label={t.mfaCode} value={code} onChange={setCode} autoComplete="one-time-code" />
+          </>
+        )}
+      </div>
       {!status.enabled && !setup && (
-        <button type="button" disabled={start.busy} onClick={() => void start.run()}>
+        <button type="button" className="security-cta" disabled={start.busy} onClick={() => void start.run()}>
           {t.mfaSetup}
         </button>
       )}
       {setup && (
-        <>
-          <p>{t.mfaScan}</p>
-          <QrBlock uri={setup.otpauth_uri} />
-          <Field label={t.mfaCode} value={code} onChange={setCode} autoComplete="one-time-code" />
-          <button type="button" disabled={confirm.busy || code.length < 6} onClick={() => void confirm.run()}>
-            {t.mfaConfirm}
-          </button>
-        </>
+        <button type="button" className="security-cta" disabled={confirm.busy || code.length < 6} onClick={() => void confirm.run()}>
+          {t.mfaConfirm}
+        </button>
       )}
       {status.enabled && (
-        <>
-          <p>
-            {t.recoveryRemaining}: {status.recovery_remaining}
-          </p>
-          <Field label={t.mfaCode} value={code} onChange={setCode} autoComplete="one-time-code" />
-          <button type="button" className="secondary" disabled={regenerate.busy || code.length < 6} onClick={() => void regenerate.run()}>
-            {t.newRecovery}
-          </button>
-        </>
+        <button type="button" className="secondary security-cta" disabled={regenerate.busy || code.length < 6} onClick={() => void regenerate.run()}>
+          {t.newRecovery}
+        </button>
       )}
       {codes && (
         <div className="banner" role="dialog" aria-label={t.recoveryCodes}>
@@ -108,18 +114,25 @@ function PasswordCard() {
   }, toast.error);
   return (
     <form
-      className="card"
+      className="card change-password"
       onSubmit={(event) => {
         event.preventDefault();
         void change.run();
       }}
     >
-      <h2>{t.changePassword}</h2>
-      <Field label={t.currentPassword} type="password" value={current} onChange={setCurrent} autoComplete="current-password" required />
-      <Field label={t.newPassword} type="password" value={next} onChange={setNext} autoComplete="new-password" required />
-      <button type="submit" disabled={change.busy}>
-        {t.save}
-      </button>
+      <span className="security-icon">
+        <Icon name="lock" />
+      </span>
+      <div className="security-copy">
+        <h2>{t.changePassword}</h2>
+      </div>
+      <div className="password-fields">
+        <Field label={t.currentPassword} type="password" value={current} onChange={setCurrent} autoComplete="current-password" required />
+        <Field label={t.newPassword} type="password" value={next} onChange={setNext} autoComplete="new-password" required />
+        <button type="submit" className="save-password" disabled={change.busy}>
+          {t.save}
+        </button>
+      </div>
     </form>
   );
 }

@@ -2,31 +2,77 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import type { Loadable } from "./useApi";
 import { ApiError } from "../api/client";
 import { t } from "../i18n";
+import { Icon } from "./Icons";
 
-export function Screen({ title, children }: { title: string; children: ReactNode }) {
+export function Screen({
+  title,
+  subtitle,
+  actions,
+  children,
+}: {
+  title: string;
+  subtitle?: ReactNode;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
   return (
-    <section className="screen">
-      <h1>{title}</h1>
+    <section>
+      <div className="page-head">
+        <div>
+          <h1>{title}</h1>
+          {subtitle && <p>{subtitle}</p>}
+        </div>
+        {actions && <div className="head-actions">{actions}</div>}
+      </div>
       {children}
     </section>
   );
 }
 
-export function StatCard({ label, value, tone }: { label: string; value: ReactNode; tone?: "warn" | "ok" }) {
+const STAT_ICON_TONE: Record<"warn" | "ok" | "default", string> = {
+  warn: "orange",
+  ok: "green",
+  default: "blue",
+};
+
+export function StatCard({
+  label,
+  value,
+  tone,
+  icon = "info",
+}: {
+  label: string;
+  value: ReactNode;
+  tone?: "warn" | "ok";
+  icon?: string;
+}) {
   return (
-    <div className={tone ? `stat stat-${tone}` : "stat"}>
-      <span className="stat-value">{value}</span>
-      <span className="stat-label">{label}</span>
+    <div className="stat-card">
+      <div className={`stat-icon ${STAT_ICON_TONE[tone ?? "default"]}`}>
+        <Icon name={icon} />
+      </div>
+      <div>
+        <div className="stat-number">{value}</div>
+        <div className="stat-label">{label}</div>
+      </div>
     </div>
   );
 }
 
 export function Chip({ children, tone }: { children: ReactNode; tone?: "warn" | "ok" | "urgent" }) {
-  return <span className={tone ? `chip chip-${tone}` : "chip"}>{children}</span>;
+  const color = tone === "urgent" ? "red" : tone === "ok" ? "green" : tone === "warn" ? "amber" : "gray";
+  return <span className={`pill ${color}`}>{children}</span>;
 }
 
 export function Empty({ children }: { children: ReactNode }) {
-  return <p className="empty">{children}</p>;
+  return (
+    <div className="card empty-state">
+      <div className="empty-icon">
+        <Icon name="info" />
+      </div>
+      <p>{children}</p>
+    </div>
+  );
 }
 
 export function ErrorBox({ error, onRetry }: { error: Error; onRetry?: () => void }) {
@@ -81,8 +127,9 @@ export function Field({
 }) {
   return (
     <label className="field">
-      <span>{label}</span>
+      <span className="field-label">{label}</span>
       <input
+        className="input"
         type={type}
         value={value}
         autoComplete={autoComplete}
@@ -110,7 +157,7 @@ export function ReasonDialog({
   };
   return (
     <div className="dialog" role="dialog" aria-modal="true" aria-label={title}>
-      <form onSubmit={submit}>
+      <form className="card" onSubmit={submit}>
         <h2>{title}</h2>
         <Field label={t.reasonLabel} value={reason} onChange={setReason} required />
         <div className="row">

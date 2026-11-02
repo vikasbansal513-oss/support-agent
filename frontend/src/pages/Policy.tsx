@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../api/client";
 import type { Policy, PolicyContent, Regression } from "../api/types";
 import { Async, Chip, Field, Screen, useSubmit } from "../components/common";
+import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
 import { rupeesToPaise, formatPaise, formatIst } from "../format";
@@ -60,86 +61,102 @@ function Editor({ policy, onSaved }: { policy: Policy; onSaved: () => void }) {
   }, toast.error);
 
   return (
-    <div className="card">
-      <div className="row">
-        <h2>v{policy.version}</h2>
-        <Chip tone={policy.status === "published" ? "ok" : undefined}>
-          {policy.status === "draft" ? t.policyDraft : policy.status === "published" ? t.policyPublished : t.policyArchived}
-        </Chip>
-        <small>{formatIst(policy.published_at ?? policy.created_at)}</small>
-      </div>
-      <fieldset disabled={locked} style={{ border: 0, padding: 0 }}>
-        <Field label={t.returnWindow} type="number" value={String(c.return_window_days)} onChange={(v) => setC({ ...c, return_window_days: num(v, 7) })} />
-        <Field label={t.slaMinutes} type="number" value={String(c.handoff_sla_minutes)} onChange={(v) => setC({ ...c, handoff_sla_minutes: num(v, 30) })} />
-        <Field label={t.customerCap} type="number" value={String(c.customer_daily_msg_cap)} onChange={(v) => setC({ ...c, customer_daily_msg_cap: num(v, 30) })} />
-        <Field label={t.brandCap} type="number" value={String(c.brand_daily_msg_cap)} onChange={(v) => setC({ ...c, brand_daily_msg_cap: num(v, 2000) })} />
-        <Field label={t.officeStart} type="time" value={c.office_hours.start} onChange={(v) => setC({ ...c, office_hours: { ...c.office_hours, start: v } })} />
-        <Field label={t.officeEnd} type="time" value={c.office_hours.end} onChange={(v) => setC({ ...c, office_hours: { ...c.office_hours, end: v } })} />
-        <div className="field">
-          <span>{t.officeDays}</span>
-          <div className="row">
-            {DAYS.map((label, day) => (
-              <label key={label} className="row">
-                <input
-                  type="checkbox"
-                  style={{ width: "auto" }}
-                  checked={c.office_hours.days.includes(day)}
-                  onChange={(e) => {
-                    const days = e.target.checked ? [...c.office_hours.days, day] : c.office_hours.days.filter((d) => d !== day);
-                    setC({ ...c, office_hours: { ...c.office_hours, days: days.sort() } });
-                  }}
-                />
-                {label}
-              </label>
-            ))}
-          </div>
-        </div>
-        <Field label={t.finalSaleTags} value={tags} onChange={setTags} />
-        <Field label={t.handoffKeywords} value={keywords} onChange={setKeywords} />
-        {c.schema_version !== 2 && <Field label="Auto refund limit (₹, khali = band)" value={refundLimit} onChange={setRefundLimit} />}
-        <Field label={t.disclosureHi} value={c.ai_disclosure.hi} onChange={(v) => setC({ ...c, ai_disclosure: { ...c.ai_disclosure, hi: v } })} />
-        <Field label={t.disclosureEn} value={c.ai_disclosure.en} onChange={(v) => setC({ ...c, ai_disclosure: { ...c.ai_disclosure, en: v } })} />
-        <Field label={t.disclosureHinglish} value={c.ai_disclosure.hinglish} onChange={(v) => setC({ ...c, ai_disclosure: { ...c.ai_disclosure, hinglish: v } })} />
-      </fieldset>
-      {c.schema_version !== 2 && c.refund_auto_limit_paise != null && <small>{formatPaise(c.refund_auto_limit_paise)}</small>}
-      {!locked && (
+    <div className="policy-layout">
+      <div className="card policy-main">
         <div className="row">
-          <button type="button" disabled={save.busy} onClick={() => void save.run()}>
-            {t.save}
-          </button>
-          <button type="button" className="secondary" disabled={run.busy} onClick={() => void run.run()}>
-            {t.policyRunRegression}
-          </button>
-          <button type="button" disabled={regression?.passed !== true} onClick={() => setConfirmPublish(true)}>
-            {t.policyPublish}
-          </button>
+          <h2 className="policy-section-title">v{policy.version}</h2>
+          <Chip tone={policy.status === "published" ? "ok" : undefined}>
+            {policy.status === "draft" ? t.policyDraft : policy.status === "published" ? t.policyPublished : t.policyArchived}
+          </Chip>
+          <small>{formatIst(policy.published_at ?? policy.created_at)}</small>
         </div>
-      )}
-      {regression && (
-        <div className={regression.passed ? "banner" : "error-box"}>
-          <strong>{regression.passed ? t.policyRegressionPassed : t.policyRegressionFailed}</strong> ({regression.scenarios_total})
-          <ul>
-            {regression.scenarios_failed.map((name) => (
-              <li key={name}>{name}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {confirmPublish && (
-        <div className="dialog" role="dialog" aria-modal="true">
-          <div className="card">
-            <p>{t.policyPublishConfirm}</p>
-            <div className="row">
-              <button type="button" disabled={publish.busy} onClick={() => void publish.run()}>
-                {t.policyPublish}
-              </button>
-              <button type="button" className="secondary" onClick={() => setConfirmPublish(false)}>
-                {t.cancel}
-              </button>
+        <fieldset disabled={locked} style={{ border: 0, padding: 0 }}>
+          <div className="policy-fields">
+            <Field label={t.returnWindow} type="number" value={String(c.return_window_days)} onChange={(v) => setC({ ...c, return_window_days: num(v, 7) })} />
+            <Field label={t.slaMinutes} type="number" value={String(c.handoff_sla_minutes)} onChange={(v) => setC({ ...c, handoff_sla_minutes: num(v, 30) })} />
+            <Field label={t.customerCap} type="number" value={String(c.customer_daily_msg_cap)} onChange={(v) => setC({ ...c, customer_daily_msg_cap: num(v, 30) })} />
+            <Field label={t.brandCap} type="number" value={String(c.brand_daily_msg_cap)} onChange={(v) => setC({ ...c, brand_daily_msg_cap: num(v, 2000) })} />
+          </div>
+          <div className="office-grid">
+            <Field label={t.officeStart} type="time" value={c.office_hours.start} onChange={(v) => setC({ ...c, office_hours: { ...c.office_hours, start: v } })} />
+            <Field label={t.officeEnd} type="time" value={c.office_hours.end} onChange={(v) => setC({ ...c, office_hours: { ...c.office_hours, end: v } })} />
+            <div className="field full">
+              <span className="field-label">{t.officeDays}</span>
+              <div className="row">
+                {DAYS.map((label, day) => (
+                  <label key={label} className="row">
+                    <input
+                      type="checkbox"
+                      style={{ width: "auto" }}
+                      checked={c.office_hours.days.includes(day)}
+                      onChange={(e) => {
+                        const days = e.target.checked ? [...c.office_hours.days, day] : c.office_hours.days.filter((d) => d !== day);
+                        setC({ ...c, office_hours: { ...c.office_hours, days: days.sort() } });
+                      }}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+          <div className="policy-fields">
+            <Field label={t.finalSaleTags} value={tags} onChange={setTags} />
+            <Field label={t.handoffKeywords} value={keywords} onChange={setKeywords} />
+            {c.schema_version !== 2 && <Field label="Auto refund limit (₹, khali = band)" value={refundLimit} onChange={setRefundLimit} />}
+          </div>
+          <div className="disclosure-grid">
+            <Field label={t.disclosureHi} value={c.ai_disclosure.hi} onChange={(v) => setC({ ...c, ai_disclosure: { ...c.ai_disclosure, hi: v } })} />
+            <Field label={t.disclosureEn} value={c.ai_disclosure.en} onChange={(v) => setC({ ...c, ai_disclosure: { ...c.ai_disclosure, en: v } })} />
+            <Field label={t.disclosureHinglish} value={c.ai_disclosure.hinglish} onChange={(v) => setC({ ...c, ai_disclosure: { ...c.ai_disclosure, hinglish: v } })} />
+          </div>
+        </fieldset>
+        {c.schema_version !== 2 && c.refund_auto_limit_paise != null && <small className="help">{formatPaise(c.refund_auto_limit_paise)}</small>}
+        {!locked && (
+          <div className="row policy-actions">
+            <button type="button" disabled={save.busy} onClick={() => void save.run()}>
+              {t.save}
+            </button>
+            <button type="button" className="secondary" disabled={run.busy} onClick={() => void run.run()}>
+              {t.policyRunRegression}
+            </button>
+            <button type="button" disabled={regression?.passed !== true} onClick={() => setConfirmPublish(true)}>
+              {t.policyPublish}
+            </button>
+          </div>
+        )}
+        {regression && (
+          <div className={regression.passed ? "banner" : "error-box"}>
+            <strong>{regression.passed ? t.policyRegressionPassed : t.policyRegressionFailed}</strong> ({regression.scenarios_total})
+            <ul>
+              {regression.scenarios_failed.map((name) => (
+                <li key={name}>{name}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {confirmPublish && (
+          <div className="dialog" role="dialog" aria-modal="true">
+            <div className="card pad">
+              <p>{t.policyPublishConfirm}</p>
+              <div className="row">
+                <button type="button" disabled={publish.busy} onClick={() => void publish.run()}>
+                  {t.policyPublish}
+                </button>
+                <button type="button" className="secondary" onClick={() => setConfirmPublish(false)}>
+                  {t.cancel}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="card quick-tips">
+        <h2>
+          <Icon name="info" /> {t.policyTipsTitle}
+        </h2>
+        <p className="help">{t.policyTipsBody}</p>
+      </div>
     </div>
   );
 }
@@ -172,7 +189,7 @@ function HistoryModal({ items, onClose }: { items: Policy[]; onClose: () => void
               <button
                 key={p.id}
                 type="button"
-                className="secondary row card"
+                className="secondary row card pad"
                 style={{ width: "100%", justifyContent: "space-between" }}
                 onClick={() => setOpenId(p.id)}
               >

@@ -1,8 +1,9 @@
-import { useEffect } from "react";
+import { Fragment, useEffect } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import type { Integration, Policy } from "../api/types";
 import { Async, Chip, Screen } from "../components/common";
+import { Icon } from "../components/Icons";
 import { COURIER_KINDS, IntegrationsPanel } from "../components/IntegrationsPanel";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
@@ -50,15 +51,45 @@ export function Onboarding() {
             [t.stepCourier, courier],
             [t.stepPolicy, published],
           ];
+          const doneCount = steps.filter(([, done]) => done).length;
           return (
             <>
-              <ol className="card">
-                {steps.map(([label, done]) => (
-                  <li key={label}>
-                    {label} <Chip tone={done ? "ok" : "warn"}>{done ? t.stepDone : t.stepPending}</Chip>
-                  </li>
-                ))}
-              </ol>
+              <div className="card setup-checklist">
+                <div className="setup-top">
+                  <div className="privacy-heading">
+                    <span className="soft-icon">
+                      <Icon name="check-square" />
+                    </span>
+                    <div>
+                      <p>
+                        {doneCount}/{steps.length}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="progress-label">
+                    <div className="bar-progress">
+                      <span style={{ width: `${(doneCount / steps.length) * 100}%` }} />
+                    </div>
+                    <b>
+                      {doneCount}/{steps.length}
+                    </b>
+                  </div>
+                </div>
+                <ol className="setup-steps">
+                  {steps.map(([label, done], index) => (
+                    <Fragment key={label}>
+                      <li className={done ? "setup-step completed" : "setup-step"}>
+                        <span className={done ? "step-check" : "step-check hollow"}>{done ? "✓" : index + 1}</span>
+                        <span>
+                          <b>{label}</b>
+                          <Chip tone={done ? "ok" : "warn"}>{done ? t.stepDone : t.stepPending}</Chip>
+                        </span>
+                      </li>
+                      {index < steps.length - 1 && <span className="step-arrow">›</span>}
+                    </Fragment>
+                  ))}
+                </ol>
+              </div>
               <IntegrationsPanel items={items} onChange={refresh} />
               <Link to="/settings/policy">{t.navPolicy}</Link>
             </>

@@ -2,7 +2,8 @@ import { useState } from "react";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type { Carrier, VoiceCall, VoiceCallDetail, VoiceSettings as Settings, VoiceStats } from "../api/types";
-import { Async, Chip, Empty, Field, Screen, StatCard } from "../components/common";
+import { Async, Chip, Empty, Field, Screen } from "../components/common";
+import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
 import { formatIst } from "../format";
@@ -35,9 +36,16 @@ function PublicNumberCard({
 
   if (!settings.configured) {
     return isOwner ? (
-      <section className="card">
-        <h2>{t.voicePublicNumberTitle}</h2>
-        <p className="hint">{t.voicePublicNumberNeedsAiNumber}</p>
+      <section className="card business-number">
+        <div className="business-heading">
+          <span className="soft-icon">
+            <Icon name="phone" />
+          </span>
+          <div>
+            <h2>{t.voicePublicNumberTitle}</h2>
+            <p className="hint">{t.voicePublicNumberNeedsAiNumber}</p>
+          </div>
+        </div>
       </section>
     ) : null;
   }
@@ -82,9 +90,16 @@ function PublicNumberCard({
   };
 
   return (
-    <section className="card">
-      <h2>{t.voicePublicNumberTitle}</h2>
-      <p>{t.voicePublicNumberIntro}</p>
+    <section className="card business-number">
+      <div className="business-heading">
+        <span className="soft-icon">
+          <Icon name="phone" />
+        </span>
+        <div>
+          <h2>{t.voicePublicNumberTitle}</h2>
+          <p>{t.voicePublicNumberIntro}</p>
+        </div>
+      </div>
       {isOwner ? (
         <>
           <Field label={t.voicePublicNumberLabel} value={number} onChange={setNumber} placeholder="9876543210" />
@@ -158,18 +173,25 @@ function PublicNumberCard({
 
 function SettingsStatus({ settings }: { settings: Settings }) {
   return (
-    <section className="card">
-      <p>{t.voiceIntro}</p>
-      <p>
+    <section className="card calling-status">
+      <div className="calling-intro">
+        <span className="soft-icon">
+          <Icon name="phone" />
+        </span>
+        <div>
+          <p>{t.voiceIntro}</p>
+        </div>
+      </div>
+      <div className="calling-badges">
         <Chip tone={settings.configured ? "ok" : "warn"}>
           {settings.configured ? t.voiceStatusConfigured : t.voiceStatusNotConfigured}
-        </Chip>{" "}
+        </Chip>
         {settings.configured && (
           <Chip tone={settings.enabled ? "ok" : "warn"}>
             {settings.enabled ? t.voiceEnabled : t.voiceStatusDisabled}
           </Chip>
         )}
-      </p>
+      </div>
       {settings.configured && (
         <p>
           {t.voiceCalledNumber}: <code>{settings.called_number}</code>
@@ -193,8 +215,8 @@ function CallDetail({ id, onBack }: { id: string; onBack: () => void }) {
     }
   };
   return (
-    <div>
-      <button type="button" onClick={onBack}>
+    <div className="card recent-calls">
+      <button type="button" className="secondary small" onClick={onBack}>
         {t.voiceBack}
       </button>
       <h2>{t.voiceTurns}</h2>
@@ -234,18 +256,51 @@ function CallDetail({ id, onBack }: { id: string; onBack: () => void }) {
 function Stats() {
   const [stats, reload] = useApi(() => api.get<VoiceStats>("/voice/stats?days=7"));
   return (
-    <div>
-      <h2>{t.voiceStats}</h2>
+    <div className="card calling-analytics">
+      <div className="calling-heading">
+        <span className="soft-icon">
+          <Icon name="review" />
+        </span>
+        <h2>{t.voiceStats}</h2>
+      </div>
       <Async value={stats} reload={reload}>
         {(v) => (
-          <div className="stats">
-            <StatCard label={t.voiceStatCalls} value={v.calls} />
-            <StatCard label={t.voiceStatAgentRate} value={v.agent_rate_percent} tone="ok" />
-            <StatCard label={t.voiceStatCallback} value={v.callback} tone={v.callback ? "warn" : undefined} />
-            <StatCard label={t.voiceStatLatency} value={v.avg_latency_ms} />
-            <StatCard label={t.voiceStatSlow} value={v.slow_turns} tone={v.slow_turns ? "warn" : undefined} />
-            <StatCard label={t.voiceStatGood} value={v.feedback_good} />
-            <StatCard label={t.voiceStatBad} value={v.feedback_bad} />
+          <div className="call-metrics">
+            <div className="metric">
+              <Icon name="phone" />
+              <b>{v.calls}</b>
+              <span>{t.voiceStatCalls}</span>
+            </div>
+            <div className="metric">
+              <Icon name="check-circle" />
+              <b>{v.agent_rate_percent}</b>
+              <span>{t.voiceStatAgentRate}</span>
+            </div>
+            <div className="metric">
+              <Icon name="arrows" />
+              <b>{v.callback}</b>
+              <span>{t.voiceStatCallback}</span>
+            </div>
+            <div className="metric">
+              <Icon name="clock" />
+              <b>{v.avg_latency_ms}</b>
+              <span>{t.voiceStatLatency}</span>
+            </div>
+            <div className="metric">
+              <Icon name="info" />
+              <b>{v.slow_turns}</b>
+              <span>{t.voiceStatSlow}</span>
+            </div>
+            <div className="metric">
+              <Icon name="check-circle" />
+              <b>{v.feedback_good}</b>
+              <span>{t.voiceStatGood}</span>
+            </div>
+            <div className="metric">
+              <Icon name="info" />
+              <b>{v.feedback_bad}</b>
+              <span>{t.voiceStatBad}</span>
+            </div>
           </div>
         )}
       </Async>
@@ -258,8 +313,13 @@ function Calls() {
   const [open, setOpen] = useState<string | null>(null);
   if (open) return <CallDetail id={open} onBack={() => setOpen(null)} />;
   return (
-    <div>
-      <h2>{t.voiceCalls}</h2>
+    <div className="card recent-calls">
+      <div className="calling-heading">
+        <span className="soft-icon">
+          <Icon name="chat" />
+        </span>
+        <h2>{t.voiceCalls}</h2>
+      </div>
       <Async value={calls} reload={reload}>
         {(rows) =>
           rows.length === 0 ? (
@@ -268,7 +328,7 @@ function Calls() {
             <ul className="list">
               {rows.map((call) => (
                 <li key={call.id}>
-                  <button type="button" onClick={() => setOpen(call.id)}>
+                  <button type="button" className="secondary small" onClick={() => setOpen(call.id)}>
                     {call.caller_masked ?? "-"} · {formatIst(call.started_at)}
                   </button>{" "}
                   <Chip tone={call.status === "callback" || call.status === "failed" ? "warn" : "ok"}>
@@ -289,8 +349,10 @@ function Body({ initial, onSaved }: { initial: Settings; onSaved: () => void }) 
   const isOwner = user?.role === "owner";
   return (
     <>
-      <SettingsStatus settings={initial} />
-      <PublicNumberCard settings={initial} isOwner={isOwner} onSaved={onSaved} />
+      <div className="calling-top">
+        <SettingsStatus settings={initial} />
+        <PublicNumberCard settings={initial} isOwner={isOwner} onSaved={onSaved} />
+      </div>
       {initial.configured && <Stats />}
       {initial.configured && <Calls />}
     </>

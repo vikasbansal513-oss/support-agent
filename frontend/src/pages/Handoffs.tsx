@@ -3,9 +3,10 @@ import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import type { Handoff, Page } from "../api/types";
 import { Async, Chip, Empty, Screen, useSubmit } from "../components/common";
+import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
-import { minutesLeft } from "../format";
+import { formatIst, minutesLeft } from "../format";
 import { t } from "../i18n";
 
 export function SlaTimer({ due, breached }: { due: string | null; breached: boolean }) {
@@ -24,7 +25,27 @@ export function SlaTimer({ due, breached }: { due: string | null; breached: bool
   );
 }
 
-function HandoffCard({ item, onChange }: { item: Handoff; onChange: () => void }) {
+function HandoffRow({ item, selected, onSelect }: { item: Handoff; selected: boolean; onSelect: () => void }) {
+  return (
+    <button type="button" className={selected ? "handoff-row selected" : "handoff-row"} onClick={onSelect}>
+      <span className={`channel-icon ${item.priority === "urgent" ? "purple" : "blue"}`}>
+        <Icon name={item.priority === "urgent" ? "info" : "chat"} />
+      </span>
+      <span className="handoff-copy">
+        <b>{item.summary.customer_masked_phone ?? item.summary.order_ref ?? item.id}</b>
+        <span>{item.summary.customer_asked}</span>
+        <small>
+          {item.reason_code} · {item.summary.order_ref ?? "-"}
+        </small>
+      </span>
+      <span className="handoff-meta">
+        <span>{formatIst(item.created_at)}</span>
+      </span>
+    </button>
+  );
+}
+
+function HandoffDetail({ item, onChange }: { item: Handoff; onChange: () => void }) {
   const toast = useToast();
   const claim = useSubmit(async () => {
     await api.post<Handoff>(`/handoffs/${item.id}/claim`);
@@ -37,28 +58,91 @@ function HandoffCard({ item, onChange }: { item: Handoff; onChange: () => void }
     await api.post<Handoff>(`/handoffs/${item.id}/resolve`);
     onChange();
   }, toast.error);
+
   return (
-    <div className="card">
-      <div className="row">
-        {item.priority === "urgent" && <Chip tone="urgent">{t.urgent}</Chip>}
-        <Chip>{item.reason_code}</Chip>
-        <SlaTimer due={item.sla_due_at} breached={item.sla_breached} />
-        {item.status === "claimed" && <Chip tone="ok">{t.claimed}</Chip>}
-      </div>
-      <p>{item.summary.customer_asked}</p>
-      <small>
-        {item.summary.customer_masked_phone ?? "-"} · {item.summary.order_ref ?? "-"} · {item.summary.why_stuck}
-      </small>
-      <div className="row">
-        <Link to={`/conversations/${item.conversation_id}`}>{t.navConversations}</Link>
-        {item.status === "open" && (
-          <button type="button" disabled={claim.busy} onClick={() => void claim.run()}>
-            {t.claim}
+    <div className="card handoff-detail" style={{ padding: 0, overflow: "hidden" }}>
+      <div className="handoff-detail-head">
+        <span className={`channel-icon ${item.priority === "urgent" ? "purple" : "blue"}`}>
+          <Icon name={item.priority === "urgent" ? "info" : "chat"} />
+        </span>
+        <div className="handoff-who">
+          <b>{item.summary.customer_masked_phone ?? item.summary.order_ref ?? item.id}</b>
+          <span>
+            {item.summary.customer_masked_phone ?? "-"} · {item.reason_code}
+          </span>
+        </div>
+        <div className="head-actions">
+          <SlaTimer due={item.sla_due_at} breached={item.sla_breached} />
+          {item.priority === "urgent" && <Chip tone="urgent">{t.urgent}</Chip>}
+          {item.status === "claimed" && <Chip tone="ok">{t.claimed}</Chip>}
+          <Link to={`/conversations/${item.conversation_id}`} className="btn small">
+            {t.navConversations}
+          </Link>
+          {item.status === "open" && (
+            <button type="button" className="small" disabled={claim.busy} onClick={() => void claim.run()}>
+              {t.claim}
+            </button>
+          )}
+          <button type="button" className="secondary small" disabled={resolve.busy} onClick={() => void resolve.run()}>
+            {t.resolve}
           </button>
-        )}
-        <button type="button" className="secondary" disabled={resolve.busy} onClick={() => void resolve.run()}>
-          {t.resolve}
-        </button>
+        </div>
+      </div>
+      <div className="handoff-summary">
+        <div className="ai-summary">
+          <div className="ai-title">{t.aiSummaryTitle}</div>
+          <div className="ai-body">
+            <div className="summary-item">
+              <div>
+                <b>{t.customerSaid}</b>
+                <p>{item.summary.customer_asked}</p>
+              </div>
+            </div>
+            {item.summary.agent_did.length > 0 && (
+              <div className="summary-item">
+                <div>
+                  <b>{t.aiActionsTaken}</b>
+                  <p>{item.summary.agent_did.join("; ")}</p>
+                </div>
+              </div>
+            )}
+            <div className="required-action">
+              <div>
+                <b>{t.whyHandoffTitle}</b>
+                <p>{item.summary.why_stuck}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="details-card">
+          <h3>
+            <Icon name="info" />
+            {t.handoffDetailsTitle}
+          </h3>
+          <div className="detail-line">
+            <span>{t.orderLabel}</span>
+            <b>{item.summary.order_ref ?? "-"}</b>
+          </div>
+          <div className="detail-line">
+            <span>{t.ageLabel}</span>
+            <b>
+              <Icon name="calendar" />
+              {formatIst(item.created_at)}
+            </b>
+          </div>
+          <div className="detail-line">
+            <span>{t.statusLabel}</span>
+            <b>
+              <Chip tone={item.status === "open" ? "warn" : item.status === "claimed" ? "ok" : undefined}>{item.status}</Chip>
+            </b>
+          </div>
+          <div className="detail-line">
+            <span>Priority</span>
+            <b>
+              <Chip tone={item.priority === "urgent" ? "urgent" : undefined}>{item.priority}</Chip>
+            </b>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -66,13 +150,74 @@ function HandoffCard({ item, onChange }: { item: Handoff; onChange: () => void }
 
 export function Handoffs() {
   const [list, reload] = useApi(() => api.get<Page<Handoff>>("/handoffs"));
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<string | null>(null);
+
   return (
     <Screen title={t.navHandoffs}>
       <Async value={list} reload={reload}>
-        {(page) =>
-          page.items.length === 0 ? <Empty>{t.emptyHandoffs}</Empty> : <>{page.items.map((h) => <HandoffCard key={h.id} item={h} onChange={reload} />)}</>
-        }
+        {(page) => {
+          const items = page.items;
+          const open = items.filter((h) => h.status === "open").length;
+          const claimed = items.filter((h) => h.status === "claimed").length;
+          const resolved = items.filter((h) => h.status === "resolved").length;
+          const filtered = search.trim()
+            ? items.filter((h) =>
+                [h.summary.customer_asked, h.summary.customer_masked_phone, h.summary.order_ref, h.reason_code]
+                  .filter(Boolean)
+                  .join(" ")
+                  .toLowerCase()
+                  .includes(search.trim().toLowerCase()),
+              )
+            : items;
+          const current = filtered.find((h) => h.id === selected) ?? filtered[0] ?? null;
+
+          if (items.length === 0) return <Empty>{t.emptyHandoffs}</Empty>;
+
+          return (
+            <>
+              <div className="stats">
+                <StatCardInline icon="users" label={t.handoffsTotal} value={items.length} />
+                <StatCardInline icon="clock" label={t.statusOpen} value={open} tone={open > 0 ? "warn" : undefined} />
+                <StatCardInline icon="user" label={t.claimed} value={claimed} />
+                <StatCardInline icon="check-circle" label={t.statusResolved} value={resolved} tone="ok" />
+              </div>
+              <div className="filters">
+                <div className="filter-right" style={{ marginLeft: 0, width: "100%" }}>
+                  <input className="search" style={{ width: "100%", minWidth: 0 }} placeholder={t.searchHandoffsPlaceholder} value={search} onChange={(e) => setSearch(e.target.value)} />
+                </div>
+              </div>
+              {filtered.length === 0 ? (
+                <Empty>{t.emptyHandoffs}</Empty>
+              ) : (
+                <div className="handoff-grid" style={{ display: "grid", gridTemplateColumns: "minmax(300px,.85fr) minmax(430px,1.3fr)", gap: 11 }}>
+                  <div className="card" style={{ padding: "6px 0", overflow: "hidden" }}>
+                    {filtered.map((h) => (
+                      <HandoffRow key={h.id} item={h} selected={current?.id === h.id} onSelect={() => setSelected(h.id)} />
+                    ))}
+                  </div>
+                  {current && <HandoffDetail item={current} onChange={reload} />}
+                </div>
+              )}
+            </>
+          );
+        }}
       </Async>
     </Screen>
+  );
+}
+
+function StatCardInline({ icon, label, value, tone }: { icon: string; label: string; value: number; tone?: "warn" | "ok" }) {
+  const toneClass = tone === "ok" ? "green" : tone === "warn" ? "orange" : "blue";
+  return (
+    <div className="stat-card">
+      <div className={`stat-icon ${toneClass}`}>
+        <Icon name={icon} />
+      </div>
+      <div>
+        <div className="stat-number">{value}</div>
+        <div className="stat-label">{label}</div>
+      </div>
+    </div>
   );
 }

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../api/client";
 import type { NotificationSettings } from "../api/types";
 import { Async, Field, Screen, useSubmit } from "../components/common";
+import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
 import { t } from "../i18n";
@@ -21,12 +22,20 @@ function Form({ initial }: { initial: NotificationSettings }) {
   }, toast.error);
   return (
     <form
-      className="card"
+      className="card alert-card"
       onSubmit={(event) => {
         event.preventDefault();
         void save.run();
       }}
     >
+      <div className="alert-head">
+        <span className="soft-icon">
+          <Icon name="bell" />
+        </span>
+        <div className="alert-title">
+          <p>{t.notifyIntro}</p>
+        </div>
+      </div>
       <label className="row">
         <input type="checkbox" style={{ width: "auto" }} checked={form.notify_email_enabled} onChange={(e) => setForm({ ...form, notify_email_enabled: e.target.checked })} />
         {t.notifyEmailEnabled}

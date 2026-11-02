@@ -3,6 +3,7 @@ import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type { Level, Limits, PolicyContent, Policy, Regression, WriteTool } from "../api/types";
 import { Async, Field, Screen } from "../components/common";
+import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
 import { formatPaise, rupeesToPaise } from "../format";
@@ -66,8 +67,8 @@ function AutoConfirmModal({
 
   return (
     <div className="dialog" role="dialog" aria-modal="true">
-      <div className="card">
-        <h2>{t.autonomyAutoConfirmTitle}</h2>
+      <div className="card pad">
+        <h2 className="card-title">{t.autonomyAutoConfirmTitle}</h2>
         <p>{t.autonomyAutoConfirmBody}</p>
         <Field label={t.autonomyAutoConfirmReason} value={reason} onChange={setReason} placeholder={t[`tool_${tool}` as Key]} />
         <div className="row">
@@ -143,65 +144,112 @@ function Editor({ policy, latest, onDone }: { policy: Policy; latest: number; on
 
   return (
     <form
+      className="autonomy-layout"
       onSubmit={(event) => {
         event.preventDefault();
         void save();
       }}
     >
-      <p>{isOwner ? t.autonomyIntro : t.autonomyIntroStaff}</p>
-      {TOOLS.map((tool) => {
-        const current = c.autonomy?.[tool] ?? "off";
-        if (current === "auto") {
-          return (
-            <label key={tool} className="field">
-              <span>{t[`tool_${tool}` as Key]}</span>
-              <div className="row">
-                <strong>{t.autonomyAutoByAdmin}</strong>
+      <div className="card autonomy-permissions">
+        <p>{isOwner ? t.autonomyIntro : t.autonomyIntroStaff}</p>
+        {TOOLS.map((tool) => {
+          const current = c.autonomy?.[tool] ?? "off";
+          if (current === "auto") {
+            return (
+              <div key={tool} className="permission-row">
+                <div>
+                  <b>{t[`tool_${tool}` as Key]}</b>
+                  <span>{t.autonomyAutoByAdmin}</span>
+                </div>
                 {isOwner && (
-                  <button type="button" className="secondary" disabled={turningOff === tool} onClick={() => void turnOffAuto(tool)}>
+                  <button type="button" className="secondary small" disabled={turningOff === tool} onClick={() => void turnOffAuto(tool)}>
                     {t.level_approval}
                   </button>
                 )}
               </div>
-            </label>
+            );
+          }
+          return (
+            <div key={tool} className="permission-row">
+              <div>
+                <b>{t[`tool_${tool}` as Key]}</b>
+              </div>
+              <div className="segmented" role="group" aria-hidden="true">
+                <button type="button" className={levels[tool] === "off" ? "chosen" : ""} onClick={() => setLevels({ ...levels, [tool]: "off" })}>
+                  {t.level_off}
+                </button>
+                <button type="button" className={levels[tool] === "approval" ? "chosen" : ""} onClick={() => setLevels({ ...levels, [tool]: "approval" })}>
+                  {t.level_approval}
+                </button>
+                {isOwner && (
+                  <button type="button" className={levels[tool] === "auto" ? "chosen" : ""} onClick={() => setAutoTarget(tool)}>
+                    {t.level_auto}
+                  </button>
+                )}
+              </div>
+              <select
+                aria-label={t[`tool_${tool}` as Key]}
+                className="sr-only"
+                value={levels[tool]}
+                onChange={(event) => {
+                  const value = event.target.value as Level;
+                  if (value === "auto") {
+                    setAutoTarget(tool);
+                    return;
+                  }
+                  setLevels({ ...levels, [tool]: value });
+                }}
+              >
+                <option value="off">{t.level_off}</option>
+                <option value="approval">{t.level_approval}</option>
+                {isOwner && <option value="auto">{t.level_auto}</option>}
+              </select>
+            </div>
           );
-        }
-        return (
-          <label key={tool} className="field">
-            <span>{t[`tool_${tool}` as Key]}</span>
-            <select
-              aria-label={t[`tool_${tool}` as Key]}
-              value={levels[tool]}
-              onChange={(event) => {
-                const value = event.target.value as Level;
-                if (value === "auto") {
-                  setAutoTarget(tool);
-                  return;
-                }
-                setLevels({ ...levels, [tool]: value });
-              }}
-            >
-              <option value="off">{t.level_off}</option>
-              <option value="approval">{t.level_approval}</option>
-              {isOwner && <option value="auto">{t.level_auto}</option>}
-            </select>
-          </label>
-        );
-      })}
-      <h2>{t.limitsTitle}</h2>
-      {LIMIT_KEYS.map((k) => (
-        <Field
-          key={k}
-          label={t[`limit_${k}` as Key]}
-          value={limits[k]}
-          onChange={(value) => setLimits({ ...limits, [k]: value })}
-        />
-      ))}
-      <small>{formatPaise((c.limits ?? DEFAULT_LIMITS).refund_auto_limit_paise)}</small>
-      <div className="row">
-        <button type="submit" disabled={busy}>
-          {t.autonomySave}
-        </button>
+        })}
+        <h2 className="card-title" style={{ marginTop: 18 }}>{t.limitsTitle}</h2>
+        <div className="limit-grid">
+          {LIMIT_KEYS.map((k) => (
+            <Field
+              key={k}
+              label={t[`limit_${k}` as Key]}
+              value={limits[k]}
+              onChange={(value) => setLimits({ ...limits, [k]: value })}
+            />
+          ))}
+        </div>
+        <small className="help">{formatPaise((c.limits ?? DEFAULT_LIMITS).refund_auto_limit_paise)}</small>
+        <div className="row autonomy-actions" style={{ marginTop: 16 }}>
+          <button type="submit" disabled={busy}>
+            {t.autonomySave}
+          </button>
+        </div>
+      </div>
+      <div className="card autonomy-help">
+        <h2>
+          <Icon name="info" /> <span>{t.navAutonomy}</span>
+        </h2>
+        <div className="how-item">
+          <i>1</i>
+          <div>
+            <b>{t.level_off}</b>
+            <p>{t.autonomyIntroStaff}</p>
+          </div>
+        </div>
+        <div className="how-item">
+          <i>2</i>
+          <div>
+            <b>{t.level_approval}</b>
+            <p>{t.autonomyAutoConfirmBody}</p>
+          </div>
+        </div>
+        <div className="how-item">
+          <i className="green-num">3</i>
+          <div>
+            <b>{t.level_auto}</b>
+            <p>{t.autonomyAutoByAdmin}</p>
+          </div>
+        </div>
       </div>
       {autoTarget && (
         <AutoConfirmModal
@@ -238,7 +286,7 @@ function Upgrade({ policy, latest, onDone }: { policy: Policy; latest: number; o
     }
   };
   return (
-    <div>
+    <div className="card pad">
       <p>{t.autonomyNeedsV2}</p>
       <button type="button" disabled={busy} onClick={() => void run()}>
         {t.autonomyUpgrade}

@@ -49,8 +49,8 @@ function KillPanel({ owner }: { owner: boolean }) {
     setPending(null);
   };
   return (
-    <section aria-label={t.killTitle}>
-      <h2>{t.killTitle}</h2>
+    <section className="card pad" aria-label={t.killTitle}>
+      <h2 className="card-title">{t.killTitle}</h2>
       <Async value={kills} reload={reload}>
         {(rows) => (
           <ul className="kill-list">
@@ -62,7 +62,7 @@ function KillPanel({ owner }: { owner: boolean }) {
                 {owner && (
                   <button
                     type="button"
-                    className="secondary"
+                    className="secondary small"
                     onClick={() => setPending({ kind: row.killed ? "restore" : "kill", tool: row.tool })}
                   >
                     {row.killed ? t.restoreButton : t.killButton} · {toolName(row.tool)}
@@ -116,11 +116,11 @@ export function Approvals() {
 
   return (
     <Screen title={t.approvalsTitle}>
-      <div className="row" role="tablist">
-        <button type="button" role="tab" aria-selected={tab === "pending"} className={tab === "pending" ? "" : "secondary"} onClick={() => setTab("pending")}>
+      <div className="tabs" role="tablist">
+        <button type="button" role="tab" aria-selected={tab === "pending"} className={tab === "pending" ? "active" : ""} onClick={() => setTab("pending")}>
           {t.approvalsPending}
         </button>
-        <button type="button" role="tab" aria-selected={tab === "history"} className={tab === "history" ? "" : "secondary"} onClick={() => setTab("history")}>
+        <button type="button" role="tab" aria-selected={tab === "history"} className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>
           {t.approvalsHistory}
         </button>
       </div>
@@ -129,8 +129,8 @@ export function Approvals() {
           list.length === 0 ? (
             <Empty>{t.approvalsEmpty}</Empty>
           ) : (
-            <div className="table-wrap">
-              <table>
+            <div className="card pad table-wrap">
+              <table className="table">
                 <thead>
                   <tr>
                     <th>{t.toolLabel}</th>
@@ -154,21 +154,21 @@ export function Approvals() {
                       <td>{formatIst(a.created_at)}</td>
                       <td>
                         <div className="row">
-                          <button type="button" className="secondary" onClick={() => setOpen(open === a.id ? null : a.id)}>
+                          <button type="button" className="secondary small" onClick={() => setOpen(open === a.id ? null : a.id)}>
                             {t.timeline}
                           </button>
                           {owner && a.status === "pending_approval" && (
                             <>
-                              <button type="button" onClick={() => void act(`/approvals/${a.id}/approve`)}>
+                              <button type="button" className="small" onClick={() => void act(`/approvals/${a.id}/approve`)}>
                                 {t.approve}
                               </button>
-                              <button type="button" className="secondary" onClick={() => setPending({ kind: "reject", id: a.id })}>
+                              <button type="button" className="danger small" onClick={() => setPending({ kind: "reject", id: a.id })}>
                                 {t.reject}
                               </button>
                             </>
                           )}
                           {owner && a.status === "needs_review" && (
-                            <button type="button" onClick={() => setPending({ kind: "reconcile", id: a.id })}>
+                            <button type="button" className="small" onClick={() => setPending({ kind: "reconcile", id: a.id })}>
                               {t.reconcile}
                             </button>
                           )}

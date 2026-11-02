@@ -43,17 +43,17 @@ export function Dashboard() {
               )}
             </div>
             {s.messages_today === 0 && s.open_handoffs === 0 && <Empty>{t.emptyDashboard}</Empty>}
-            <div className="grid">
-              <StatCard label={t.messagesToday} value={s.messages_today} />
-              <StatCard label={t.handledToday} value={s.handled_by_agent_today} tone="ok" />
-              <StatCard label={t.handedOffToday} value={s.handed_off_today} />
-              <StatCard label={t.openHandoffs} value={s.open_handoffs} tone={s.open_handoffs > 0 ? "warn" : undefined} />
+            <div className="stats">
+              <StatCard icon="chat" label={t.messagesToday} value={s.messages_today} />
+              <StatCard icon="check-circle" label={t.handledToday} value={s.handled_by_agent_today} tone="ok" />
+              <StatCard icon="arrows" label={t.handedOffToday} value={s.handed_off_today} />
+              <StatCard icon="users" label={t.openHandoffs} value={s.open_handoffs} tone={s.open_handoffs > 0 ? "warn" : undefined} />
             </div>
             {s.mode === "shadow" && (
-              <div className="grid">
-                <StatCard label={t.shadowCorrect} value={s.shadow_correct} tone="ok" />
-                <StatCard label={t.shadowWrong} value={s.shadow_wrong} tone={s.shadow_wrong > 0 ? "warn" : undefined} />
-                <StatCard label={t.shadowUnreviewed} value={s.shadow_unreviewed} />
+              <div className="stats">
+                <StatCard icon="check-circle" label={t.shadowCorrect} value={s.shadow_correct} tone="ok" />
+                <StatCard icon="info" label={t.shadowWrong} value={s.shadow_wrong} tone={s.shadow_wrong > 0 ? "warn" : undefined} />
+                <StatCard icon="clock" label={t.shadowUnreviewed} value={s.shadow_unreviewed} />
               </div>
             )}
           </>
@@ -63,11 +63,13 @@ export function Dashboard() {
         {(u) => {
           const percent = u.limit > 0 ? Math.min(100, Math.floor((u.conversation_count * 100) / u.limit)) : 100;
           return (
-            <div className="card">
-              <h2>{t.usageTitle}</h2>
-              <p>
-                {u.conversation_count} / {u.limit}
-              </p>
+            <div className="card pad">
+              <div className="card-head">
+                <h2 className="card-title">{t.usageTitle}</h2>
+                <span className="card-sub">
+                  {u.conversation_count} / {u.limit}
+                </span>
+              </div>
               <div className={u.limit_reached ? "bar full" : "bar"} role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
                 <div style={{ width: `${percent}%` }} />
               </div>

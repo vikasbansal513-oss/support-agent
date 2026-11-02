@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { api } from "../api/client";
 import type { PrivacyRequest, PublicNotice } from "../api/types";
 import { Async, Chip, Empty, Field, Screen, useSubmit } from "../components/common";
+import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
 import { formatIst } from "../format";
@@ -47,25 +48,36 @@ export function PrivacyRequests() {
   };
   return (
     <Screen title={t.privacyTitle}>
-      <form onSubmit={submit} className="card">
-        <Field label={t.privacySubject} value={subject} onChange={setSubject} required />
-        <label className="field">
-          <span>{t.privacyKind}</span>
-          <select value={kind} onChange={(event) => setKind(event.target.value as Kind)}>
-            {KINDS.map((k) => (
-              <option key={k} value={k}>
-                {t[`privacyKind_${k}` as Key]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="row">
-          <button type="submit" disabled={create.busy || subject.trim().length < 3}>
-            {t.privacyCreate}
-          </button>
-          <button type="button" className="secondary" disabled={download.busy || subject.trim().length < 3} onClick={() => void download.run()}>
-            {t.privacyDownload}
-          </button>
+      <form onSubmit={submit} className="card privacy-form-card">
+        <div className="privacy-heading">
+          <span className="soft-icon">
+            <Icon name="shield" />
+          </span>
+          <div>
+            <p>{t.privacyIntro}</p>
+          </div>
+        </div>
+        <div className="privacy-fields">
+          <Field label={t.privacySubject} value={subject} onChange={setSubject} required />
+          <label className="field">
+            <span className="field-label">{t.privacyKind}</span>
+            <select value={kind} onChange={(event) => setKind(event.target.value as Kind)}>
+              {KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {t[`privacyKind_${k}` as Key]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="row head-actions">
+            <button type="submit" disabled={create.busy || subject.trim().length < 3}>
+              {t.privacyCreate}
+            </button>
+            <button type="button" className="secondary" disabled={download.busy || subject.trim().length < 3} onClick={() => void download.run()}>
+              <Icon name="download" className="sm" />
+              {t.privacyDownload}
+            </button>
+          </div>
         </div>
       </form>
       <Async value={list} reload={reload}>
@@ -73,8 +85,8 @@ export function PrivacyRequests() {
           rows.length === 0 ? (
             <Empty>{t.privacyEmpty}</Empty>
           ) : (
-            <div className="table-wrap">
-              <table>
+            <div className="card pad table-wrap">
+              <table className="table">
                 <thead>
                   <tr>
                     <th>{t.privacyKind}</th>
