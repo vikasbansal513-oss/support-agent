@@ -93,8 +93,7 @@ async def _make_run(
         if verdict is not None:
             await session.execute(
                 text(
-                    "INSERT INTO shadow_verdicts (action_id, verdict, by_user)"
-                    " VALUES (:a, :v, :u)"
+                    "INSERT INTO shadow_verdicts (action_id, verdict, by_user) VALUES (:a, :v, :u)"
                 ),
                 {"a": action, "v": verdict, "u": uuid.uuid4()},
             )
@@ -279,8 +278,7 @@ async def test_alert_agent_run_failure_spike_dedupe_and_autoresolve(
     async with session_scope(owner_factory, super_admin=True) as session:
         await session.execute(
             text(
-                "UPDATE agent_runs SET started_at = now() - interval '1 hour'"
-                " WHERE tenant_id = :t"
+                "UPDATE agent_runs SET started_at = now() - interval '1 hour' WHERE tenant_id = :t"
             ),
             {"t": tid},
         )
@@ -332,7 +330,8 @@ async def test_alert_provider_api_failure_rate_severity_by_magnitude(
 
 
 async def test_admin_agent_performance_and_client_endpoints_require_admin_and_work(
-    client, runtime_factory: Factory  # noqa: ANN001
+    client,
+    runtime_factory: Factory,  # noqa: ANN001
 ) -> None:
     anon = await client.get("/admin/monitoring/agent-performance")
     assert anon.status_code == 401
