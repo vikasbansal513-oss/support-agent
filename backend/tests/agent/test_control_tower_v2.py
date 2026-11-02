@@ -6,7 +6,9 @@ against a real Postgres instance (not mocked), plus the admin HTTP routes."""
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
+import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -114,7 +116,7 @@ async def _make_run(
                 ),
                 {"m": msg, "a": action, "u": uuid.uuid4()},
             )
-        return run
+        return cast(uuid.UUID, run)
 
 
 async def test_agent_performance_hides_misleading_accuracy_until_enough_evaluated(
@@ -330,8 +332,8 @@ async def test_alert_provider_api_failure_rate_severity_by_magnitude(
 
 
 async def test_admin_agent_performance_and_client_endpoints_require_admin_and_work(
-    client,
-    runtime_factory: Factory,  # noqa: ANN001
+    client: httpx.AsyncClient,
+    runtime_factory: Factory,
 ) -> None:
     anon = await client.get("/admin/monitoring/agent-performance")
     assert anon.status_code == 401
