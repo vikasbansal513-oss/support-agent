@@ -17,7 +17,7 @@ import { VoiceSettings } from "./pages/Voice";
 import { ConversationView, Conversations } from "./pages/Conversations";
 import { Dashboard } from "./pages/Dashboard";
 import { Handoffs } from "./pages/Handoffs";
-import { IntegrationsSettings, Onboarding } from "./pages/Integrations";
+import { IntegrationsSettings } from "./pages/Integrations";
 import { NotificationsSettings } from "./pages/Notifications";
 import { PolicySettings } from "./pages/Policy";
 import { NoticePage, PrivacyRequests } from "./pages/Privacy";
@@ -54,7 +54,6 @@ export function AppRoutes() {
       <Route path="/terms" element={<NoticePage kind="terms" />} />
       <Route element={<Layout />}>
         <Route path="/" element={guarded("user", <Dashboard />)} />
-        <Route path="/onboarding" element={guarded("owner", <Onboarding />)} />
         <Route path="/conversations" element={guarded("user", <Conversations />)} />
         <Route path="/conversations/:id" element={guarded("user", <ConversationView />)} />
         <Route path="/handoffs" element={guarded("user", <Handoffs />)} />
@@ -63,6 +62,7 @@ export function AppRoutes() {
         <Route path="/settings/voice" element={guarded("owner", <VoiceSettings />)} />
         <Route path="/settings/autonomy" element={guarded("owner", <AutonomySettings />)} />
         <Route path="/settings/integrations" element={guarded("owner", <IntegrationsSettings />)} />
+        <Route path="/onboarding" element={<Navigate to="/settings/integrations" replace />} />
         <Route path="/settings/policy" element={guarded("owner", <PolicySettings />)} />
         <Route path="/settings/notifications" element={guarded("owner", <NotificationsSettings />)} />
         <Route path="/privacy" element={guarded("owner", <PrivacyRequests />)} />

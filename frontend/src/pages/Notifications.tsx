@@ -20,34 +20,74 @@ function Form({ initial }: { initial: NotificationSettings }) {
     setForm(await api.put<NotificationSettings>("/settings/notifications", body));
     toast.info(t.saved);
   }, toast.error);
+
   return (
     <form
-      className="card alert-card"
       onSubmit={(event) => {
         event.preventDefault();
         void save.run();
       }}
     >
-      <div className="alert-head">
-        <span className="soft-icon">
-          <Icon name="bell" />
-        </span>
-        <div className="alert-title">
-          <p>{t.notifyIntro}</p>
+      <div className="card alert-card">
+        <div className="alert-head">
+          <span className="soft-icon">
+            <Icon name="mail" className="xl" />
+          </span>
+          <div className="alert-title">
+            <h2>{t.notifyEmailEnabled}</h2>
+            <p>{t.notifyIntro}</p>
+          </div>
+          <button
+            type="button"
+            className={form.notify_email_enabled ? "switch on" : "switch"}
+            aria-label="Toggle email alerts"
+            onClick={() => setForm({ ...form, notify_email_enabled: !form.notify_email_enabled })}
+          />
         </div>
+        <Field label={t.notifyEmail} type="email" value={form.notify_email ?? ""} onChange={(v) => setForm({ ...form, notify_email: v })} />
+        <div className="help">{t.notifyIntro}</div>
       </div>
-      <label className="row">
-        <input type="checkbox" style={{ width: "auto" }} checked={form.notify_email_enabled} onChange={(e) => setForm({ ...form, notify_email_enabled: e.target.checked })} />
-        {t.notifyEmailEnabled}
-      </label>
-      <Field label={t.notifyEmail} type="email" value={form.notify_email ?? ""} onChange={(v) => setForm({ ...form, notify_email: v })} />
-      <label className="row">
-        <input type="checkbox" style={{ width: "auto" }} checked={form.notify_whatsapp_enabled} onChange={(e) => setForm({ ...form, notify_whatsapp_enabled: e.target.checked })} />
-        {t.notifyWhatsappEnabled}
-      </label>
-      <Field label={t.alertPhone} value={form.alert_phone ?? ""} onChange={(v) => setForm({ ...form, alert_phone: v })} />
-      <Field label={t.grievanceEmail} type="email" value={form.grievance_email ?? ""} onChange={(v) => setForm({ ...form, grievance_email: v })} />
-      <button type="submit" disabled={save.busy}>
+
+      <div className="card alert-card">
+        <div className="alert-head">
+          <span className="soft-icon whatsapp-soft">
+            <Icon name="whatsapp" className="xl" />
+          </span>
+          <div className="alert-title">
+            <h2>{t.notifyWhatsappEnabled}</h2>
+            <p>{t.notifyIntro}</p>
+          </div>
+          <button
+            type="button"
+            className={form.notify_whatsapp_enabled ? "switch on" : "switch"}
+            aria-label="Toggle WhatsApp alerts"
+            onClick={() => setForm({ ...form, notify_whatsapp_enabled: !form.notify_whatsapp_enabled })}
+          />
+        </div>
+        <label className="field">
+          <span className="field-label">{t.alertPhone}</span>
+          <div className="phone-field">
+            <span className="country">{"🇮🇳"}</span>
+            <input className="input" value={form.alert_phone ?? ""} onChange={(e) => setForm({ ...form, alert_phone: e.target.value })} />
+          </div>
+        </label>
+      </div>
+
+      <div className="card alert-card">
+        <div className="alert-head">
+          <span className="soft-icon amber-soft">
+            <Icon name="mail" className="xl" />
+          </span>
+          <div className="alert-title">
+            <h2>{t.grievanceEmail}</h2>
+            <p>Receive customer grievances and escalation emails.</p>
+          </div>
+        </div>
+        <Field label={t.grievanceEmail} type="email" value={form.grievance_email ?? ""} onChange={(v) => setForm({ ...form, grievance_email: v })} />
+      </div>
+
+      <button type="submit" className="btn primary alert-save" disabled={save.busy}>
+        <Icon name="file" />
         {t.save}
       </button>
     </form>
@@ -57,7 +97,7 @@ function Form({ initial }: { initial: NotificationSettings }) {
 export function NotificationsSettings() {
   const [data, reload] = useApi(() => api.get<NotificationSettings>("/settings/notifications"));
   return (
-    <Screen title={t.navNotifications}>
+    <Screen title={t.navNotifications} subtitle="Choose how you receive important support and system notifications.">
       <Async value={data} reload={reload}>
         {(initial) => <Form initial={initial} />}
       </Async>

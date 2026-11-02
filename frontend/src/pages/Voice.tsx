@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type { Carrier, VoiceCall, VoiceCallDetail, VoiceSettings as Settings, VoiceStats } from "../api/types";
-import { Async, Chip, Empty, Field, Screen } from "../components/common";
+import { Async, Chip, Empty, ReasonDialog, Screen } from "../components/common";
 import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
@@ -33,6 +33,8 @@ function PublicNumberCard({
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [showOff, setShowOff] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [locked, setLocked] = useState(true);
+  const [askEditReason, setAskEditReason] = useState(false);
 
   if (!settings.configured) {
     return isOwner ? (
@@ -58,6 +60,7 @@ function PublicNumberCard({
         carrier: carrier === "" ? null : carrier,
       });
       toast.info(t.voicePublicNumberSaved);
+      setLocked(true);
       onSaved();
     } catch (err) {
       toast.error(err);
@@ -102,10 +105,34 @@ function PublicNumberCard({
       </div>
       {isOwner ? (
         <>
-          <Field label={t.voicePublicNumberLabel} value={number} onChange={setNumber} placeholder="9876543210" />
+          <label className="field">
+            <span className="field-label">{t.voicePublicNumberLabel}</span>
+            <div className="inline-input">
+              <input
+                className="input"
+                value={number}
+                disabled={locked}
+                placeholder="9876543210"
+                onChange={(event) => setNumber(event.target.value)}
+              />
+              {locked ? (
+                <button type="button" className="btn outline-blue" onClick={() => setAskEditReason(true)}>
+                  <Icon name="lock" className="sm" />
+                  {t.editCredentials}
+                </button>
+              ) : (
+                <button type="button" className="btn secondary" onClick={() => setLocked(true)}>
+                  {t.cancel}
+                </button>
+              )}
+            </div>
+            <small className="help">
+              For security, editing this number requires confirming why you're changing it.
+            </small>
+          </label>
           <label className="field">
             <span>{t.voiceCarrierLabel}</span>
-            <select value={carrier} onChange={(event) => setCarrier(event.target.value as Carrier | "")}>
+            <select value={carrier} disabled={locked} onChange={(event) => setCarrier(event.target.value as Carrier | "")}>
               <option value="">—</option>
               {CARRIERS.map((c) => (
                 <option key={c.value} value={c.value}>
@@ -115,10 +142,20 @@ function PublicNumberCard({
             </select>
           </label>
           <div className="row">
-            <button type="button" disabled={busy} onClick={() => void save()}>
+            <button type="button" disabled={busy || locked} onClick={() => void save()}>
               {t.voicePublicNumberSave}
             </button>
           </div>
+          {askEditReason && (
+            <ReasonDialog
+              title="Why do you want to edit this number?"
+              onConfirm={() => {
+                setLocked(false);
+                setAskEditReason(false);
+              }}
+              onCancel={() => setAskEditReason(false)}
+            />
+          )}
         </>
       ) : (
         settings.client_public_number && (
@@ -253,15 +290,63 @@ function CallDetail({ id, onBack }: { id: string; onBack: () => void }) {
   );
 }
 
-function Stats() {
-  const [stats, reload] = useApi(() => api.get<VoiceStats>("/voice/stats?days=7"));
+const RANGE_OPTIONS = [
+  { days: 7, label: "Last 7 Days" },
+  { days: 14, label: "Last 14 Days" },
+  { days: 30, label: "Last 30 Days" },
+  { days: 90, label: "Last 90 Days" },
+];
+
+function DateRangePicker({ days, onChange }: { days: number; onChange: (days: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const current = RANGE_OPTIONS.find((o) => o.days === days) ?? RANGE_OPTIONS[0]!;
+  return (
+    <div style={{ position: "relative" }}>
+      <button type="button" className="btn" onClick={() => setOpen(!open)}>
+        <Icon name="calendar" />
+        {current.label}
+        {"⌄"}
+      </button>
+      {open && (
+        <div
+          className="card"
+          style={{ position: "absolute", right: 0, top: 44, zIndex: 20, minWidth: 170, padding: 6 }}
+        >
+          {RANGE_OPTIONS.map((o) => (
+            <button
+              key={o.days}
+              type="button"
+              className="secondary small"
+              style={{ width: "100%", justifyContent: "flex-start", marginBottom: 4 }}
+              onClick={() => {
+                onChange(o.days);
+                setOpen(false);
+              }}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Stats({ days, onDaysChange }: { days: number; onDaysChange: (days: number) => void }) {
+  const [stats, reload] = useApi(() => api.get<VoiceStats>(`/voice/stats?days=${days}`), [days]);
   return (
     <div className="card calling-analytics">
-      <div className="calling-heading">
-        <span className="soft-icon">
-          <Icon name="review" />
-        </span>
-        <h2>{t.voiceStats}</h2>
+      <div className="card-head">
+        <div className="calling-heading">
+          <span className="soft-icon">
+            <Icon name="review" />
+          </span>
+          <div>
+            <h2 className="card-title">{t.voiceStats}</h2>
+            <p className="card-sub">Summary of calling activity and performance for the last {days} days.</p>
+          </div>
+        </div>
+        <DateRangePicker days={days} onChange={onDaysChange} />
       </div>
       <Async value={stats} reload={reload}>
         {(v) => (
@@ -308,37 +393,66 @@ function Stats() {
   );
 }
 
-function Calls() {
+function Calls({ days }: { days: number }) {
   const [calls, reload] = useApi(() => api.get<VoiceCall[]>("/voice/calls"));
   const [open, setOpen] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
+  const cutoff = useMemo(() => Date.now() - days * 24 * 60 * 60 * 1000, [days]);
   if (open) return <CallDetail id={open} onBack={() => setOpen(null)} />;
+
   return (
     <div className="card recent-calls">
-      <div className="calling-heading">
-        <span className="soft-icon">
-          <Icon name="chat" />
-        </span>
-        <h2>{t.voiceCalls}</h2>
+      <div className="card-head">
+        <div className="calling-heading">
+          <span className="soft-icon">
+            <Icon name="clock" />
+          </span>
+          <div>
+            <h2 className="card-title">{t.voiceCalls}</h2>
+            <p className="card-sub">Latest calls from the last {days} days and their status.</p>
+          </div>
+        </div>
+        <button type="button" className="btn outline-blue" onClick={() => setShowAll((v) => !v)}>
+          <Icon name="file" />
+          {showAll ? "Show recent only" : "View all calls"}
+        </button>
       </div>
       <Async value={calls} reload={reload}>
-        {(rows) =>
-          rows.length === 0 ? (
+        {(rows) => {
+          const filtered = showAll ? rows : rows.filter((c) => new Date(c.started_at).getTime() >= cutoff);
+          return filtered.length === 0 ? (
             <Empty>{t.voiceNoCalls}</Empty>
           ) : (
-            <ul className="list">
-              {rows.map((call) => (
-                <li key={call.id}>
-                  <button type="button" className="secondary small" onClick={() => setOpen(call.id)}>
-                    {call.caller_masked ?? "-"} · {formatIst(call.started_at)}
-                  </button>{" "}
-                  <Chip tone={call.status === "callback" || call.status === "failed" ? "warn" : "ok"}>
-                    {t[`voiceStatus_${call.status}` as Key]}
-                  </Chip>
-                </li>
-              ))}
-            </ul>
-          )
-        }
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Phone number</th>
+                    <th>Date &amp; time</th>
+                    <th>Outcome</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((call, index) => (
+                    <tr key={call.id} onClick={() => setOpen(call.id)} style={{ cursor: "pointer" }}>
+                      <td>{index + 1}</td>
+                      <td>{call.caller_masked ?? "-"}</td>
+                      <td>{formatIst(call.started_at)}</td>
+                      <td>{call.end_reason ?? "—"}</td>
+                      <td>
+                        <Chip tone={call.status === "callback" || call.status === "failed" ? "warn" : "ok"}>
+                          {t[`voiceStatus_${call.status}` as Key]}
+                        </Chip>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }}
       </Async>
     </div>
   );
@@ -347,14 +461,15 @@ function Calls() {
 function Body({ initial, onSaved }: { initial: Settings; onSaved: () => void }) {
   const { user } = useAuth();
   const isOwner = user?.role === "owner";
+  const [days, setDays] = useState(7);
   return (
     <>
       <div className="calling-top">
         <SettingsStatus settings={initial} />
         <PublicNumberCard settings={initial} isOwner={isOwner} onSaved={onSaved} />
       </div>
-      {initial.configured && <Stats />}
-      {initial.configured && <Calls />}
+      {initial.configured && <Stats days={days} onDaysChange={setDays} />}
+      {initial.configured && <Calls days={days} />}
     </>
   );
 }

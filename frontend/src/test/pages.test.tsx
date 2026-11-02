@@ -157,7 +157,8 @@ describe("screens", () => {
     });
     renderApp(<Review />);
     const user = userEvent.setup();
-    expect(await screen.findByText("Aapka order ship ho gaya")).toBeInTheDocument();
+    expect(await screen.findByText(/Aapka order ship ho gaya/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Review" }));
     expect(screen.queryByRole("button", { name: t.approve })).toBeNull();
     await user.type(screen.getByLabelText(t.note), "galat amount");
     await user.click(screen.getByRole("button", { name: t.verdictWrong }));
@@ -172,6 +173,8 @@ describe("screens", () => {
       return { body: { items: [action], next_cursor: null } };
     });
     renderApp(<Review />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Review" }));
     expect(await screen.findByRole("button", { name: t.approve })).toBeInTheDocument();
   });
 });
@@ -337,7 +340,7 @@ describe("approvals", () => {
     });
     renderApp(<AsOwner><Approvals /></AsOwner>);
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: `${t.killButton} · ${t.tool_order_cancel}` }));
+    await user.click(await screen.findByRole("button", { name: `${t.killButton}: ${t.tool_order_cancel}` }));
     await user.type(screen.getByLabelText(t.reasonLabel), "galat cancel ho rahe");
     await user.click(screen.getByRole("button", { name: t.confirm }));
     await waitFor(() => expect(calls.some((c) => c.url.endsWith("/tools/order_cancel/kill") && c.method === "POST")).toBe(true));
@@ -407,7 +410,7 @@ describe("voice settings", () => {
       providers: ["fake_ivr", "generic"],
       telephony_mode: "ready_made",
     };
-    const call = { id: "c1", status: "callback", caller_masked: "+91******3210", turn_count: 2, end_reason: "handoff", started_at: "2026-01-01T10:00:00Z", ended_at: null, conversation_id: "v1", order_ref: "#1001", avg_latency_ms: 900, max_latency_ms: 1500, slow_turns: 0, feedback: null, feedback_note: null, summary_status: "skipped" };
+    const call = { id: "c1", status: "callback", caller_masked: "+91******3210", turn_count: 2, end_reason: "handoff", started_at: new Date().toISOString(), ended_at: null, conversation_id: "v1", order_ref: "#1001", avg_latency_ms: 900, max_latency_ms: 1500, slow_turns: 0, feedback: null, feedback_note: null, summary_status: "skipped" };
     const stats = { days: 7, calls: 1, handled_by_agent: 0, transferred: 0, callback: 1, failed: 0, avg_turns: 2, avg_latency_ms: 900, slow_turns: 0, feedback_good: 0, feedback_bad: 0, agent_rate_percent: 0 };
     const calls = mockFetch((c) => {
       if (c.method === "GET" && c.url.endsWith("/voice/settings")) return { body: settings };
@@ -421,7 +424,7 @@ describe("voice settings", () => {
     renderApp(<VoiceSettings />);
     expect(await screen.findByText(/\+911140000000/)).toBeInTheDocument();
     expect(screen.getByText(t.voiceStatusConfigured)).toBeInTheDocument();
-    await user.click(await screen.findByRole("button", { name: /3210/ }));
+    await user.click(await screen.findByText(/3210/));
     expect(await screen.findByText(/order kahan hai/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: t.voiceFeedbackGood }));
     await waitFor(() => expect(calls.some((c) => c.url.endsWith("/voice/calls/c1/feedback"))).toBe(true));

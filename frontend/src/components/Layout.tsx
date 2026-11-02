@@ -12,7 +12,6 @@ const ICON: Record<string, string> = {
   "/handoffs": "arrows",
   "/review": "review",
   "/approvals": "check-square",
-  "/onboarding": "settings",
   "/settings/integrations": "link",
   "/settings/policy": "file",
   "/settings/autonomy": "bot",
@@ -63,7 +62,6 @@ export function Layout() {
           ["/approvals", t.navApprovals],
           ...(owner
             ? ([
-                ["/onboarding", t.navOnboarding],
                 ["/settings/integrations", t.navIntegrations],
                 ["/settings/policy", t.navPolicy],
                 ["/settings/autonomy", t.navAutonomy],

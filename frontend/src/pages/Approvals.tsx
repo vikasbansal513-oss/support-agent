@@ -3,6 +3,7 @@ import { api } from "../api/client";
 import type { Approval, ApprovalDetail, ApprovalOutcome, ToolKill, WriteTool } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { Async, Chip, Empty, ReasonDialog, Screen } from "../components/common";
+import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
 import { formatIst, formatPaise } from "../format";
@@ -14,6 +15,12 @@ type Pending =
   | { kind: "kill" | "restore"; tool: WriteTool };
 
 const toolName = (tool: string) => t[`tool_${tool}` as Key] ?? tool;
+const TOOL_ICON: Record<WriteTool, string> = {
+  address_update: "home",
+  order_cancel: "package",
+  exchange_request: "arrows",
+  refund_create: "check-circle",
+};
 
 function Timeline({ id }: { id: string }) {
   const [detail, reload] = useApi(() => api.get<ApprovalDetail>(`/approvals/${id}`), [id]);
@@ -23,7 +30,7 @@ function Timeline({ id }: { id: string }) {
         <ul className="timeline" aria-label={t.timeline}>
           {d.timeline.map((item, index) => (
             <li key={index}>
-              {formatIst(item.at)} · {item.action}
+              {formatIst(item.at)} &middot; {item.action}
               {item.actor_role ? ` (${item.actor_role})` : ""}
               {item.reason ? ` — ${item.reason}` : ""}
             </li>
@@ -49,28 +56,40 @@ function KillPanel({ owner }: { owner: boolean }) {
     setPending(null);
   };
   return (
-    <section className="card pad" aria-label={t.killTitle}>
-      <h2 className="card-title">{t.killTitle}</h2>
+    <section className="card pad approval-settings" aria-label={t.killTitle}>
+      <div className="card-head">
+        <div>
+          <h2 className="card-title">{t.killTitle}</h2>
+          <p className="card-sub">Pause an action type to prevent the agent from performing it automatically. Paused actions will be sent for manual review.</p>
+        </div>
+      </div>
       <Async value={kills} reload={reload}>
         {(rows) => (
-          <ul className="kill-list">
+          <>
             {rows.map((row) => (
-              <li key={row.tool}>
-                <span>{toolName(row.tool)}</span>{" "}
-                <Chip tone={row.killed ? "urgent" : "ok"}>{row.killed ? t.killOn : t.killOff}</Chip>
-                {row.reason && <small> {row.reason}</small>}
+              <div className="automated-row" key={row.tool}>
+                <span className="automation-icon">
+                  <Icon name={TOOL_ICON[row.tool] ?? "info"} />
+                </span>
+                <b>{toolName(row.tool)}</b>
+                <span>{row.reason || toolName(row.tool)}</span>
+                <i className={row.killed ? "pill gray" : "pill green"}>
+                  {"●"} {row.killed ? t.killOn : t.killOff}
+                </i>
                 {owner && (
                   <button
                     type="button"
-                    className="secondary small"
+                    className={row.killed ? "switch" : "switch on"}
+                    aria-label={`${row.killed ? t.restoreButton : t.killButton}: ${toolName(row.tool)}`}
                     onClick={() => setPending({ kind: row.killed ? "restore" : "kill", tool: row.tool })}
-                  >
-                    {row.killed ? t.restoreButton : t.killButton} · {toolName(row.tool)}
-                  </button>
+                  />
                 )}
-              </li>
+              </div>
             ))}
-          </ul>
+            <p className="card-sub">
+              <Icon name="info" className="sm" /> Changes apply to new requests only.
+            </p>
+          </>
         )}
       </Async>
       {pending && (pending.kind === "kill" || pending.kind === "restore") && (
@@ -115,7 +134,7 @@ export function Approvals() {
   };
 
   return (
-    <Screen title={t.approvalsTitle}>
+    <Screen title={t.approvalsTitle} subtitle="Review pending requests and manage which automated actions require approval.">
       <div className="tabs" role="tablist">
         <button type="button" role="tab" aria-selected={tab === "pending"} className={tab === "pending" ? "active" : ""} onClick={() => setTab("pending")}>
           {t.approvalsPending}
@@ -129,7 +148,13 @@ export function Approvals() {
           list.length === 0 ? (
             <Empty>{t.approvalsEmpty}</Empty>
           ) : (
-            <div className="card pad table-wrap">
+            <div className="card pad approval-card table-wrap">
+              <div className="card-head">
+                <div>
+                  <h2 className="card-title">{tab === "pending" ? "Pending approval requests" : t.approvalsHistory}</h2>
+                  <p className="card-sub">Requests from customers that need your review before the agent takes action.</p>
+                </div>
+              </div>
               <table className="table">
                 <thead>
                   <tr>
@@ -159,10 +184,10 @@ export function Approvals() {
                           </button>
                           {owner && a.status === "pending_approval" && (
                             <>
-                              <button type="button" className="small" onClick={() => void act(`/approvals/${a.id}/approve`)}>
+                              <button type="button" className="btn primary small" onClick={() => void act(`/approvals/${a.id}/approve`)}>
                                 {t.approve}
                               </button>
-                              <button type="button" className="danger small" onClick={() => setPending({ kind: "reject", id: a.id })}>
+                              <button type="button" className="btn danger small" onClick={() => setPending({ kind: "reject", id: a.id })}>
                                 {t.reject}
                               </button>
                             </>

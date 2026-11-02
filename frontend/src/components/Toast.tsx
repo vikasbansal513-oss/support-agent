@@ -32,7 +32,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       if (err instanceof ApiError) {
         push({ text: err.message, errorId: err.errorId, critical: err.severity === "critical" });
       } else {
-        push({ text: "Kuch gadbad hui. Dobara try karein.", errorId: null, critical: false });
+        push({ text: "Something went wrong. Please try again.", errorId: null, critical: false });
       }
     },
     [push],
