@@ -516,7 +516,10 @@ class OverviewOut(BaseModel):
     tenants_pending: int
     tenants_paused: int
     handoffs_open: int
+    # jobs.status = 'failed'. jobs_needs_review is the separate "needs a human look" bucket
+    # (jobs_failed counted status='needs_review' before 2026-11-02, see DECISIONS.md).
     jobs_failed: int
+    jobs_needs_review: int
     today_calls: int
     today_cost_micro: int
     calls_by_day: list[CallsByDayOut]
@@ -528,7 +531,10 @@ class AdminHealthOut(BaseModel):
     worker_last_seen_at: AwareDatetime | None
     worker_seconds_since: int | None
     queue_depth: int
+    # jobs.status = 'failed' (truly failed). jobs_needs_review_today was folded into this
+    # field before 2026-11-02 (it actually counted status='needs_review') — see DECISIONS.md.
     jobs_failed_today: int
+    jobs_needs_review_today: int
 
 
 class TenantStatsOut(BaseModel):
@@ -589,9 +595,194 @@ class ControlTowerOut(BaseModel):
     error_rate_percent: float
     skipped_count: int
     p95_latency_ms: int | None
+    # "failed" here means jobs.status = 'failed' (truly failed, retries exhausted).
+    # needs_review_* below is the separate "needs a human look" bucket (was mislabeled
+    # as "failed" before 2026-11-02, see DECISIONS.md).
     failed_jobs_today: int
     failed_jobs_avg_7d: float
+    needs_review_jobs_today: int
+    needs_review_jobs_avg_7d: float
     top_tenants: list[TenantRankOut]
+
+
+# ------------------------------------------------------------------ API: Control Tower monitoring
+AgentTaskStatus = Literal["running", "done", "failed", "skipped"]
+Correctness = Literal["correct", "wrong", "partial", "unverified"]
+
+
+class AgentTaskRowOut(BaseModel):
+    run_id: uuid.UUID
+    tenant_id: uuid.UUID
+    tenant_name: str
+    started_at: AwareDatetime
+    finished_at: AwareDatetime | None
+    duration_ms: int | None
+    task_category: str
+    status: AgentTaskStatus
+    correctness: Correctness
+    handed_off: bool
+    llm_cost_micro: int | None
+    llm_model: str | None
+
+
+class AgentTaskListOut(BaseModel):
+    items: list[AgentTaskRowOut]
+    total: int
+
+
+class AgentTaskLlmCallOut(BaseModel):
+    purpose: str
+    provider: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    latency_ms: int
+    outcome: str
+    created_at: AwareDatetime
+
+
+class AgentTaskActionOut(BaseModel):
+    action_type: str
+    status: str
+    tool_name: str | None
+    body_text: str | None
+    error: str | None
+    created_at: AwareDatetime
+
+
+class AgentTaskDetailOut(BaseModel):
+    run_id: uuid.UUID
+    tenant_id: uuid.UUID
+    tenant_name: str
+    status: AgentTaskStatus
+    started_at: AwareDatetime
+    finished_at: AwareDatetime | None
+    error_id: str | None
+    trace: list[dict[str, Any]]
+    decision: dict[str, Any] | None
+    actions: list[AgentTaskActionOut]
+    llm_calls: list[AgentTaskLlmCallOut]
+    verdict: str | None
+    report_reason: str | None
+
+
+class AccuracyBucketOut(BaseModel):
+    total_evaluated: int
+    correct: int
+    incorrect: int
+    partially_correct: int
+    unverified: int
+    accuracy_percent: float
+    task_success_percent: float
+    human_correction_percent: float
+    handoff_percent: float
+
+
+class AccuracyTenantOut(AccuracyBucketOut):
+    tenant_id: uuid.UUID
+    tenant_name: str
+
+
+class AccuracyOut(BaseModel):
+    overall: AccuracyBucketOut
+    by_tenant: list[AccuracyTenantOut]
+
+
+class PagePerfRowOut(BaseModel):
+    tenant_id: uuid.UUID
+    tenant_name: str
+    route: str
+    samples: int
+    avg_load_ms: float | None
+    p50_load_ms: int | None
+    p95_load_ms: int | None
+    p99_load_ms: int | None
+    avg_lcp_ms: float | None
+    avg_ttfb_ms: float | None
+    failed_api_count: int
+    status: Literal["good", "slow"]
+
+
+class PagePerfOut(BaseModel):
+    rows: list[PagePerfRowOut]
+    slowest_client: str | None
+    slowest_page: str | None
+    slow_threshold_ms: int
+
+
+class PagePerfBeaconIn(Strict):
+    route: str = Field(min_length=1, max_length=120)
+    ttfb_ms: int | None = Field(default=None, ge=0, le=120_000)
+    dom_content_loaded_ms: int | None = Field(default=None, ge=0, le=120_000)
+    load_ms: int | None = Field(default=None, ge=0, le=120_000)
+    lcp_ms: int | None = Field(default=None, ge=0, le=120_000)
+    inp_ms: int | None = Field(default=None, ge=0, le=60_000)
+    cls: float | None = Field(default=None, ge=0, le=100)
+    api_duration_ms: int | None = Field(default=None, ge=0, le=120_000)
+    failed_api: bool = False
+
+
+class ClientTrafficRowOut(BaseModel):
+    tenant_id: uuid.UUID
+    name: str
+    agent_runs_24h: int
+    integration_calls_1h: int
+    avg_integration_latency_ms: float | None
+    failed_integration_calls_1h: int
+
+
+class TrafficOut(BaseModel):
+    total_clients: int
+    active_clients: int
+    active_users_5m: int
+    running_jobs: int
+    queue_depth: int
+    needs_review_jobs_recent: int
+    failed_jobs_recent: int
+    db_connections: int
+    integration_calls_per_minute: float
+    avg_integration_latency_ms: float | None
+    p95_integration_latency_ms: int | None
+    integration_error_rate_percent: float
+    process_rss_mb: float
+    by_client: list[ClientTrafficRowOut]
+    note: str
+
+
+class AlertOutExt(BaseModel):
+    id: uuid.UUID
+    tenant_id: uuid.UUID | None
+    tenant_name: str | None
+    kind: str
+    severity: Literal["info", "warning", "critical"]
+    message: str
+    status: Literal["open", "resolved"]
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+
+
+class HistoricalPointOut(BaseModel):
+    bucket: str
+    value: float
+
+
+class HistoricalSeriesOut(BaseModel):
+    name: str
+    points: list[HistoricalPointOut]
+
+
+class HistoricalOut(BaseModel):
+    range: Literal["24h", "7d", "30d"]
+    series: list[HistoricalSeriesOut]
+
+
+class ThresholdOut(BaseModel):
+    key: str
+    value: float
+
+
+class ThresholdsIn(Strict):
+    values: dict[str, float]
 
 
 # ------------------------------------------------------------------ API: integrations / settings

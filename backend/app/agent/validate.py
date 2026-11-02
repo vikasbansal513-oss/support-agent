@@ -64,8 +64,12 @@ def disclosure_variants(
 
 
 def pick_language(value: str | None) -> Language:
-    if value == "hi":
-        return "hi"
-    if value == "en":
-        return "en"
-    return "hinglish"
+    """All WhatsApp/email replies go out in English, whatever script the customer used.
+
+    `value` (detected/classified customer language) is intentionally ignored here: this
+    is the single choke point every V0/V1 reply and outcome-notify path routes through
+    (see DECISIONS.md 2026-11-02). Voice/calling is untouched (out of scope; it uses
+    call.language directly for speech, not this function).
+    """
+    del value
+    return "en"

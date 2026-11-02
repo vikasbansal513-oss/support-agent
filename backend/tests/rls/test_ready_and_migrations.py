@@ -146,6 +146,8 @@ def test_migration_up_down_up_and_runtime_grants() -> None:
                 "gcp_billing_import_rows",
                 "gcp_reconciliation_runs",
                 "gcp_unallocated_costs",
+                "page_perf_events",
+                "monitoring_thresholds",
             ]
         )
         assert can_mutate is False
@@ -165,4 +167,4 @@ def test_alembic_version_table_kept_out_of_public(test_db: TestDb) -> None:
         await engine.dispose()
         return list(rows)
 
-    assert asyncio.run(versions()) == ["0026"]
+    assert asyncio.run(versions()) == ["0027"]

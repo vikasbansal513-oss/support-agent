@@ -1,8 +1,10 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { useEffect } from "react";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { api } from "../api/client";
 import type { AgentStatus } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { t } from "../i18n";
+import { sendPerfBeacon } from "../lib/webVitals";
 import { Icon, IconSprite } from "./Icons";
 import { useApi } from "./useApi";
 
@@ -38,10 +40,17 @@ function initials(name: string | undefined): string {
 export function Layout() {
   const { user, realm, logout } = useAuth();
   const owner = user?.role === "owner";
+  const location = useLocation();
   const [status] = useApi(
     () => (realm === "admin" ? Promise.resolve(null) : api.get<AgentStatus>("/agent/status")),
     [realm],
   );
+
+  // Client page-load metrics only (Control Tower's "client page performance"
+  // section) — admin's own pages aren't a tenant's page-load experience.
+  useEffect(() => {
+    if (realm !== "admin") sendPerfBeacon(location.pathname);
+  }, [realm, location.pathname]);
   const links: [string, string][] =
     realm === "admin"
       ? [

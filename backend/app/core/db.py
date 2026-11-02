@@ -36,6 +36,7 @@ GLOBAL_TABLE_ALLOWLIST = (
     "gcp_billing_import_rows",
     "gcp_reconciliation_runs",
     "gcp_unallocated_costs",
+    "monitoring_thresholds",
 )
 
 _engine: AsyncEngine | None = None

@@ -36,9 +36,14 @@ async def overview(
         handoffs_open = (
             await session.execute(text("SELECT count(*) FROM handoffs WHERE status = 'open'"))
         ).scalar_one()
-        jobs_failed = (
-            await session.execute(text("SELECT count(*) FROM jobs WHERE status = 'needs_review'"))
-        ).scalar_one()
+        jobs_status = (
+            await session.execute(
+                text(
+                    "SELECT count(*) FILTER (WHERE status = 'failed') AS failed,"
+                    " count(*) FILTER (WHERE status = 'needs_review') AS needs_review FROM jobs"
+                )
+            )
+        ).one()
         today = (
             await session.execute(
                 text(
@@ -65,7 +70,8 @@ async def overview(
         tenants_pending=int(tenants.pending),
         tenants_paused=int(tenants.paused),
         handoffs_open=int(handoffs_open),
-        jobs_failed=int(jobs_failed),
+        jobs_failed=int(jobs_status.failed),
+        jobs_needs_review=int(jobs_status.needs_review),
         today_calls=int(today.calls),
         today_cost_micro=int(today.cost_micro),
         calls_by_day=[CallsByDayOut(day=r.day, calls=int(r.calls)) for r in by_day],

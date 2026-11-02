@@ -13,6 +13,7 @@ async def compute_health(factory: Factory) -> AdminHealthOut:
     worker_last_seen = None
     queue_depth = 0
     jobs_failed_today = 0
+    jobs_needs_review_today = 0
     try:
         async with session_scope(factory, super_admin=True) as session:
             await session.execute(text("SELECT 1"))
@@ -26,15 +27,18 @@ async def compute_health(factory: Factory) -> AdminHealthOut:
                     text("SELECT count(*) FROM jobs WHERE status IN ('queued', 'deferred')")
                 )
             ).scalar_one()
-            jobs_failed_today = (
+            today_counts = (
                 await session.execute(
                     text(
-                        "SELECT count(*) FROM jobs WHERE status = 'needs_review'"
-                        " AND (updated_at AT TIME ZONE 'Asia/Kolkata')::date"
+                        "SELECT count(*) FILTER (WHERE status = 'failed') AS failed,"
+                        " count(*) FILTER (WHERE status = 'needs_review') AS needs_review"
+                        " FROM jobs WHERE (updated_at AT TIME ZONE 'Asia/Kolkata')::date"
                         " = (now() AT TIME ZONE 'Asia/Kolkata')::date"
                     )
                 )
-            ).scalar_one()
+            ).one()
+            jobs_failed_today = today_counts.failed
+            jobs_needs_review_today = today_counts.needs_review
     except Exception:  # noqa: BLE001
         db_status = "down"
 
@@ -50,4 +54,5 @@ async def compute_health(factory: Factory) -> AdminHealthOut:
         worker_seconds_since=seconds_since,
         queue_depth=int(queue_depth),
         jobs_failed_today=int(jobs_failed_today),
+        jobs_needs_review_today=int(jobs_needs_review_today),
     )

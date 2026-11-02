@@ -14,6 +14,7 @@ from app.api import (
     admin_jobs,
     admin_llm,
     admin_llm_settings,
+    admin_monitoring,
     admin_ops,
     admin_overview,
     admin_tenants,
@@ -24,6 +25,7 @@ from app.api import (
     dashboard,
     handoffs,
     integrations,
+    perf,
     policies,
     privacy,
     settings,
@@ -100,6 +102,8 @@ def create_app() -> FastAPI:
     application.include_router(admin_audit.router)
     application.include_router(admin_alerts.router)
     application.include_router(admin_control_tower.router)
+    application.include_router(admin_monitoring.router)
+    application.include_router(perf.router)
     application.include_router(whatsapp.router)
     application.include_router(voice_webhook.router)
     application.include_router(plivo_webhook.router)

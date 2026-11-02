@@ -57,6 +57,7 @@ ignore = ["E501"]
 "app/api/dashboard.py" = ["S608"]
 "app/api/actions.py" = ["S608"]
 "app/actions/writes.py" = ["S608"]
+"app/monitoring/queries.py" = ["S608"]
 
 [tool.mypy]
 python_version = "3.13"

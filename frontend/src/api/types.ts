@@ -285,6 +285,7 @@ export interface Overview {
   tenants_paused: number;
   handoffs_open: number;
   jobs_failed: number;
+  jobs_needs_review: number;
   today_calls: number;
   today_cost_micro: number;
   calls_by_day: CallsByDay[];
@@ -297,6 +298,7 @@ export interface Health {
   worker_seconds_since: number | null;
   queue_depth: number;
   jobs_failed_today: number;
+  jobs_needs_review_today: number;
 }
 
 export interface TenantStats {
@@ -353,7 +355,173 @@ export interface ControlTower {
   p95_latency_ms: number | null;
   failed_jobs_today: number;
   failed_jobs_avg_7d: number;
+  needs_review_jobs_today: number;
+  needs_review_jobs_avg_7d: number;
   top_tenants: TenantRank[];
+}
+
+// ------------------------------------------------------------------ Control Tower monitoring
+
+export type AgentTaskStatus = "running" | "done" | "failed" | "skipped";
+export type Correctness = "correct" | "wrong" | "partial" | "unverified";
+
+export interface AgentTaskRow {
+  run_id: string;
+  tenant_id: string;
+  tenant_name: string;
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
+  task_category: string;
+  status: AgentTaskStatus;
+  correctness: Correctness;
+  handed_off: boolean;
+  llm_cost_micro: number | null;
+  llm_model: string | null;
+}
+
+export interface AgentTaskList {
+  items: AgentTaskRow[];
+  total: number;
+}
+
+export interface AgentTaskLlmCall {
+  purpose: string;
+  provider: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  latency_ms: number;
+  outcome: string;
+  created_at: string;
+}
+
+export interface AgentTaskAction {
+  action_type: string;
+  status: string;
+  tool_name: string | null;
+  body_text: string | null;
+  error: string | null;
+  created_at: string;
+}
+
+export interface AgentTaskDetail {
+  run_id: string;
+  tenant_id: string;
+  tenant_name: string;
+  status: AgentTaskStatus;
+  started_at: string;
+  finished_at: string | null;
+  error_id: string | null;
+  trace: Record<string, unknown>[];
+  decision: Record<string, unknown> | null;
+  actions: AgentTaskAction[];
+  llm_calls: AgentTaskLlmCall[];
+  verdict: string | null;
+  report_reason: string | null;
+}
+
+export interface AccuracyBucket {
+  total_evaluated: number;
+  correct: number;
+  incorrect: number;
+  partially_correct: number;
+  unverified: number;
+  accuracy_percent: number;
+  task_success_percent: number;
+  human_correction_percent: number;
+  handoff_percent: number;
+}
+
+export interface AccuracyTenant extends AccuracyBucket {
+  tenant_id: string;
+  tenant_name: string;
+}
+
+export interface Accuracy {
+  overall: AccuracyBucket;
+  by_tenant: AccuracyTenant[];
+}
+
+export interface PagePerfRow {
+  tenant_id: string;
+  tenant_name: string;
+  route: string;
+  samples: number;
+  avg_load_ms: number | null;
+  p50_load_ms: number | null;
+  p95_load_ms: number | null;
+  p99_load_ms: number | null;
+  avg_lcp_ms: number | null;
+  avg_ttfb_ms: number | null;
+  failed_api_count: number;
+  status: "good" | "slow";
+}
+
+export interface PagePerf {
+  rows: PagePerfRow[];
+  slowest_client: string | null;
+  slowest_page: string | null;
+  slow_threshold_ms: number;
+}
+
+export interface PagePerfBeacon {
+  route: string;
+  ttfb_ms?: number | null;
+  dom_content_loaded_ms?: number | null;
+  load_ms?: number | null;
+  lcp_ms?: number | null;
+  inp_ms?: number | null;
+  cls?: number | null;
+  api_duration_ms?: number | null;
+  failed_api?: boolean;
+}
+
+export interface ClientTrafficRow {
+  tenant_id: string;
+  name: string;
+  agent_runs_24h: number;
+  integration_calls_1h: number;
+  avg_integration_latency_ms: number | null;
+  failed_integration_calls_1h: number;
+}
+
+export interface Traffic {
+  total_clients: number;
+  active_clients: number;
+  active_users_5m: number;
+  running_jobs: number;
+  queue_depth: number;
+  needs_review_jobs_recent: number;
+  failed_jobs_recent: number;
+  db_connections: number;
+  integration_calls_per_minute: number;
+  avg_integration_latency_ms: number | null;
+  p95_integration_latency_ms: number | null;
+  integration_error_rate_percent: number;
+  process_rss_mb: number;
+  by_client: ClientTrafficRow[];
+  note: string;
+}
+
+export interface HistoricalPoint {
+  bucket: string;
+  value: number;
+}
+
+export interface HistoricalSeries {
+  name: string;
+  points: HistoricalPoint[];
+}
+
+export interface Historical {
+  range: "24h" | "7d" | "30d";
+  series: HistoricalSeries[];
+}
+
+export interface Threshold {
+  key: string;
+  value: number;
 }
 
 export interface PrivacyRequest {
