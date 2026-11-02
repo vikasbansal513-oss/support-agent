@@ -10,6 +10,7 @@ from app.channels.identity import usage_period
 from app.contracts.contracts import DashboardStatsOut, UsageOut
 from app.core import timeutil
 from app.core.db import get_session_factory, session_scope
+from app.core.errors import AppError
 
 router = APIRouter(tags=["dashboard"])
 Factory = async_sessionmaker[AsyncSession]
@@ -106,5 +107,7 @@ async def billing_usage_view(
     settings) under a super-admin session because those tables are admin-only RLS, but every
     query inside billing_usage.client_usage() is filtered to `principal.tenant_id` -- a client
     can never see another tenant's numbers through this endpoint."""
+    if principal.tenant_id is None:
+        raise AppError("E-AUTH-007")
     async with session_scope(factory, super_admin=True, user_id=principal.user_id) as session:
         return await billing_usage.client_usage(session, principal.tenant_id)

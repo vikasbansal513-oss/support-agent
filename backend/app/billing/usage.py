@@ -72,9 +72,7 @@ def _pct(numerator: Decimal, denominator: Decimal) -> Decimal:
 
 
 # ---------------------------------------------------------------- date range resolution
-def resolve_range(
-    preset: DatePreset, start: date | None, end: date | None
-) -> tuple[date, date]:
+def resolve_range(preset: DatePreset, start: date | None, end: date | None) -> tuple[date, date]:
     today = timeutil.to_ist(timeutil.utc_now()).date()
     if preset == "today":
         return today, today
@@ -257,9 +255,9 @@ async def _collect_range(
     plivo_rental_by_tenant: dict[uuid.UUID, int] = {}
     for r in rental_rows:
         if tenant_id is None or r.tenant_id == tenant_id:
-            plivo_rental_by_tenant[r.tenant_id] = plivo_rental_by_tenant.get(
-                r.tenant_id, 0
-            ) + int(r.monthly_rate_paise)
+            plivo_rental_by_tenant[r.tenant_id] = plivo_rental_by_tenant.get(r.tenant_id, 0) + int(
+                r.monthly_rate_paise
+            )
     speech_rows = (await session.execute(_SPEECH_RANGE, {"s": s, "e": e, "t": t})).all()
     messages_rows = (await session.execute(_MESSAGES_RANGE, {"s": s, "e": e, "t": t})).all()
     agent_rows = (await session.execute(_AGENT_RUNS_RANGE, {"s": s, "e": e, "t": t})).all()
@@ -295,9 +293,7 @@ def _cloudrun_cost_inr_for_tenant(totals: _Totals, tenant_id: uuid.UUID) -> Deci
     compute = totals.compute_by_tenant.get(tenant_id)
     if compute is None or totals.fx is None:
         return _ZERO
-    priced = billing_service.price_cloudrun(
-        totals.settings, totals.fx, None, {tenant_id: compute}
-    )
+    priced = billing_service.price_cloudrun(totals.settings, totals.fx, None, {tenant_id: compute})
     return _money(priced[tenant_id].amount_paise)
 
 
@@ -315,7 +311,9 @@ def _plivo_cost_inr_for_tenant(totals: _Totals, tenant_id: uuid.UUID) -> Decimal
 def _gcp_cost_inr_for_tenant(totals: _Totals, tenant_id: uuid.UUID) -> Decimal:
     if totals.fx is None:
         return _ZERO
-    total_usd = sum(Decimal(r.cost_usd) for r in totals.gcp_rows if r.tenant_id == tenant_id)
+    total_usd = sum(
+        (Decimal(r.cost_usd) for r in totals.gcp_rows if r.tenant_id == tenant_id), Decimal(0)
+    )
     return _money(calc.usd_to_paise(total_usd, totals.fx))
 
 
@@ -356,9 +354,7 @@ def _agent_performance_for_tenant(
         else sum(totals.retry_by_tenant.values())
     )
     avg_seconds = (exec_seconds / total).quantize(Decimal("0.01")) if total else _ZERO
-    cost_per_task = (
-        (llm_cost_inr / completed).quantize(Decimal("0.0001")) if completed else _ZERO
-    )
+    cost_per_task = (llm_cost_inr / completed).quantize(Decimal("0.0001")) if completed else _ZERO
     return AgentPerformanceOut(
         total_tasks=total,
         completed=completed,
@@ -395,15 +391,15 @@ async def overview(
     profit = revenue - total_cost
     unalloc_usd = (
         await session.execute(
-            _LATEST_RECON_IN_RANGE, {"s": _bounds(range_start, range_end)[0], "e": _bounds(range_start, range_end)[1]}
+            _LATEST_RECON_IN_RANGE,
+            {"s": _bounds(range_start, range_end)[0], "e": _bounds(range_start, range_end)[1]},
         )
     ).scalar_one()
-    unalloc_inr = (
-        _money(calc.usd_to_paise(Decimal(unalloc_usd), totals.fx)) if totals.fx else _ZERO
-    )
+    unalloc_inr = _money(calc.usd_to_paise(Decimal(unalloc_usd), totals.fx)) if totals.fx else _ZERO
     unpriced = (
         await session.execute(
-            _UNPRICED_RANGE, {"s": _bounds(range_start, range_end)[0], "e": _bounds(range_start, range_end)[1]}
+            _UNPRICED_RANGE,
+            {"s": _bounds(range_start, range_end)[0], "e": _bounds(range_start, range_end)[1]},
         )
     ).all()
     note = OverviewOut.model_fields["note"].default
@@ -538,19 +534,21 @@ async def client_detail(
             unit=r.unit,
             cost_usd=Decimal(r.cost_usd),
             cost_inr=(
-                _money(calc.usd_to_paise(Decimal(r.cost_usd), totals.fx))
-                if totals.fx
-                else _ZERO
+                _money(calc.usd_to_paise(Decimal(r.cost_usd), totals.fx)) if totals.fx else _ZERO
             ),
         )
         for r in totals.gcp_rows
         if r.tenant_id == tenant_id
     ]
     plivo_out = sum(
-        int(r.cost) for r in totals.plivo_rows if r.tenant_id == tenant_id and r.direction == "outbound"
+        int(r.cost)
+        for r in totals.plivo_rows
+        if r.tenant_id == tenant_id and r.direction == "outbound"
     )
     plivo_in = sum(
-        int(r.cost) for r in totals.plivo_rows if r.tenant_id == tenant_id and r.direction == "inbound"
+        int(r.cost)
+        for r in totals.plivo_rows
+        if r.tenant_id == tenant_id and r.direction == "inbound"
     )
     speech_by_provider = {
         r.provider: int(r.cost) for r in totals.speech_rows if r.tenant_id == tenant_id
@@ -594,9 +592,7 @@ async def usage_ledger(session: AsyncSession, body: UsageLedgerFilterIn) -> Usag
     t = str(body.tenant_id) if body.tenant_id else None
     fx = await _fx_rate(session, body.end)
     rows: list[UsageLedgerRowOut] = []
-    tenant_names = {
-        r.id: r.name for r in (await session.execute(_TENANTS_ALL, {"t": None})).all()
-    }
+    tenant_names = {r.id: r.name for r in (await session.execute(_TENANTS_ALL, {"t": None})).all()}
 
     def _name(tid: uuid.UUID | None) -> str:
         return tenant_names.get(tid, "shared / unattributed") if tid else "shared / unattributed"
@@ -605,7 +601,9 @@ async def usage_ledger(session: AsyncSession, body: UsageLedgerFilterIn) -> Usag
         for r in (await session.execute(_MESSAGES_RANGE, {"s": s, "e": e, "t": t})).all():
             rows.append(
                 UsageLedgerRowOut(
-                    event_id=uuid.uuid5(uuid.NAMESPACE_URL, f"message:{r.tenant_id}:{r.direction}:{s}"),
+                    event_id=uuid.uuid5(
+                        uuid.NAMESPACE_URL, f"message:{r.tenant_id}:{r.direction}:{s}"
+                    ),
                     tenant_id=r.tenant_id,
                     tenant_name=_name(r.tenant_id),
                     event_type="message",
@@ -649,7 +647,9 @@ async def usage_ledger(session: AsyncSession, body: UsageLedgerFilterIn) -> Usag
                     ended_at=e,
                     duration_seconds=None,
                     actual_cost_inr=(
-                        _money(calc.usd_to_paise(Decimal(r.est_cost_micro) / Decimal(1_000_000), fx))
+                        _money(
+                            calc.usd_to_paise(Decimal(r.est_cost_micro) / Decimal(1_000_000), fx)
+                        )
                         if r.est_cost_micro and fx
                         else None
                     ),
@@ -765,9 +765,7 @@ async def usage_ledger(session: AsyncSession, body: UsageLedgerFilterIn) -> Usag
         ).all()
         for r in agent_rows:
             duration = (
-                Decimal((r.finished_at - r.started_at).total_seconds())
-                if r.finished_at
-                else None
+                Decimal((r.finished_at - r.started_at).total_seconds()) if r.finished_at else None
             )
             rows.append(
                 UsageLedgerRowOut(
@@ -854,7 +852,9 @@ async def build_report(
 ) -> ReportRowOut:
     range_start, range_end = resolve_range(preset, start, end)
     totals = await _collect_range(session, range_start, range_end, tenant_id)
-    tenant_rows = (await session.execute(_TENANTS_ALL, {"t": str(tenant_id) if tenant_id else None})).all()
+    tenant_rows = (
+        await session.execute(_TENANTS_ALL, {"t": str(tenant_id) if tenant_id else None})
+    ).all()
 
     if report_type == "client_usage":
         columns = ["client", "messages_total", "llm_calls", "tasks_total", "total_cost_inr"]
@@ -864,11 +864,21 @@ async def build_report(
             llm_calls = sum(line.calls for line in totals.llm_lines_by_tenant.get(t.id, []))
             tasks = sum(int(r.n) for r in totals.agent_rows if r.tenant_id == t.id)
             summary, total_cost = _financial_summary(totals, t.id)
-            out_rows.append([t.name, str(messages.total), str(llm_calls), str(tasks), str(total_cost)])
+            out_rows.append(
+                [t.name, str(messages.total), str(llm_calls), str(tasks), str(total_cost)]
+            )
         return ReportRowOut(columns=columns, rows=out_rows)
 
     if report_type == "llm":
-        columns = ["client", "provider", "model", "calls", "input_tokens", "output_tokens", "cost_inr"]
+        columns = [
+            "client",
+            "provider",
+            "model",
+            "calls",
+            "input_tokens",
+            "output_tokens",
+            "cost_inr",
+        ]
         out_rows = []
         names = {t.id: t.name for t in tenant_rows}
         for tid, lines in totals.llm_lines_by_tenant.items():
@@ -962,7 +972,13 @@ async def build_report(
         return ReportRowOut(columns=columns, rows=out_rows)
 
     if report_type == "actual_vs_estimated":
-        columns = ["client", "cloudrun_basis", "cloudrun_paise", "telephony_basis", "telephony_paise"]
+        columns = [
+            "client",
+            "cloudrun_basis",
+            "cloudrun_paise",
+            "telephony_basis",
+            "telephony_paise",
+        ]
         rows_sql = (
             await session.execute(
                 text(
@@ -1047,12 +1063,8 @@ async def save_usage_limit(
     )
 
 
-async def list_usage_limits(
-    session: AsyncSession, tenant_id: uuid.UUID | None
-) -> UsageLimitsOut:
-    rows = (
-        await session.execute(_LIMITS_LIST, {"t": str(tenant_id) if tenant_id else None})
-    ).all()
+async def list_usage_limits(session: AsyncSession, tenant_id: uuid.UUID | None) -> UsageLimitsOut:
+    rows = (await session.execute(_LIMITS_LIST, {"t": str(tenant_id) if tenant_id else None})).all()
     return UsageLimitsOut(
         limits=[
             UsageLimitOut(

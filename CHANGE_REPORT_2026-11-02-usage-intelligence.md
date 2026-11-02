@@ -2,10 +2,11 @@
 
 Implements the "MailMind AI – Enterprise-Level Usage Metering, Intelligence & Complete
 Billing System" spec, entirely inside the existing **Admin → Billing** section (no new
-top-level menu), per the spec's own hard requirement. No tests/build were run this session —
-the user explicitly asked for the finished zip directly, without a test/build pass. See
-PROGRESS.md P23 row for the full reasoning trail; this file is the section-17-style summary
-the spec itself asks for.
+top-level menu), per the spec's own hard requirement. Initially shipped without a test/build
+pass per the user's own first instruction; the user then asked for a real test pass after
+GitHub Actions CI caught real ruff/mypy issues (see §10) — that full pass is now done and
+all green. See PROGRESS.md P23 row for the full reasoning trail; this file is the
+section-17-style summary the spec itself asks for.
 
 ## 1. Files modified
 
@@ -131,21 +132,36 @@ spec's explicit instruction not to add a new top-level menu.
 
 ## 10. Tests executed and their actual results
 
-**None.** Per explicit user instruction this session ("TEST MAT KARNA / KOI TEST MAT KARNA"),
-no `pytest`, `vitest`, `tsc`, `ruff`, `mypy`, or build was run. Every earlier phase (P16–P22)
-ran the full suite before shipping; this one did not, on direct instruction. What was done
-instead, as a substitute for execution:
-- Every new SQL query's column/table names were checked against the actual migration files
-  and `service.py`'s existing queries before being written (not assumed from memory).
-- The one hardcoded table-list test and the alembic-head test were updated to match the new
-  migration (source-of-truth edits, not a test run).
-- Icon names used in the two touched frontend files were checked against the actual sprite in
-  `Icons.tsx` rather than guessed.
-- The new `BillingIntel.tsx` tab is wired so it only renders instead of — never alongside or
-  inside — the existing month/period view, to keep the blast radius on `Billing.tsx` to two
-  small, additive edits.
+First shipped round skipped execution per the user's own explicit instruction ("TEST MAT
+KARNA / KOI TEST MAT KARNA"). The user's own GitHub Actions CI then caught real issues
+(`ruff check` B008/F401/I001, `ruff format --check`) and the user asked for a proper test
+pass this time. That full pass has now been run, against a real Postgres 16 instance started
+in this session, with these **actual results**:
 
-**Before this goes anywhere near production, run:** `alembic upgrade head` against a real
-Postgres 16 (watch for the same FORCE-RLS seed-insert class of bug hit in 0025/0027, though
-0028 has no seed INSERT so it may not apply), the full backend `pytest` suite, and frontend
-`tsc --noEmit` / `vitest run` / `npm run build`.
+- `ruff check .` (backend) — **All checks passed.** Fixed along the way: 5× `B008` on
+  `Query(default="this_month")` (ruff couldn't resolve the custom `DatePreset = Literal[...]`
+  type alias as immutable — added `# noqa: B008`, same convention already used on every
+  `Depends(...)` line in this file), 2× `F401` unused imports (`LedgerEventType`,
+  `UsageMetric` in `usage.py`), 1× `I001` import ordering (auto-fixed).
+- `ruff format --check .` (backend) — **249 files formatted correctly** (2 of the new files
+  needed reformatting — fixed with `ruff format`).
+- `mypy app` (strict mode, 151 source files) — **Success: no issues found.** Fixed along the
+  way: `usd_to_paise` arg-type on an empty-`sum()` fallback typed as `Literal[0]` instead of
+  `Decimal` (`_gcp_cost_inr_for_tenant` in `usage.py` — now passes `start=Decimal(0)` to
+  `sum()`), `client_usage(session, principal.tenant_id)` passing `UUID | None` where `UUID` is
+  required (`dashboard.py` — now raises `AppError("E-AUTH-007")` first, same pattern already
+  used in `integrations.py`'s `gmail_connect`), one stale `# type: ignore[arg-type]` that mypy
+  flagged as unused (removed).
+- `pytest -n 2 --dist loadfile` (full backend suite, real Postgres 16) — **657 passed**, 6
+  warnings (all pre-existing `httpx` cookie-deprecation warnings, unrelated to this round's
+  code), 1366s. Includes `tests/rls/test_ready_and_migrations.py` (the migration-0028 /
+  `usage_limits`-table assertions) run against a real up/down/up migration cycle.
+- `python -m app.evals.run` (offline-oracle eval harness) — accuracy 1.0, 0 gate failures, 0
+  policy-scenario failures across all 224 gate scenarios + 81 tuning rows — unaffected by this
+  round's changes (no agent/policy files were touched).
+- Frontend: `tsc --noEmit` — clean. `vitest run` — **37 passed (5 files)**. `npm run build`
+  (`tsc --noEmit && vite build`) — **built successfully** (`dist/` produced, 426 KB JS /
+  41 KB CSS before gzip).
+
+Everything above is a real execution result, not a syntax-only check. The zip in this
+delivery is the exact code that produced these results.

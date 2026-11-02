@@ -449,6 +449,7 @@ async def resolve_unallocated(
 # (sections A-C, F, H, J of the usage-metering spec -- all still under Admin -> Billing,
 # per the "do not create another top-level menu" requirement)
 
+
 # ---------------------------------------------------------------- A. Billing Overview
 @router.get("/overview")
 async def read_overview(
@@ -503,7 +504,7 @@ def _ledger_filter(
 ) -> UsageLedgerFilterIn:
     return UsageLedgerFilterIn(
         tenant_id=tenant_id,
-        event_type=event_type,  # type: ignore[arg-type]
+        event_type=event_type,
         service_provider=service_provider,
         service_name=service_name,
         start=start,
@@ -568,7 +569,9 @@ async def read_report(
     factory: Factory = Depends(get_session_factory),  # noqa: B008
 ) -> dict[str, list[str] | list[list[str]]]:
     async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
-        report = await usage_service.build_report(session, report_type, preset, start, end, tenant_id)
+        report = await usage_service.build_report(
+            session, report_type, preset, start, end, tenant_id
+        )
     return {"columns": report.columns, "rows": report.rows}
 
 
@@ -583,7 +586,9 @@ async def export_report_csv(
     factory: Factory = Depends(get_session_factory),  # noqa: B008
 ) -> Response:
     async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
-        report = await usage_service.build_report(session, report_type, preset, start, end, tenant_id)
+        report = await usage_service.build_report(
+            session, report_type, preset, start, end, tenant_id
+        )
     csv_text = usage_service.report_to_csv(report)
     return Response(
         content=csv_text,
