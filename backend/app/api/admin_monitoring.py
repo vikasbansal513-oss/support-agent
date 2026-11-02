@@ -10,9 +10,12 @@ from app.auth.deps import require_admin
 from app.auth.service import Principal
 from app.contracts.contracts import (
     AccuracyOut,
+    AgentPerformanceOut,
     AgentTaskDetailOut,
     AgentTaskListOut,
     AgentTaskStatus,
+    ClientMonitoringOut,
+    ClientProviderRowOut,
     HistoricalOut,
     PagePerfOut,
     ThresholdOut,
@@ -27,6 +30,8 @@ from app.monitoring import queries
 router = APIRouter(prefix="/admin/monitoring", tags=["admin-monitoring"])
 Factory = async_sessionmaker[AsyncSession]
 Range = Literal["24h", "7d", "30d"]
+HistoricalRange = Literal["24h", "7d", "30d", "90d"]
+ClientWindow = Literal["24h", "7d", "30d", "90d"]
 
 
 @router.get("/agent-tasks")
@@ -34,6 +39,7 @@ async def agent_tasks(
     tenant_id: uuid.UUID | None = None,
     category: str | None = None,
     status: AgentTaskStatus | None = None,
+    graph_version: str | None = None,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
     page: int = Query(default=1, ge=1),
@@ -41,16 +47,47 @@ async def agent_tasks(
     admin: Principal = Depends(require_admin),  # noqa: B008
     factory: Factory = Depends(get_session_factory),  # noqa: B008
 ) -> AgentTaskListOut:
-    async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
+    # Scoping the RLS session to the requested tenant (not just filtering the SQL) is what
+    # makes agent_actions/shadow_verdicts/answer_reports visible at all for that tenant --
+    # see migration 0030 / DECISIONS.md: those tables hold customer reply content and are
+    # deliberately NOT super-admin-readable platform-wide, by design (tests/rls/
+    # test_p5_tables.py). Picking "all clients" (tenant_id=None) keeps that limitation.
+    async with session_scope(
+        factory, tenant_id=tenant_id, super_admin=True, user_id=admin.user_id
+    ) as session:
         return await queries.agent_task_list(
             session,
             tenant_id=tenant_id,
             category=category,
             status=status,
+            graph_version=graph_version,
             date_from=date_from.isoformat() if date_from else None,
             date_to=date_to.isoformat() if date_to else None,
             page=page,
             page_size=page_size,
+        )
+
+
+@router.get("/agent-performance")
+async def agent_performance(
+    tenant_id: uuid.UUID | None = None,
+    category: str | None = None,
+    graph_version: str | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> AgentPerformanceOut:
+    async with session_scope(
+        factory, tenant_id=tenant_id, super_admin=True, user_id=admin.user_id
+    ) as session:
+        return await queries.agent_performance(
+            session,
+            tenant_id=tenant_id,
+            category=category,
+            graph_version=graph_version,
+            date_from=date_from.isoformat() if date_from else None,
+            date_to=date_to.isoformat() if date_to else None,
         )
 
 
@@ -60,11 +97,53 @@ async def agent_task_detail(
     admin: Principal = Depends(require_admin),  # noqa: B008
     factory: Factory = Depends(get_session_factory),  # noqa: B008
 ) -> AgentTaskDetailOut:
+    # agent_task_detail needs the run's tenant up front to open a tenant-scoped session
+    # (see note on agent_tasks above) -- a plain super_admin session cannot see the run's
+    # actions/verdict at all.
     async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
+        tid = (
+            await session.execute(
+                text("SELECT tenant_id FROM agent_runs WHERE id = :i"), {"i": run_id}
+            )
+        ).scalar_one_or_none()
+    if tid is None:
+        raise AppError("E-NF-001")
+    async with session_scope(
+        factory, tenant_id=tid, super_admin=True, user_id=admin.user_id
+    ) as session:
         detail = await queries.agent_task_detail(session, run_id)
     if detail is None:
         raise AppError("E-NF-001")
     return detail
+
+
+@router.get("/clients/{tenant_id}")
+async def client_monitoring(
+    tenant_id: uuid.UUID,
+    window: ClientWindow = "7d",
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> ClientMonitoringOut:
+    async with session_scope(
+        factory, tenant_id=tenant_id, super_admin=True, user_id=admin.user_id
+    ) as session:
+        result = await queries.client_monitoring(session, tenant_id, window)
+    if result is None:
+        raise AppError("E-NF-001")
+    return result
+
+
+@router.get("/providers")
+async def providers(
+    tenant_id: uuid.UUID | None = None,
+    window: ClientWindow = "24h",
+    admin: Principal = Depends(require_admin),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> list[ClientProviderRowOut]:
+    async with session_scope(
+        factory, tenant_id=tenant_id, super_admin=True, user_id=admin.user_id
+    ) as session:
+        return await queries.provider_breakdown(session, tenant_id=tenant_id, window=window)
 
 
 @router.get("/accuracy")
@@ -99,7 +178,7 @@ async def traffic(
 
 @router.get("/historical")
 async def historical(
-    range: Range = "7d",  # noqa: A002
+    range: HistoricalRange = "7d",  # noqa: A002
     tenant_id: uuid.UUID | None = None,
     admin: Principal = Depends(require_admin),  # noqa: B008
     factory: Factory = Depends(get_session_factory),  # noqa: B008

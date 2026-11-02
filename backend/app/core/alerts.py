@@ -6,8 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.billing import usage as billing_usage
 
 _UPSERT = text(
-    "INSERT INTO alerts (tenant_id, kind, severity, message, dedupe_key)"
-    " VALUES (:t, :k, :s, :m, :d)"
+    "INSERT INTO alerts (tenant_id, kind, severity, message, dedupe_key, service,"
+    " affected_agent, error_id, root_cause)"
+    " VALUES (:t, :k, :s, :m, :d, :svc, :agent, :eid, :cause)"
     " ON CONFLICT (dedupe_key) WHERE status = 'open' DO UPDATE SET message = :m,"
     " updated_at = now()"
 )
@@ -20,6 +21,10 @@ class Condition:
     message: str
     dedupe_key: str
     tenant_id: str | None = None
+    service: str = ""
+    affected_agent: str | None = None
+    error_id: str | None = None
+    root_cause: str | None = None
 
 
 async def _upsert(session: AsyncSession, cond: Condition) -> None:
@@ -31,6 +36,10 @@ async def _upsert(session: AsyncSession, cond: Condition) -> None:
             "s": cond.severity,
             "m": cond.message,
             "d": cond.dedupe_key,
+            "svc": cond.service,
+            "agent": cond.affected_agent,
+            "eid": cond.error_id,
+            "cause": cond.root_cause,
         },
     )
 
@@ -268,6 +277,144 @@ async def scan_and_upsert(session: AsyncSession) -> None:
         )
     else:
         await _resolve_missing(session, "llm_failure_rate", None)
+
+    # Per-tenant agent (run) execution failures -- distinct from the generic worker/job
+    # checks above: this is specifically agent_runs ending status='failed' (graph/plan
+    # crashed, tool blew up, LLM call exhausted retries), not a background job.
+    run_fail_rows = (
+        await session.execute(
+            text(
+                "SELECT r.tenant_id, t.name, count(*) AS n,"
+                " (array_agg(r.error_id ORDER BY r.started_at DESC) FILTER"
+                "   (WHERE r.error_id IS NOT NULL))[1] AS last_error_id"
+                " FROM agent_runs r JOIN tenants t ON t.id = r.tenant_id"
+                " WHERE r.status = 'failed' AND r.started_at >= now() - interval '15 minutes'"
+                " GROUP BY r.tenant_id, t.name"
+            )
+        )
+    ).all()
+    run_fail_threshold = await _threshold(session, "agent_run_failure_window_count", 5)
+    for row in run_fail_rows:
+        dedupe = f"agent_run_failures:{row.tenant_id}"
+        if row.n > run_fail_threshold:
+            await _upsert(
+                session,
+                Condition(
+                    kind="agent_run_failure_spike",
+                    severity="critical",
+                    message=f"{row.name} ke {row.n} agent runs pichle 15 minute me fail hue"
+                    f" hain (threshold {int(run_fail_threshold)}).",
+                    dedupe_key=dedupe,
+                    tenant_id=str(row.tenant_id),
+                    service="agent",
+                    error_id=row.last_error_id,
+                ),
+            )
+        else:
+            await session.execute(
+                text(
+                    "UPDATE alerts SET status = 'resolved', resolved_at = now(), updated_at = now()"
+                    " WHERE status = 'open' AND kind = 'agent_run_failure_spike' AND dedupe_key = :d"
+                ),
+                {"d": dedupe},
+            )
+    # A breach that has dropped off the 15-minute window entirely (zero matching rows,
+    # not just below threshold) never appears in run_fail_rows above, so it would
+    # otherwise never get resolved. Catch those here.
+    await session.execute(
+        text(
+            "UPDATE alerts SET status = 'resolved', resolved_at = now(), updated_at = now()"
+            " WHERE status = 'open' AND kind = 'agent_run_failure_spike'"
+            " AND dedupe_key <> ALL(:keep)"
+        ),
+        {"keep": [f"agent_run_failures:{row.tenant_id}" for row in run_fail_rows] or [""]},
+    )
+
+    # Per (tenant, provider) external API failure rate -- Shopify/Gupshup/Gmail/couriers/LLM,
+    # whichever actually made calls in the window. Never flags a provider that made zero
+    # calls (no data is "unknown", not "healthy" and not "failed" -- see monitoring/queries.py
+    # _provider_health for the matching Control Tower display rule).
+    provider_rows = (
+        await session.execute(
+            text(
+                "SELECT e.tenant_id, t.name, e.provider, count(*) AS n,"
+                " count(*) FILTER (WHERE e.http_status >= 400 OR e.error_class IS NOT NULL)"
+                "   AS bad"
+                " FROM external_calls e JOIN tenants t ON t.id = e.tenant_id"
+                " WHERE e.created_at >= now() - interval '15 minutes'"
+                " GROUP BY e.tenant_id, t.name, e.provider"
+            )
+        )
+    ).all()
+    provider_err_pct_threshold = await _threshold(session, "provider_error_rate_percent", 30)
+    provider_min_calls = await _threshold(session, "provider_min_calls_for_alert", 5)
+    for row in provider_rows:
+        dedupe = f"provider_api_failure:{row.tenant_id}:{row.provider}"
+        pct = row.bad * 100 / row.n if row.n else 0
+        if row.n >= provider_min_calls and pct >= provider_err_pct_threshold:
+            await _upsert(
+                session,
+                Condition(
+                    kind="provider_api_failure",
+                    severity="critical" if pct >= 70 else "high",
+                    message=f"{row.name} ke liye '{row.provider}' API calls me"
+                    f" {round(pct, 1)}% fail ho rahi hain (pichle 15 minute, {row.bad}/{row.n},"
+                    f" threshold {int(provider_err_pct_threshold)}%).",
+                    dedupe_key=dedupe,
+                    tenant_id=str(row.tenant_id),
+                    service=row.provider,
+                ),
+            )
+        else:
+            await session.execute(
+                text(
+                    "UPDATE alerts SET status = 'resolved', resolved_at = now(), updated_at = now()"
+                    " WHERE status = 'open' AND kind = 'provider_api_failure' AND dedupe_key = :d"
+                ),
+                {"d": dedupe},
+            )
+    # Same "dropped off the window entirely" catch-up as above, for providers that made
+    # zero calls in this scan after having made failing calls in an earlier one.
+    await session.execute(
+        text(
+            "UPDATE alerts SET status = 'resolved', resolved_at = now(), updated_at = now()"
+            " WHERE status = 'open' AND kind = 'provider_api_failure'"
+            " AND dedupe_key <> ALL(:keep)"
+        ),
+        {
+            "keep": [
+                f"provider_api_failure:{row.tenant_id}:{row.provider}" for row in provider_rows
+            ]
+            or [""]
+        },
+    )
+
+    # Platform-wide integration latency (p95 over the existing api_latency_p95_ms threshold,
+    # already present in monitoring_thresholds since 0027 but unused until now).
+    integ_latency = (
+        await session.execute(
+            text(
+                "SELECT count(*) AS n,"
+                " percentile_disc(0.95) WITHIN GROUP (ORDER BY latency_ms) AS p95_ms"
+                " FROM external_calls WHERE created_at >= now() - interval '15 minutes'"
+            )
+        )
+    ).one()
+    latency_threshold = await _threshold(session, "api_latency_p95_ms", 3000)
+    if integ_latency.n >= 10 and (integ_latency.p95_ms or 0) > latency_threshold:
+        await _upsert(
+            session,
+            Condition(
+                kind="integration_latency_high",
+                severity="warning",
+                message=f"Integration calls ka p95 latency {int(integ_latency.p95_ms)} ms hai"
+                f" (pichle 15 minute, threshold {int(latency_threshold)} ms).",
+                dedupe_key="integration_latency_high",
+                service="integrations",
+            ),
+        )
+    else:
+        await _resolve_missing(session, "integration_latency_high", None)
 
     breached = (
         await session.execute(

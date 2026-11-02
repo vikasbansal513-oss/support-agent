@@ -10,12 +10,13 @@ import { t } from "../i18n";
 const TONE: Record<Alert["severity"], "ok" | "warn" | "urgent"> = {
   info: "ok",
   warning: "warn",
+  high: "urgent",
   critical: "urgent",
 };
 
 export function AdminAlerts() {
   const toast = useToast();
-  const [status, setStatus] = useState<"open" | "resolved">("open");
+  const [status, setStatus] = useState<"open" | "acknowledged" | "resolved">("open");
   const [list, reload] = useApi(() => api.get<Page<Alert>>(`/admin/alerts?status=${status}`), [status]);
   const [resolving, setResolving] = useState<Alert | null>(null);
 
@@ -31,11 +32,23 @@ export function AdminAlerts() {
     }
   };
 
+  const acknowledge = async (a: Alert) => {
+    try {
+      await api.post(`/admin/alerts/${a.id}/acknowledge`, {});
+      reload();
+    } catch (err) {
+      toast.error(err);
+    }
+  };
+
   return (
     <Screen title={t.alertsTitle}>
       <div className="row">
         <button type="button" className={status === "open" ? undefined : "secondary"} onClick={() => setStatus("open")}>
           {t.showOpen}
+        </button>
+        <button type="button" className={status === "acknowledged" ? undefined : "secondary"} onClick={() => setStatus("acknowledged")}>
+          Acknowledged
         </button>
         <button type="button" className={status === "resolved" ? undefined : "secondary"} onClick={() => setStatus("resolved")}>
           {t.showResolved}
@@ -46,14 +59,17 @@ export function AdminAlerts() {
           page.items.length === 0 ? (
             <Empty>{t.noOpenAlerts}</Empty>
           ) : (
-            <div className="table-wrap">
+            <div className="table-wrap ct-card">
               <table>
                 <thead>
                   <tr>
                     <th>Severity</th>
                     <th>Kind</th>
+                    <th>Client</th>
+                    <th>Service</th>
                     <th>Message</th>
                     <th>Time</th>
+                    <th>Status</th>
                     <th />
                   </tr>
                 </thead>
@@ -62,14 +78,27 @@ export function AdminAlerts() {
                     <tr key={a.id}>
                       <td><Chip tone={TONE[a.severity]}>{a.severity}</Chip></td>
                       <td>{a.kind}</td>
-                      <td>{a.message}</td>
+                      <td>{a.tenant_name ?? "-"}</td>
+                      <td>{a.service || "-"}</td>
+                      <td style={{ whiteSpace: "normal", maxWidth: 420 }}>
+                        {a.message}
+                        {a.error_id && <span className="card-sub"> · {a.error_id}</span>}
+                      </td>
                       <td>{formatIst(a.created_at)}</td>
+                      <td>{a.status}</td>
                       <td>
-                        {a.status === "open" && (
-                          <button type="button" className="secondary" onClick={() => setResolving(a)}>
-                            {t.resolve}
-                          </button>
-                        )}
+                        <div className="row" style={{ marginBottom: 0 }}>
+                          {a.status === "open" && (
+                            <button type="button" className="secondary" onClick={() => void acknowledge(a)}>
+                              Acknowledge
+                            </button>
+                          )}
+                          {a.status !== "resolved" && (
+                            <button type="button" className="secondary" onClick={() => setResolving(a)}>
+                              {t.resolve}
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}

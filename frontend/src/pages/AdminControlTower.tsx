@@ -3,13 +3,17 @@ import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import type {
   Accuracy,
+  AgentPerformance,
   AgentTaskDetail,
   AgentTaskList,
   AgentTaskStatus,
+  ClientMonitoring,
+  ClientProviderRow,
   ControlTower,
   Correctness,
   Historical,
   HistoricalSeries,
+  MonitorWindow,
   PagePerf,
   Threshold,
   Traffic,
@@ -17,6 +21,24 @@ import type {
 import { Async, Chip, Empty, Screen, StatCard } from "../components/common";
 import { useApi } from "../components/useApi";
 import { type Key, t } from "../i18n";
+
+const WINDOW_OPTIONS: { value: MonitorWindow; label: string }[] = [
+  { value: "24h", label: t.monitorAccuracy24h },
+  { value: "7d", label: t.monitorAccuracy7d },
+  { value: "30d", label: t.monitorAccuracy30d },
+  { value: "90d", label: "90 days" },
+];
+
+function fmtMicro(micro: number): string {
+  return `₹${(micro / 1_000_000).toFixed(2)}`;
+}
+
+const HEALTH_TONE: Record<ClientProviderRow["health"], "ok" | "warn" | "urgent" | undefined> = {
+  healthy: "ok",
+  degraded: "warn",
+  failed: "urgent",
+  unknown: undefined,
+};
 
 function fmtMs(value: number | null | undefined): string {
   return value === null || value === undefined ? "-" : `${Math.round(value)} ms`;
@@ -82,7 +104,7 @@ function Sparkline({ series }: { series: HistoricalSeries }) {
 
 function SystemHealth({ c }: { c: ControlTower }) {
   return (
-    <section className="card pad">
+    <section className="card pad ct-card">
       <h2>{t.systemHealthTitle}</h2>
       <div className="row">
         <Chip tone={c.health.status === "ok" ? "ok" : "urgent"}>
@@ -95,7 +117,7 @@ function SystemHealth({ c }: { c: ControlTower }) {
           {t.healthQueueDepth}: {c.health.queue_depth}
         </Chip>
       </div>
-      <div className="grid">
+      <div className="stats ct-stats">
         <StatCard label={t.errorRateTitle} value={`${c.error_rate_percent}%`} tone={c.error_rate_percent > 5 ? "warn" : "ok"} />
         <StatCard label={t.skippedRunsTitle} value={c.skipped_count} />
         <StatCard label={t.p95LatencyTitle} value={c.p95_latency_ms === null ? "-" : `${c.p95_latency_ms} ms`} />
@@ -141,7 +163,7 @@ function AccuracySection() {
   const [window_, setWindow] = useState<"24h" | "7d" | "30d">("7d");
   const [data, reload] = useApi(() => api.get<Accuracy>(`/admin/monitoring/accuracy?window=${window_}`), [window_]);
   return (
-    <section className="card pad">
+    <section className="card pad ct-card">
       <div className="card-head">
         <h2>{t.monitorAccuracySection}</h2>
         <label className="field">
@@ -153,10 +175,11 @@ function AccuracySection() {
           </select>
         </label>
       </div>
+      {/* accuracy snapshot stays 24h/7d/30d (reviewer-verdict window); 90d lives in Historical trends below */}
       <Async value={data} reload={reload}>
         {(a) => (
           <>
-            <div className="grid">
+            <div className="stats ct-stats">
               <StatCard label={t.monitorAccuracyPercent} value={`${a.overall.accuracy_percent}%`} tone={a.overall.accuracy_percent < 80 ? "warn" : "ok"} />
               <StatCard label={t.monitorTaskSuccessPercent} value={`${a.overall.task_success_percent}%`} />
               <StatCard label={t.monitorHumanCorrectionPercent} value={`${a.overall.human_correction_percent}%`} />
@@ -218,7 +241,7 @@ function TaskHistorySection() {
   );
 
   return (
-    <section className="card pad">
+    <section className="card pad ct-card">
       <h2>{t.monitorTaskHistorySection}</h2>
       <div className="row">
         <label className="field">
@@ -387,7 +410,7 @@ function TaskHistorySection() {
 function PagePerfSection() {
   const [data, reload] = useApi(() => api.get<PagePerf>("/admin/monitoring/page-performance"));
   return (
-    <section className="card pad">
+    <section className="card pad ct-card">
       <h2>{t.monitorPagePerfSection}</h2>
       <Async value={data} reload={reload}>
         {(p) =>
@@ -454,12 +477,12 @@ function PagePerfSection() {
 function TrafficSection() {
   const [data, reload] = useApi(() => api.get<Traffic>("/admin/monitoring/traffic"));
   return (
-    <section className="card pad">
+    <section className="card pad ct-card">
       <h2>{t.monitorTrafficSection}</h2>
       <Async value={data} reload={reload}>
         {(tr) => (
           <>
-            <div className="grid">
+            <div className="stats ct-stats">
               <StatCard label={t.monitorTotalClients} value={tr.total_clients} />
               <StatCard label={t.monitorActiveClients} value={tr.active_clients} />
               <StatCard label={t.monitorActiveUsers} value={tr.active_users_5m} />
@@ -469,7 +492,7 @@ function TrafficSection() {
               <StatCard label={t.monitorProcessMemory} value={`${tr.process_rss_mb.toFixed(0)} MB`} />
             </div>
             <h3>{t.monitorApiPerfSection}</h3>
-            <div className="grid">
+            <div className="stats ct-stats">
               <StatCard label={t.monitorCallsPerMinute} value={tr.integration_calls_per_minute.toFixed(1)} />
               <StatCard label={t.monitorAvgLatency} value={tr.avg_integration_latency_ms === null ? "-" : fmtMs(tr.avg_integration_latency_ms)} />
               <StatCard label={t.monitorP95Latency} value={tr.p95_integration_latency_ms === null ? "-" : fmtMs(tr.p95_integration_latency_ms)} />
@@ -513,18 +536,20 @@ function TrafficSection() {
 }
 
 function HistoricalSection() {
-  const [range, setRange] = useState<"24h" | "7d" | "30d">("7d");
+  const [range, setRange] = useState<MonitorWindow>("7d");
   const [data, reload] = useApi(() => api.get<Historical>(`/admin/monitoring/historical?range=${range}`), [range]);
   return (
-    <section className="card pad">
+    <section className="card pad ct-card">
       <div className="card-head">
         <h2>{t.monitorHistoricalSection}</h2>
         <label className="field">
           <span>{t.monitorHistoricalRange}</span>
-          <select value={range} onChange={(e) => setRange(e.target.value as typeof range)}>
-            <option value="24h">{t.monitorAccuracy24h}</option>
-            <option value="7d">{t.monitorAccuracy7d}</option>
-            <option value="30d">{t.monitorAccuracy30d}</option>
+          <select value={range} onChange={(e) => setRange(e.target.value as MonitorWindow)}>
+            {WINDOW_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
           </select>
         </label>
       </div>
@@ -560,7 +585,7 @@ function ThresholdsSection() {
   };
 
   return (
-    <section className="card pad">
+    <section className="card pad ct-card">
       <h2>{t.monitorThresholdsSection}</h2>
       <Async value={data} reload={reload}>
         {(rows) => (
@@ -603,6 +628,247 @@ function ThresholdsSection() {
   );
 }
 
+function AgentPerformanceSection() {
+  const [category, setCategory] = useState("");
+  const [graphVersion, setGraphVersion] = useState("");
+  const query = new URLSearchParams();
+  if (category.trim()) query.set("category", category.trim());
+  if (graphVersion) query.set("graph_version", graphVersion);
+  const [data, reload] = useApi(
+    () => api.get<AgentPerformance>(`/admin/monitoring/agent-performance?${query.toString()}`),
+    [category, graphVersion],
+  );
+  return (
+    <section className="card pad ct-card">
+      <div className="card-head">
+        <h2>Agent-wise performance</h2>
+      </div>
+      <p className="card-sub">
+        Each row is one agent generation × task it handles (graph_version · task_category) — this system runs a single graph per
+        generation across many task types, not separately named bots. Unverified replies never count toward accuracy.
+      </p>
+      <div className="row">
+        <label className="field">
+          <span>{t.monitorFilterCategory}</span>
+          <input value={category} placeholder={t.monitorFilterAllCategories} onChange={(e) => setCategory(e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Agent generation</span>
+          <select value={graphVersion} onChange={(e) => setGraphVersion(e.target.value)}>
+            <option value="">All</option>
+            <option value="v0.1">V0 (info/query)</option>
+            <option value="v1.0">V1 (write-capable)</option>
+          </select>
+        </label>
+      </div>
+      <Async value={data} reload={reload}>
+        {(perf) =>
+          perf.rows.length === 0 ? (
+            <Empty>{t.noRows}</Empty>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Rank</th>
+                    <th>Agent</th>
+                    <th>Total tasks</th>
+                    <th>Success / Fail / Skip</th>
+                    <th>Accuracy</th>
+                    <th>Task success</th>
+                    <th>Human corrections</th>
+                    <th>Handoffs</th>
+                    <th>Avg time</th>
+                    <th>Model</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {perf.rows.map((row) => (
+                    <tr key={row.agent_key}>
+                      <td>#{row.rank}</td>
+                      <td>{row.agent_key}</td>
+                      <td>{row.total_tasks}</td>
+                      <td>
+                        {row.successful_tasks} / {row.failed_tasks} / {row.skipped_tasks}
+                      </td>
+                      <td>
+                        {row.insufficient_data ? (
+                          <Chip>Not enough data ({row.total_evaluated}/{perf.min_evaluated_for_ranking})</Chip>
+                        ) : (
+                          <Chip tone={(row.accuracy_percent ?? 0) < 80 ? "warn" : "ok"}>{row.accuracy_percent}%</Chip>
+                        )}
+                      </td>
+                      <td>{row.task_success_percent}%</td>
+                      <td>
+                        {row.human_corrections} ({row.human_correction_percent}%)
+                      </td>
+                      <td>
+                        {row.handoff_count} ({row.handoff_percent}%)
+                      </td>
+                      <td>{fmtMs(row.avg_execution_ms)}</td>
+                      <td>{row.top_model ?? "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        }
+      </Async>
+    </section>
+  );
+}
+
+function ClientDrillSection() {
+  const [tenantId, setTenantId] = useState("");
+  const [window_, setWindow] = useState<MonitorWindow>("7d");
+  const [traffic] = useApi(() => api.get<Traffic>("/admin/monitoring/traffic"));
+  const [data, reload] = useApi(
+    () => (tenantId ? api.get<ClientMonitoring>(`/admin/monitoring/clients/${tenantId}?window=${window_}`) : Promise.resolve(null)),
+    [tenantId, window_],
+  );
+  return (
+    <section className="card pad ct-card">
+      <div className="card-head">
+        <h2>Client-wise monitoring</h2>
+      </div>
+      <div className="row">
+        <label className="field">
+          <span>{t.brandName}</span>
+          <Async value={traffic}>
+            {(tr) => (
+              <select value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
+                <option value="">Select a client…</option>
+                {tr.by_client.map((c) => (
+                  <option key={c.tenant_id} value={c.tenant_id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Async>
+        </label>
+        <label className="field">
+          <span>Window</span>
+          <select value={window_} onChange={(e) => setWindow(e.target.value as MonitorWindow)}>
+            {WINDOW_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {!tenantId ? (
+        <Empty>Select a client to see its agents, accuracy, LLM/integration usage and worst-performing agent/provider.</Empty>
+      ) : (
+        <Async value={data} reload={reload}>
+          {(c) =>
+            c === null ? (
+              <Empty>{t.noRows}</Empty>
+            ) : (
+              <>
+                <div className="stats ct-stats">
+                  <StatCard label="Agent runs" value={c.runs_total} />
+                  <StatCard label="Done / Failed / Skipped" value={`${c.runs_done} / ${c.runs_failed} / ${c.runs_skipped}`} />
+                  <StatCard label="Accuracy" value={`${c.accuracy.accuracy_percent}%`} tone={c.accuracy.accuracy_percent < 80 ? "warn" : "ok"} />
+                  <StatCard label="LLM calls" value={c.llm_calls_total} />
+                  <StatCard label="LLM failures" value={c.llm_calls_failed} tone={c.llm_calls_failed > 0 ? "warn" : "ok"} />
+                  <StatCard label="LLM p95 latency" value={fmtMs(c.llm_p95_latency_ms)} />
+                  <StatCard label="LLM cost" value={fmtMicro(c.llm_cost_micro)} />
+                  <StatCard label="Integration calls" value={c.integration_calls_total} />
+                  <StatCard label="Integration failures" value={c.integration_calls_failed} tone={c.integration_calls_failed > 0 ? "warn" : "ok"} />
+                  <StatCard label="Integration p95 latency" value={fmtMs(c.integration_p95_latency_ms)} />
+                </div>
+                <div className="row">
+                  {c.worst_agent_key && (
+                    <Chip tone="warn">
+                      Worst agent: {c.worst_agent_key} ({c.worst_agent_accuracy_percent}%)
+                    </Chip>
+                  )}
+                  {c.worst_provider && <Chip tone="warn">Worst provider: {c.worst_provider}</Chip>}
+                </div>
+                <h3>By provider</h3>
+                <ProviderTable rows={c.by_provider} />
+              </>
+            )
+          }
+        </Async>
+      )}
+    </section>
+  );
+}
+
+function ProviderTable({ rows }: { rows: ClientProviderRow[] }) {
+  if (rows.length === 0) return <Empty>{t.noRows}</Empty>;
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Provider</th>
+            <th>Health</th>
+            <th>Total calls</th>
+            <th>Success %</th>
+            <th>Avg latency</th>
+            <th>P95 latency</th>
+            <th>Last success</th>
+            <th>Last failure</th>
+            <th>Top errors</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((p) => (
+            <tr key={p.provider}>
+              <td>{p.provider}</td>
+              <td>
+                <Chip tone={HEALTH_TONE[p.health]}>{p.health}</Chip>
+              </td>
+              <td>
+                {p.total_calls} ({p.successful_calls} ok / {p.failed_calls} failed)
+              </td>
+              <td>{p.success_percent}%</td>
+              <td>{fmtMs(p.avg_latency_ms)}</td>
+              <td>{fmtMs(p.p95_latency_ms)}</td>
+              <td>{p.last_success_at ? new Date(p.last_success_at).toLocaleString() : "-"}</td>
+              <td>{p.last_failure_at ? new Date(p.last_failure_at).toLocaleString() : "-"}</td>
+              <td>{p.top_error_categories.map((e) => `${e.error_class} (${e.count})`).join(", ") || "-"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ProvidersSection() {
+  const [window_, setWindow] = useState<MonitorWindow>("24h");
+  const [data, reload] = useApi(() => api.get<ClientProviderRow[]>(`/admin/monitoring/providers?window=${window_}`), [window_]);
+  return (
+    <section className="card pad ct-card">
+      <div className="card-head">
+        <h2>Provider-wise API monitoring</h2>
+        <label className="field">
+          <span>Window</span>
+          <select value={window_} onChange={(e) => setWindow(e.target.value as MonitorWindow)}>
+            {WINDOW_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <p className="card-sub">
+        Platform-wide, across all clients. A provider with no calls in this window shows "unknown" health, never a false "healthy".
+      </p>
+      <Async value={data} reload={reload}>
+        {(rows) => <ProviderTable rows={rows} />}
+      </Async>
+    </section>
+  );
+}
+
 export function AdminControlTower() {
   const [tower, reload] = useApi(() => api.get<ControlTower>("/admin/control-tower"));
   return (
@@ -611,11 +877,14 @@ export function AdminControlTower() {
         {(c) => <SystemHealth c={c} />}
       </Async>
       <AccuracySection />
+      <AgentPerformanceSection />
       <TaskHistorySection />
+      <ClientDrillSection />
+      <ProvidersSection />
       <PagePerfSection />
       <TrafficSection />
       <HistoricalSection />
-      <section className="card pad">
+      <section className="card pad ct-card">
         <h2>{t.monitorAlertsSection}</h2>
         <Link to="/admin/alerts">{t.monitorViewAllAlerts}</Link>
       </section>

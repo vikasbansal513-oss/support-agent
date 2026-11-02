@@ -320,12 +320,20 @@ export interface Quota {
 export interface Alert {
   id: string;
   tenant_id: string | null;
+  tenant_name?: string | null;
   kind: string;
-  severity: "info" | "warning" | "critical";
+  severity: "info" | "warning" | "high" | "critical";
   message: string;
-  status: "open" | "resolved";
+  status: "open" | "acknowledged" | "resolved";
+  service?: string;
+  affected_agent?: string | null;
+  error_id?: string | null;
+  root_cause?: string | null;
   created_at: string;
+  acknowledged_at?: string | null;
+  resolution_notes?: string | null;
   resolved_at: string | null;
+  resolution_minutes?: number | null;
 }
 
 export interface AuditLogRow {
@@ -514,14 +522,91 @@ export interface HistoricalSeries {
   points: HistoricalPoint[];
 }
 
+export type MonitorWindow = "24h" | "7d" | "30d" | "90d";
+
 export interface Historical {
-  range: "24h" | "7d" | "30d";
+  range: MonitorWindow;
   series: HistoricalSeries[];
 }
 
 export interface Threshold {
   key: string;
   value: number;
+}
+
+export interface AgentPerformanceRow {
+  agent_key: string;
+  graph_version: string;
+  task_category: string;
+  total_tasks: number;
+  successful_tasks: number;
+  failed_tasks: number;
+  skipped_tasks: number;
+  sent_replies: number;
+  correct: number;
+  incorrect: number;
+  partially_correct: number;
+  unverified: number;
+  total_evaluated: number;
+  accuracy_percent: number | null;
+  task_success_percent: number;
+  human_corrections: number;
+  human_correction_percent: number;
+  handoff_count: number;
+  handoff_percent: number;
+  avg_execution_ms: number | null;
+  top_model: string | null;
+  insufficient_data: boolean;
+  rank: number;
+}
+
+export interface AgentPerformance {
+  rows: AgentPerformanceRow[];
+  min_evaluated_for_ranking: number;
+}
+
+export interface ProviderErrorCategory {
+  error_class: string;
+  count: number;
+}
+
+export interface ClientProviderRow {
+  provider: string;
+  total_calls: number;
+  successful_calls: number;
+  failed_calls: number;
+  success_percent: number;
+  avg_latency_ms: number | null;
+  p95_latency_ms: number | null;
+  health: "healthy" | "degraded" | "failed" | "unknown";
+  last_success_at: string | null;
+  last_failure_at: string | null;
+  top_error_categories: ProviderErrorCategory[];
+}
+
+export interface ClientMonitoring {
+  tenant_id: string;
+  tenant_name: string;
+  tenant_status: string;
+  window: MonitorWindow;
+  runs_total: number;
+  runs_done: number;
+  runs_failed: number;
+  runs_skipped: number;
+  accuracy: AccuracyBucket;
+  llm_calls_total: number;
+  llm_calls_failed: number;
+  llm_avg_latency_ms: number | null;
+  llm_p95_latency_ms: number | null;
+  llm_cost_micro: number;
+  integration_calls_total: number;
+  integration_calls_failed: number;
+  integration_avg_latency_ms: number | null;
+  integration_p95_latency_ms: number | null;
+  by_provider: ClientProviderRow[];
+  worst_agent_key: string | null;
+  worst_agent_accuracy_percent: number | null;
+  worst_provider: string | null;
 }
 
 export interface PrivacyRequest {

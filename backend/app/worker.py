@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agent import runner
+from app.core import alerts as core_alerts
 from app.core import timeutil
 from app.core.config import get_settings
 from app.core.db import get_session_factory, session_scope
@@ -122,6 +123,18 @@ async def schedule_periodic(factory: Factory, now: datetime | None = None) -> in
     return created
 
 
+async def scan_alerts(factory: Factory) -> None:
+    """Platform-wide alert scan, once per worker tick (Cloud Scheduler runs the worker every
+    minute -- see RUNBOOK). This is what makes Control Tower alerts real-time without an
+    admin needing the Alerts page open: by the time anyone looks, a breach is already
+    recorded. Failure here must never take down the job queue it runs alongside."""
+    try:
+        async with session_scope(factory, super_admin=True) as session:
+            await core_alerts.scan_and_upsert(session)
+    except Exception:
+        logger.exception("alert scan failed")
+
+
 async def run_job(
     factory: Factory,
     job: queue.Job,
@@ -180,6 +193,7 @@ async def run_worker(
     stats = {"done": 0, "retry": 0, "needs_review": 0, "reaped": 0}
     await heartbeat(factory)
     await schedule_periodic(factory)
+    await scan_alerts(factory)
     stats["reaped"] = len(await queue.reap_expired(factory))
     while time.monotonic() < deadline:
         job = await queue.claim(factory, me, settings.job_lease_seconds, settings.job_tenant_limit)

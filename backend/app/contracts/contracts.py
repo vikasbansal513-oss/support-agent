@@ -3,6 +3,7 @@
 Rules: money is integer paise; times are timezone-aware UTC datetimes; every LLM-facing model uses extra="ignore"
 and clips strings; every API input model uses extra="forbid".
 """
+
 from __future__ import annotations
 
 import re
@@ -10,8 +11,17 @@ import uuid
 from datetime import datetime, time
 from typing import Annotated, Any, Literal, TypedDict
 
-from pydantic import (AfterValidator, AwareDatetime, BaseModel, BeforeValidator, ConfigDict, EmailStr, Field,
-                      field_validator, model_validator)
+from pydantic import (
+    AfterValidator,
+    AwareDatetime,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    EmailStr,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 # ------------------------------------------------------------------ enums
 Language = Literal["hi", "en", "hinglish"]
@@ -31,29 +41,85 @@ IntegrationKind = Literal[
     "xpressbees",
     "shadowfax",
 ]
-Intent = Literal["order_status", "tracking", "other"]  # V0. V1 adds refund, cancel, exchange, address_change
+Intent = Literal[
+    "order_status", "tracking", "other"
+]  # V0. V1 adds refund, cancel, exchange, address_change
 Sentiment = Literal["normal", "angry"]
-ActionStatus = Literal["claimed", "shadow", "draft", "sent", "failed", "needs_review", "rejected", "suppressed"]
+ActionStatus = Literal[
+    "claimed", "shadow", "draft", "sent", "failed", "needs_review", "rejected", "suppressed"
+]
 HandoffStatus = Literal["open", "claimed", "resolved"]
 ToolName = Literal["order_lookup", "tracking_lookup", "handoff_to_human"]
 Decision = Literal["reply", "handoff", "skip"]
 
 REASON_CODES = (
-    "AGENT_PAUSED", "OPTED_OUT", "HUMAN_ACTIVE", "MEDIA_RECEIVED", "HUMAN_REQUESTED", "ANGRY", "SAFETY", "LEGAL",
-    "MEDICAL", "FRAUD", "PRESS", "POLICY_MISSING", "LLM_UNAVAILABLE", "LLM_AUTH_ERROR", "INVALID_LLM_OUTPUT", "LOW_CONFIDENCE",
-    "MIXED_INTENT", "REPEAT_COMPLAINT", "UNSUPPORTED_INTENT", "IDENTITY_FAILED", "TOOL_FAILED",
-    "REPLY_VALIDATION_FAILED", "WINDOW_CLOSED", "CUSTOMER_REPORT",
+    "AGENT_PAUSED",
+    "OPTED_OUT",
+    "HUMAN_ACTIVE",
+    "MEDIA_RECEIVED",
+    "HUMAN_REQUESTED",
+    "ANGRY",
+    "SAFETY",
+    "LEGAL",
+    "MEDICAL",
+    "FRAUD",
+    "PRESS",
+    "POLICY_MISSING",
+    "LLM_UNAVAILABLE",
+    "LLM_AUTH_ERROR",
+    "INVALID_LLM_OUTPUT",
+    "LOW_CONFIDENCE",
+    "MIXED_INTENT",
+    "REPEAT_COMPLAINT",
+    "UNSUPPORTED_INTENT",
+    "IDENTITY_FAILED",
+    "TOOL_FAILED",
+    "REPLY_VALIDATION_FAILED",
+    "WINDOW_CLOSED",
+    "CUSTOMER_REPORT",
 )
 ReasonCode = Literal[
-    "AGENT_PAUSED", "OPTED_OUT", "HUMAN_ACTIVE", "MEDIA_RECEIVED", "HUMAN_REQUESTED", "ANGRY", "SAFETY", "LEGAL",
-    "MEDICAL", "FRAUD", "PRESS", "POLICY_MISSING", "LLM_UNAVAILABLE", "LLM_AUTH_ERROR", "INVALID_LLM_OUTPUT", "LOW_CONFIDENCE",
-    "MIXED_INTENT", "REPEAT_COMPLAINT", "UNSUPPORTED_INTENT", "IDENTITY_FAILED", "TOOL_FAILED",
-    "REPLY_VALIDATION_FAILED", "WINDOW_CLOSED", "CUSTOMER_REPORT",
+    "AGENT_PAUSED",
+    "OPTED_OUT",
+    "HUMAN_ACTIVE",
+    "MEDIA_RECEIVED",
+    "HUMAN_REQUESTED",
+    "ANGRY",
+    "SAFETY",
+    "LEGAL",
+    "MEDICAL",
+    "FRAUD",
+    "PRESS",
+    "POLICY_MISSING",
+    "LLM_UNAVAILABLE",
+    "LLM_AUTH_ERROR",
+    "INVALID_LLM_OUTPUT",
+    "LOW_CONFIDENCE",
+    "MIXED_INTENT",
+    "REPEAT_COMPLAINT",
+    "UNSUPPORTED_INTENT",
+    "IDENTITY_FAILED",
+    "TOOL_FAILED",
+    "REPLY_VALIDATION_FAILED",
+    "WINDOW_CLOSED",
+    "CUSTOMER_REPORT",
 ]
-URGENT_REASONS = frozenset({"ANGRY", "SAFETY", "LEGAL", "MEDICAL", "FRAUD", "PRESS", "REPEAT_COMPLAINT"})
+URGENT_REASONS = frozenset(
+    {"ANGRY", "SAFETY", "LEGAL", "MEDICAL", "FRAUD", "PRESS", "REPEAT_COMPLAINT"}
+)
 TEMPLATE_IDS = (
-    "order_status", "tracking_status", "ask_order_ref", "order_not_found_reask", "tool_unavailable_ack", "handoff_ack",
-    "off_hours_ack", "media_ack", "human_requested_ack", "ai_disclosure_line", "ai_identity_answer", "opt_out_confirm",
+    "order_status",
+    "tracking_status",
+    "ask_order_ref",
+    "order_not_found_reask",
+    "tool_unavailable_ack",
+    "handoff_ack",
+    "off_hours_ack",
+    "media_ack",
+    "human_requested_ack",
+    "ai_disclosure_line",
+    "ai_identity_answer",
+    "opt_out_confirm",
 )
 V0_TOOLS = ("order_lookup", "tracking_lookup", "handoff_to_human")
 
@@ -67,6 +133,7 @@ def _clip(limit: int):
         if value is None:
             return None
         return (" ".join(str(value).split())[:limit]) or None
+
     return BeforeValidator(clip)
 
 
@@ -84,13 +151,16 @@ class ErrorBody(BaseModel):
 # ------------------------------------------------------------------ channel layer
 class NormalizedInbound(BaseModel):
     """channels/normalize.py output. Same shape for WhatsApp and Gmail."""
+
     model_config = ConfigDict(extra="forbid")
     channel: Channel
     external_id: str = Field(min_length=1, max_length=200)
     from_phone: str | None = None
     from_email: str | None = None
     text: str = Field(default="", max_length=20000)
-    media_type: Literal["image", "audio", "video", "document", "sticker", "location", "other"] | None = None
+    media_type: (
+        Literal["image", "audio", "video", "document", "sticker", "location", "other"] | None
+    ) = None
     email_headers: dict[str, str] = Field(default_factory=dict)
     email_subject: str | None = None
     email_thread_id: str | None = None
@@ -156,7 +226,11 @@ class Classification(BaseModel):
     @field_validator("mixed_intents", mode="before")
     @classmethod
     def _mixed(cls, v: Any) -> list[str]:
-        return [x for x in v if x in ("order_status", "tracking", "other")] if isinstance(v, list) else []
+        return (
+            [x for x in v if x in ("order_status", "tracking", "other")]
+            if isinstance(v, list)
+            else []
+        )
 
 
 # ------------------------------------------------------------------ tool facts (what tools return; the ONLY source of reply facts)
@@ -168,9 +242,9 @@ class OrderLine(BaseModel):
 
 class OrderFacts(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    order_name: str = Field(max_length=40)           # "#1001"
-    financial_status: str = Field(max_length=40)     # paid | pending | refunded ...
-    fulfillment_status: str = Field(max_length=40)   # unfulfilled | fulfilled | partial
+    order_name: str = Field(max_length=40)  # "#1001"
+    financial_status: str = Field(max_length=40)  # paid | pending | refunded ...
+    fulfillment_status: str = Field(max_length=40)  # unfulfilled | fulfilled | partial
     lines: list[OrderLine] = Field(max_length=50)
     total_paise: int = Field(ge=0)
     created_at: AwareDatetime
@@ -191,7 +265,10 @@ class ToolResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
     tool: ToolName
     ok: bool
-    error_code: Literal["not_found", "customer_mismatch", "upstream_error", "not_configured", "auth_error"] | None = None
+    error_code: (
+        Literal["not_found", "customer_mismatch", "upstream_error", "not_configured", "auth_error"]
+        | None
+    ) = None
     order: OrderFacts | None = None
     tracking: TrackingFacts | None = None
 
@@ -207,6 +284,7 @@ class ToolResult(BaseModel):
 # ------------------------------------------------------------------ agent state and decision
 class HandoffSummary(BaseModel):
     """FR-HO-01. Phone is masked, never raw."""
+
     model_config = ConfigDict(extra="forbid")
     customer_masked_phone: str | None = None
     order_ref: str | None = None
@@ -277,7 +355,9 @@ class OfficeHours(BaseModel):
     model_config = ConfigDict(extra="forbid")
     start: str = "09:00"
     end: str = "21:00"
-    days: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4, 5, 6], min_length=1, max_length=7)  # Mon=0
+    days: list[int] = Field(
+        default_factory=lambda: [0, 1, 2, 3, 4, 5, 6], min_length=1, max_length=7
+    )  # Mon=0
 
     @field_validator("start", "end")
     @classmethod
@@ -320,8 +400,10 @@ class PolicyV1(BaseModel):
     office_hours: OfficeHours = Field(default_factory=OfficeHours)
     return_window_days: int = Field(default=7, ge=1, le=60)
     final_sale_tags: list[str] = Field(default_factory=list, max_length=50)
-    refund_auto_limit_paise: int | None = Field(default=None, gt=0)           # None = auto refund OFF
-    refund_customer_daily_limit_paise: int | None = Field(default=None, gt=0)  # None = auto refund OFF
+    refund_auto_limit_paise: int | None = Field(default=None, gt=0)  # None = auto refund OFF
+    refund_customer_daily_limit_paise: int | None = Field(
+        default=None, gt=0
+    )  # None = auto refund OFF
     customer_daily_msg_cap: int = Field(default=30, ge=1, le=500)
     brand_daily_msg_cap: int = Field(default=2000, ge=1, le=100000)
     handoff_sla_minutes: int = Field(default=30, ge=5, le=1440)
@@ -351,7 +433,9 @@ class PolicyV1(BaseModel):
     def _refund_pair(self) -> "PolicyV1":
         a, b = self.refund_auto_limit_paise, self.refund_customer_daily_limit_paise
         if (a is None) != (b is None):
-            raise ValueError("set both refund limits or neither (auto refund stays OFF if either is missing)")
+            raise ValueError(
+                "set both refund limits or neither (auto refund stays OFF if either is missing)"
+            )
         if a is not None and b is not None and b < a:
             raise ValueError("customer daily limit cannot be below the per-refund limit")
         return self
@@ -562,12 +646,20 @@ class QuotaIn(Strict):
 class AlertOut(BaseModel):
     id: uuid.UUID
     tenant_id: uuid.UUID | None
+    tenant_name: str | None = None
     kind: str
-    severity: Literal["info", "warning", "critical"]
+    severity: Literal["info", "warning", "high", "critical"]
     message: str
-    status: Literal["open", "resolved"]
+    status: Literal["open", "acknowledged", "resolved"]
+    service: str = ""
+    affected_agent: str | None = None
+    error_id: str | None = None
+    root_cause: str | None = None
     created_at: AwareDatetime
+    acknowledged_at: AwareDatetime | None = None
+    resolution_notes: str | None = None
     resolved_at: AwareDatetime | None
+    resolution_minutes: float | None = None
 
 
 class AuditLogRowOut(BaseModel):
@@ -772,8 +864,89 @@ class HistoricalSeriesOut(BaseModel):
 
 
 class HistoricalOut(BaseModel):
-    range: Literal["24h", "7d", "30d"]
+    range: Literal["24h", "7d", "30d", "90d"]
     series: list[HistoricalSeriesOut]
+
+
+class AgentPerformanceRowOut(BaseModel):
+    """One (graph_version, task_category) bucket -- the closest thing this single-graph,
+    multi-category agent has to a named "agent": graph_version is the agent generation
+    (v0.1 info-only, v1.0 write-capable) and task_category is the capability it executed
+    (order_status, cancel, refund, handoff:angry, ...). See DECISIONS.md 2026-11-02 "Control
+    Tower: agent-wise performance" for why there is no separate agent-identity table."""
+
+    agent_key: str
+    graph_version: str
+    task_category: str
+    total_tasks: int
+    successful_tasks: int
+    failed_tasks: int
+    skipped_tasks: int
+    sent_replies: int
+    correct: int
+    incorrect: int
+    partially_correct: int
+    unverified: int
+    total_evaluated: int
+    accuracy_percent: float | None
+    task_success_percent: float
+    human_corrections: int
+    human_correction_percent: float
+    handoff_count: int
+    handoff_percent: float
+    avg_execution_ms: float | None
+    top_model: str | None
+    insufficient_data: bool
+    rank: int
+
+
+class AgentPerformanceOut(BaseModel):
+    rows: list[AgentPerformanceRowOut]
+    min_evaluated_for_ranking: int
+
+
+class ProviderErrorCategoryOut(BaseModel):
+    error_class: str
+    count: int
+
+
+class ClientProviderRowOut(BaseModel):
+    provider: str
+    total_calls: int
+    successful_calls: int
+    failed_calls: int
+    success_percent: float
+    avg_latency_ms: float | None
+    p95_latency_ms: int | None
+    health: Literal["healthy", "degraded", "failed", "unknown"]
+    last_success_at: AwareDatetime | None
+    last_failure_at: AwareDatetime | None
+    top_error_categories: list[ProviderErrorCategoryOut] = []
+
+
+class ClientMonitoringOut(BaseModel):
+    tenant_id: uuid.UUID
+    tenant_name: str
+    tenant_status: str
+    window: Literal["24h", "7d", "30d", "90d"]
+    runs_total: int
+    runs_done: int
+    runs_failed: int
+    runs_skipped: int
+    accuracy: AccuracyBucketOut
+    llm_calls_total: int
+    llm_calls_failed: int
+    llm_avg_latency_ms: float | None
+    llm_p95_latency_ms: int | None
+    llm_cost_micro: int
+    integration_calls_total: int
+    integration_calls_failed: int
+    integration_avg_latency_ms: float | None
+    integration_p95_latency_ms: int | None
+    by_provider: list[ClientProviderRowOut]
+    worst_agent_key: str | None
+    worst_agent_accuracy_percent: float | None
+    worst_provider: str | None
 
 
 class ThresholdOut(BaseModel):
@@ -811,11 +984,13 @@ class IntegrationOut(BaseModel):
     kind: IntegrationKind
     configured: bool
     status: Literal["ok", "auth_error", "disabled", "not_configured"]
-    config: dict[str, str]          # non-secret fields only
-    secret_hint: str | None         # "Set hai (...abcd)" never the secret
+    config: dict[str, str]  # non-secret fields only
+    secret_hint: str | None  # "Set hai (...abcd)" never the secret
     last_error_code: str | None
     last_checked_at: AwareDatetime | None
-    webhook_url: str | None = None  # gupshup only; shown once at creation / rotation (token is hashed in DB)
+    webhook_url: str | None = (
+        None  # gupshup only; shown once at creation / rotation (token is hashed in DB)
+    )
 
 
 class ProbeResultOut(BaseModel):
@@ -954,7 +1129,11 @@ class UsageOut(BaseModel):
 
 
 class PrivacyRequestIn(Strict):
-    subject_ref: str = Field(min_length=3, max_length=200, description="customer phone/email to export, delete or correct")
+    subject_ref: str = Field(
+        min_length=3,
+        max_length=200,
+        description="customer phone/email to export, delete or correct",
+    )
     kind: Literal["export", "delete", "correct"]
 
 
@@ -985,6 +1164,7 @@ class ReadyOut(BaseModel):
 # ------------------------------------------------------------------ webhook payloads (Gupshup inbound; fields we read)
 class GupshupInbound(BaseModel):
     """Gupshup v2 envelope (docs.gupshup.io/docs/inbound-messages). extra=ignore. Inner text/media shape: VERIFY in Stage S4."""
+
     model_config = ConfigDict(extra="ignore")
     app: str | None = None
     timestamp: int | None = None
@@ -1022,7 +1202,13 @@ ENDPOINTS: list[Endpoint] = [
     E("POST", "/auth/mfa/setup", "user", None, "MfaSetupOut"),
     E("POST", "/auth/mfa/confirm", "user", "CodeIn", "RecoveryCodesOut"),
     E("POST", "/auth/mfa/recovery-codes", "user", "CodeIn", "RecoveryCodesOut"),
-    E("POST", "/admin/auth/login", "public", "LoginIn", "LoginOut | MfaChallengeOut (ADMIN_JWT_SECRET)"),
+    E(
+        "POST",
+        "/admin/auth/login",
+        "public",
+        "LoginIn",
+        "LoginOut | MfaChallengeOut (ADMIN_JWT_SECRET)",
+    ),
     E("POST", "/admin/auth/mfa/verify", "public", "MfaVerifyIn", "LoginOut"),
     E("POST", "/admin/auth/refresh", "public", None, "LoginOut"),
     E("POST", "/admin/auth/logout", "public", None, "204"),
@@ -1072,7 +1258,13 @@ ENDPOINTS: list[Endpoint] = [
     E("GET", "/privacy/export", "owner", None, "file (JSON)"),
     E("GET", "/public/privacy-notice", "public", None, "PublicNoticeOut"),
     E("GET", "/public/terms", "public", None, "PublicNoticeOut"),
-    E("POST", "/webhooks/whatsapp/{token}", "secret", "GupshupInbound", "StatusOut (always 200 within 1s; token = tenant locator + credential)"),
+    E(
+        "POST",
+        "/webhooks/whatsapp/{token}",
+        "secret",
+        "GupshupInbound",
+        "StatusOut (always 200 within 1s; token = tenant locator + credential)",
+    ),
     E("GET", "/health", "public", None, "HealthOut"),
     E("GET", "/ready", "public", None, "ReadyOut (503 if RLS role unsafe)"),
 ]
