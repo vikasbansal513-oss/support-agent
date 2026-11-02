@@ -277,7 +277,10 @@ async def test_alert_agent_run_failure_spike_dedupe_and_autoresolve(
     assert again == 1
 
     # Once the failures age out of the 15-minute window, the alert auto-resolves.
-    async with session_scope(owner_factory, super_admin=True) as session:
+    # The UPDATE needs tenant_id set on the session too: agent_runs' RLS tenant_isolation
+    # policy applies to UPDATE/WRITE (not just SELECT), and super_admin_read only covers
+    # SELECT, so a pure super_admin-no-tenant session would silently UPDATE zero rows here.
+    async with session_scope(owner_factory, tenant_id=tid, super_admin=True) as session:
         await session.execute(
             text(
                 "UPDATE agent_runs SET started_at = now() - interval '1 hour' WHERE tenant_id = :t"
