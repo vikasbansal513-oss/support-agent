@@ -36,7 +36,6 @@ from app.billing.usage_schemas import (
     CostBreakdownOut,
     DatePreset,
     GcpUsageLineOut,
-    LedgerEventType,
     LlmUsageLineOut,
     MessageUsageOut,
     OtherServiceCostOut,
@@ -52,7 +51,6 @@ from app.billing.usage_schemas import (
     UsageLimitsOut,
     UsageLimitStatusesOut,
     UsageLimitStatusOut,
-    UsageMetric,
 )
 from app.core import timeutil
 from app.core.errors import AppError

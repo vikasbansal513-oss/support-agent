@@ -10,20 +10,6 @@ from app.auth.service import Principal
 from app.billing import calc, service
 from app.billing import usage as usage_service
 from app.billing.pdf import render_invoice_pdf
-from app.billing.usage_schemas import (
-    BillingExportSyncStatusOut,
-    ClientBillingOut,
-    ClientBillingSummaryOut,
-    DatePreset,
-    OverviewOut,
-    ReportType,
-    UsageLedgerFilterIn,
-    UsageLedgerOut,
-    UsageLimitIn,
-    UsageLimitOut,
-    UsageLimitsOut,
-    UsageLimitStatusesOut,
-)
 from app.billing.schemas import (
     BillingSettingsIn,
     BillingSettingsOut,
@@ -62,6 +48,20 @@ from app.billing.schemas import (
     SpeechUsageIn,
     SpeechUsageListOut,
     SpeechUsageOut,
+)
+from app.billing.usage_schemas import (
+    BillingExportSyncStatusOut,
+    ClientBillingOut,
+    ClientBillingSummaryOut,
+    DatePreset,
+    OverviewOut,
+    ReportType,
+    UsageLedgerFilterIn,
+    UsageLedgerOut,
+    UsageLimitIn,
+    UsageLimitOut,
+    UsageLimitsOut,
+    UsageLimitStatusesOut,
 )
 from app.core.db import get_session_factory, session_scope
 from app.core.errors import AppError
@@ -452,7 +452,7 @@ async def resolve_unallocated(
 # ---------------------------------------------------------------- A. Billing Overview
 @router.get("/overview")
 async def read_overview(
-    preset: DatePreset = Query(default="this_month"),
+    preset: DatePreset = Query(default="this_month"),  # noqa: B008
     start: date | None = None,
     end: date | None = None,
     admin: Principal = Depends(require_admin),  # noqa: B008
@@ -468,7 +468,7 @@ async def read_overview(
 # ---------------------------------------------------------------- B. Client-wise billing
 @router.get("/clients")
 async def list_clients(
-    preset: DatePreset = Query(default="this_month"),
+    preset: DatePreset = Query(default="this_month"),  # noqa: B008
     start: date | None = None,
     end: date | None = None,
     admin: Principal = Depends(require_admin),  # noqa: B008
@@ -481,7 +481,7 @@ async def list_clients(
 @router.get("/clients/{tenant_id}")
 async def read_client(
     tenant_id: uuid.UUID,
-    preset: DatePreset = Query(default="this_month"),
+    preset: DatePreset = Query(default="this_month"),  # noqa: B008
     start: date | None = None,
     end: date | None = None,
     admin: Principal = Depends(require_admin),  # noqa: B008
@@ -560,7 +560,7 @@ async def export_usage_ledger_csv(
 @router.get("/reports/{report_type}")
 async def read_report(
     report_type: ReportType,
-    preset: DatePreset = Query(default="this_month"),
+    preset: DatePreset = Query(default="this_month"),  # noqa: B008
     start: date | None = None,
     end: date | None = None,
     tenant_id: uuid.UUID | None = None,
@@ -575,7 +575,7 @@ async def read_report(
 @router.get("/reports/{report_type}/export.csv")
 async def export_report_csv(
     report_type: ReportType,
-    preset: DatePreset = Query(default="this_month"),
+    preset: DatePreset = Query(default="this_month"),  # noqa: B008
     start: date | None = None,
     end: date | None = None,
     tenant_id: uuid.UUID | None = None,
