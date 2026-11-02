@@ -26,11 +26,11 @@ async def test_status_question_answers_from_facts_without_any_action(env: AgentE
 async def test_auto_cancel_needs_customer_confirm_then_executes_once(env: AgentEnv) -> None:
     tools, shop = await setup(env, "auto")
     await say(env, "order #1001 cancel kar do", "c1", plan())
-    assert "cancel karna hai" in last_reply(env) and "Rs 400" in last_reply(env)
+    assert "cancel order" in last_reply(env) and "Rs 400" in last_reply(env)
     (pending,) = await actions(env, "order_cancel")
     assert pending.status == "awaiting_customer" and shop.calls == []
     await say(env, "haan", "c2")
-    assert "cancel ho gaya" in last_reply(env)
+    assert "has been cancelled" in last_reply(env)
     assert shop.orders["#1001"].cancelled is True and len(shop.calls) == 1
     (done,) = await actions(env, "order_cancel")
     assert done.status == "confirmed" and done.amount_paise == 40_000
@@ -52,14 +52,14 @@ async def test_approval_level_waits_for_owner_then_tells_customer(env: AgentEnv)
     out = await env.client.post(f"/approvals/{action.id}/approve", headers=env.wa.headers)
     assert out.json()["status"] == "confirmed"
     assert shop.orders["#1001"].cancelled is True
-    assert "cancel ho gaya" in last_reply(env)
+    assert "has been cancelled" in last_reply(env)
 
 
 async def test_customer_says_no_nothing_happens(env: AgentEnv) -> None:
     _, shop = await setup(env)
     await say(env, "order #1001 cancel kar do", "n1", plan())
     await say(env, "nahi rehne do", "n2")
-    assert "koi badlav nahi" in last_reply(env)
+    assert "no changes have been made" in last_reply(env)
     (action,) = await actions(env, "order_cancel")
     assert action.status == "rejected" and shop.calls == []
 
@@ -68,7 +68,7 @@ async def test_two_unclear_answers_hand_off(env: AgentEnv) -> None:
     _, shop = await setup(env)
     await say(env, "order #1001 cancel kar do", "u1", plan())
     await say(env, "pata nahi kya karun", "u2")
-    assert "haan" in last_reply(env)
+    assert "'yes' or 'no'" in last_reply(env)
     await say(env, "hmm kal batata hoon", "u3")
     handoffs = await env.q("SELECT reason_code FROM handoffs")
     assert [h.reason_code for h in handoffs] == ["CONFIRM_UNCLEAR"]
@@ -125,7 +125,7 @@ async def test_address_change_asks_then_proposes(env: AgentEnv) -> None:
     await say(env, "12 MG Road Pune Maharashtra 411001", "d2", llm)
     assert "411001" in last_reply(env)
     await say(env, "yes", "d3")
-    assert "update ho gaya" in last_reply(env)
+    assert "has been updated" in last_reply(env)
     assert shop.orders["#1001"].address_pin == "411001"
 
 
@@ -149,7 +149,7 @@ async def test_confirm_after_expiry_is_not_executed(env: AgentEnv) -> None:
             {"t": timeutil.utc_now() - timedelta(minutes=1)},
         )
     await say(env, "haan", "x2")
-    assert "samay nikal gaya" in last_reply(env) and shop.calls == []
+    assert "has expired" in last_reply(env) and shop.calls == []
 
 
 async def test_order_changed_between_propose_and_confirm_stops(env: AgentEnv) -> None:
@@ -195,6 +195,6 @@ async def test_upkeep_resumes_an_approved_action_left_behind(env: AgentEnv) -> N
         )
     out = await ops.write_upkeep(ctx(env, "write_upkeep"))
     assert out["resumed"] == 1 and shop.orders["#1001"].cancelled is True
-    assert "cancel ho gaya" in last_reply(env)
+    assert "has been cancelled" in last_reply(env)
     again = await ops.write_upkeep(ctx(env, "write_upkeep"))
     assert again["resumed"] == 0 and len(shop.calls) == 1

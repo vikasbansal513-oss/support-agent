@@ -43,12 +43,12 @@ async def test_cancel_by_voice_needs_a_clear_yes_and_then_executes_once(env: Age
     voice = await configure(env)
     await voice.start()
     asked = await voice.say("order 1001 cancel kar do", plan())
-    assert "bolein" in asked["say"] and "400 rupaye" in asked["say"]
+    assert "cancel order" in asked["say"] and "400 rupaye" in asked["say"]
     assert shop.calls == []
     blurry = await voice.say("haan", confidence=0.5)
     assert "haan ya nahi" in blurry["say"] and shop.calls == []
     done = await voice.say("haan", confidence=0.93)
-    assert "cancel ho gaya" in done["say"] and done["action"] == "continue"
+    assert "has been cancelled" in done["say"] and done["action"] == "continue"
     assert shop.orders["#1001"].cancelled is True and len(shop.calls) == 1
 
 
@@ -58,7 +58,7 @@ async def test_no_cancels_nothing(env: AgentEnv) -> None:
     await voice.start()
     await voice.say("order 1001 cancel kar do", plan())
     out = await voice.say("nahi", confidence=0.9)
-    assert "koi badlav nahi" in out["say"] and shop.calls == []
+    assert "no changes have been made" in out["say"] and shop.calls == []
 
 
 async def test_refund_on_a_call_always_waits_for_a_human_even_at_auto(env: AgentEnv) -> None:
