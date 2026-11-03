@@ -444,3 +444,32 @@ td.num,th.num{text-align:right;white-space:nowrap}
   .invoice{border:0;padding:0;margin:0;max-width:none}
   .invoice-draft{outline:0}
 }
+
+/* Admin dashboard theme -- additive only. Nothing here redefines an
+   existing selector, so Dashboard, Conversations, Handoffs, Billing
+   (client), Policy, Autonomy, Voice, Integrations, Security etc. are
+   visually unaffected. */
+.admin-badge{background:#eee5ff;color:#5a22db;border-radius:99px;padding:2px 9px;font-size:10px;font-weight:800;letter-spacing:.3px;margin-left:9px;vertical-align:1px}
+.stat-trend{font-size:11px;font-weight:700;margin-top:4px}
+.stat-trend.up{color:#078d43}.stat-trend.down{color:#d22b31}
+.key-field{position:relative}
+.key-field input{padding-right:42px}
+.key-field .key-toggle{position:absolute;right:5px;top:5px;height:32px;width:32px;display:grid;place-items:center;border:0;background:transparent;box-shadow:none;color:#657894;padding:0}
+.key-field .key-toggle:hover{color:#1c3558;background:#f2f5f9;border-radius:7px}
+.brand-detail-head{display:flex;align-items:center;gap:15px;flex-wrap:wrap;margin-bottom:4px}
+.brand-detail-who{flex:1;min-width:170px}
+.brand-detail-who b{font-size:20px;letter-spacing:-.3px;display:block}
+.brand-detail-who span{font-size:12px;color:#657894}
+.brand-detail-head .initial{width:52px;height:52px;font-size:18px}
+.admin-recent-activity li{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #e8edf4;font-size:12px;color:#354c6e}
+.admin-recent-activity li:last-child{border-bottom:0}
+.admin-recent-activity b{flex:1;font-weight:600;color:#1f3555}
+.admin-recent-activity small{color:#8392a8;white-space:nowrap}
+
+/* BillingIntel.tsx (Admin -> Billing -> Usage Intelligence) already renders
+   StatCard + Chip + card markup correctly, it was just missing these three
+   class definitions, so the grids/captions were showing unstyled. Additive
+   only -- .stats already exists for Overview/Brands/Billing above. */
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:17px}
+.muted{font-size:12px;color:#657894;margin:8px 0 0}
+.intel-panel{margin-top:4px}

@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import type { WriteTool, Health, Level, GlobalState, Job, LlmProvider, LlmSettings, LlmTestResult, LlmUsageRow, Mode, Overview, Page, Tenant } from "../api/types";
+import type { AuditLogRow, WriteTool, Health, Level, GlobalState, Job, LlmProvider, LlmSettings, LlmTestResult, LlmUsageRow, Mode, Overview, Page, Tenant } from "../api/types";
 import { Async, Chip, Empty, Field, ReasonDialog, Screen, StatCard } from "../components/common";
+import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
 import { formatIst } from "../format";
@@ -13,57 +14,103 @@ type Pending = { tenant: Tenant; kind: "approve" | "pause" | "resume" | "mode" |
 export function AdminOverview() {
   const [overview, reload] = useApi(() => api.get<Overview>("/admin/overview"));
   const [health, reloadHealth] = useApi(() => api.get<Health>("/admin/health"));
+  const [recent, reloadRecent] = useApi(() => api.get<Page<AuditLogRow>>("/admin/audit-log?limit=6"));
   const maxCalls = (rows: { calls: number }[]) => Math.max(1, ...rows.map((r) => r.calls));
+
   return (
     <Screen title={t.overviewTitle}>
       <Async value={overview} reload={reload}>
-        {(o) => (
-          <>
-            <div className="grid">
-              <StatCard label={t.totalBrands} value={o.tenants_total} />
-              <StatCard label={t.activeBrands} value={o.tenants_active} tone="ok" />
-              <StatCard label={t.pendingBrands} value={o.tenants_pending} tone={o.tenants_pending > 0 ? "warn" : undefined} />
-              <StatCard label={t.pausedBrands} value={o.tenants_paused} />
-              <StatCard label={t.openHandoffs} value={o.handoffs_open} tone={o.handoffs_open > 0 ? "warn" : undefined} />
-              <StatCard label={t.failedJobs} value={o.jobs_failed} tone={o.jobs_failed > 0 ? "warn" : undefined} />
-              <StatCard label={t.todayCalls} value={o.today_calls} />
-              <StatCard label={t.todayCost} value={`₹${(o.today_cost_micro / 1_000_000).toFixed(2)}`} />
+        {(o) => {
+          const days = o.calls_by_day;
+          const todayN = days.length > 0 ? days[days.length - 1].calls : null;
+          const yesterdayN = days.length > 1 ? days[days.length - 2].calls : null;
+          const trend =
+            todayN !== null && yesterdayN !== null && yesterdayN > 0
+              ? {
+                  direction: (todayN >= yesterdayN ? "up" : "down") as "up" | "down",
+                  text: `${Math.round((Math.abs(todayN - yesterdayN) / yesterdayN) * 100)}% ${t.todayCallsTrend}`,
+                }
+              : undefined;
+          return (
+            <>
+              <div className="stats">
+                <StatCard label={t.totalBrands} value={o.tenants_total} icon="users" />
+                <StatCard label={t.activeBrands} value={o.tenants_active} tone="ok" icon="check-circle" />
+                <StatCard label={t.pendingBrands} value={o.tenants_pending} tone={o.tenants_pending > 0 ? "warn" : undefined} icon="clock" />
+                <StatCard label={t.pausedBrands} value={o.tenants_paused} icon="pause" />
+                <StatCard label={t.openHandoffs} value={o.handoffs_open} tone={o.handoffs_open > 0 ? "warn" : undefined} icon="arrows" />
+                <StatCard label={t.failedJobs} value={o.jobs_failed} tone={o.jobs_failed > 0 ? "warn" : undefined} icon="info" />
+                <StatCard label={t.todayCalls} value={o.today_calls} icon="phone" trend={trend} />
+                <StatCard label={t.todayCost} value={`₹${(o.today_cost_micro / 1_000_000).toFixed(2)}`} icon="file" />
+              </div>
+              <section className="card pad">
+                <div className="card-head">
+                  <h2 className="card-title">{t.callsLast7Days}</h2>
+                </div>
+                {days.length === 0 ? (
+                  <Empty>{t.noRows}</Empty>
+                ) : (
+                  <>
+                    <div className="activity-chart">
+                      {days.map((d) => (
+                        <div key={d.day} style={{ height: `${Math.max(4, (140 * d.calls) / maxCalls(days))}px` }} title={`${d.calls}`} />
+                      ))}
+                    </div>
+                    <div className="chart-labels">
+                      {days.map((d) => (
+                        <span key={d.day}>{d.day.slice(5)}</span>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </section>
+            </>
+          );
+        }}
+      </Async>
+
+      <section className="card pad">
+        <h2 className="card-title">{t.systemHealthTitle}</h2>
+        <Async value={health} reload={reloadHealth}>
+          {(h) => (
+            <div className="stats ct-stats">
+              <StatCard label={t.healthDb} value={h.db === "ok" ? "OK" : "Down"} tone={h.db === "ok" ? "ok" : "warn"} icon="check-circle" />
+              <StatCard
+                label={t.healthWorker}
+                value={h.worker_seconds_since === null ? t.healthWorkerNeverSeen : `${h.worker_seconds_since}s`}
+                tone={h.worker_seconds_since === null || h.worker_seconds_since > 180 ? "warn" : "ok"}
+                icon="settings"
+              />
+              <StatCard label={t.healthQueueDepth} value={h.queue_depth} tone={h.queue_depth > 0 ? "warn" : "ok"} icon="clock" />
+              <StatCard label={t.healthFailedToday} value={h.jobs_failed_today} tone={h.jobs_failed_today > 0 ? "warn" : "ok"} icon="info" />
             </div>
-            <h2>{t.callsLast7Days}</h2>
-            {o.calls_by_day.length === 0 ? (
+          )}
+        </Async>
+      </section>
+
+      <section className="card pad">
+        <h2 className="card-title">{t.recentActivityTitle}</h2>
+        <Async value={recent} reload={reloadRecent}>
+          {(page) =>
+            page.items.length === 0 ? (
               <Empty>{t.noRows}</Empty>
             ) : (
-              <div className="row" style={{ alignItems: "flex-end", gap: 8 }}>
-                {o.calls_by_day.map((d) => (
-                  <div key={d.day} style={{ textAlign: "center" }}>
-                    <div style={{ height: 100 * (d.calls / maxCalls(o.calls_by_day)), width: 24, background: "currentColor", opacity: 0.6 }} />
-                    <small>{d.day.slice(5)}</small>
-                    <br />
-                    <small>{d.calls}</small>
-                  </div>
+              <ul className="admin-recent-activity list">
+                {page.items.map((r) => (
+                  <li key={r.id}>
+                    <Icon name="info" className="sm" />
+                    <b>
+                      {r.action}
+                      {r.entity_type ? ` · ${r.entity_type}` : ""}
+                    </b>
+                    <small>{formatIst(r.occurred_at)}</small>
+                  </li>
                 ))}
-              </div>
-            )}
-          </>
-        )}
-      </Async>
-      <h2>{t.systemHealthTitle}</h2>
-      <Async value={health} reload={reloadHealth}>
-        {(h) => (
-          <div className="row">
-            <Chip tone={h.db === "ok" ? "ok" : "urgent"}>{t.healthDb}: {h.db}</Chip>
-            {h.worker_seconds_since === null ? (
-              <Chip tone="urgent">{t.healthWorker}: {t.healthWorkerNeverSeen}</Chip>
-            ) : (
-              <Chip tone={h.worker_seconds_since > 180 ? "urgent" : "ok"}>
-                {t.healthWorker}: {h.worker_seconds_since} {t.healthWorkerSecondsAgo}
-              </Chip>
-            )}
-            <Chip tone={h.queue_depth > 0 ? "warn" : "ok"}>{t.healthQueueDepth}: {h.queue_depth}</Chip>
-            <Chip tone={h.jobs_failed_today > 0 ? "urgent" : "ok"}>{t.healthFailedToday}: {h.jobs_failed_today}</Chip>
-          </div>
-        )}
-      </Async>
+              </ul>
+            )
+          }
+        </Async>
+      </section>
     </Screen>
   );
 }
@@ -72,6 +119,7 @@ export function AdminTenants() {
   const toast = useToast();
   const [q, setQ] = useState("");
   const [applied, setApplied] = useState("");
+  const [overview] = useApi(() => api.get<Overview>("/admin/overview"));
   const [list, reload] = useApi(
     () => api.get<Page<Tenant>>(`/admin/tenants${applied ? `?q=${encodeURIComponent(applied)}` : ""}`),
     [applied],
@@ -96,18 +144,31 @@ export function AdminTenants() {
     }
   };
 
+  const initials = (name: string) => {
+    const parts = name.trim().split(/\s+/);
+    return (parts[0]?.[0] ?? "").concat(parts.length > 1 ? parts[parts.length - 1]?.[0] ?? "" : "").toUpperCase() || "?";
+  };
+
   return (
     <Screen title={t.tenantsTitle}>
+      {overview.state === "data" && (
+        <div className="stats">
+          <StatCard label={t.totalBrands} value={overview.data.tenants_total} icon="users" />
+          <StatCard label={t.activeBrands} value={overview.data.tenants_active} tone="ok" icon="check-circle" />
+          <StatCard label={t.pendingBrands} value={overview.data.tenants_pending} tone={overview.data.tenants_pending > 0 ? "warn" : undefined} icon="clock" />
+          <StatCard label={t.pausedBrands} value={overview.data.tenants_paused} icon="pause" />
+        </div>
+      )}
       <form className="row" onSubmit={(event) => { event.preventDefault(); setApplied(q.trim()); }}>
-        <input aria-label={t.searchBrands} placeholder={t.searchBrands} value={q} onChange={(event) => setQ(event.target.value)} />
-        <button type="submit" className="secondary">{t.searchBrands}</button>
+        <input className="search" aria-label={t.searchBrands} placeholder={t.searchBrands} value={q} onChange={(event) => setQ(event.target.value)} />
+        <button type="submit" className="btn">{t.searchBrands}</button>
       </form>
       <Async value={list} reload={reload}>
         {(page) =>
           page.items.length === 0 ? (
             <Empty>{t.noRows}</Empty>
           ) : (
-            <div className="table-wrap">
+            <div className="card table-wrap" style={{ padding: 0 }}>
               <table>
                 <thead>
                   <tr>
@@ -122,9 +183,13 @@ export function AdminTenants() {
                   {page.items.map((tenant) => (
                     <tr key={tenant.id}>
                       <td>
-                        <Link to={`/admin/tenants/${tenant.id}`}>{tenant.name}</Link>
-                        <br />
-                        <small>{tenant.slug}</small>
+                        <div className="customer">
+                          <span className="initial small">{initials(tenant.name)}</span>
+                          <div>
+                            <Link to={`/admin/tenants/${tenant.id}`}>{tenant.name}</Link>
+                            <span className="subline">{tenant.slug}</span>
+                          </div>
+                        </div>
                       </td>
                       <td>
                         <Chip tone={tenant.status === "active" ? "ok" : "warn"}>{tenant.status}</Chip>
@@ -188,7 +253,7 @@ export function AdminTenants() {
                           )}
                           {tenant.status === "active" && (
                             <button type="button" className="secondary" onClick={() => setPending({ tenant, kind: "pause" })}>
-                              {t.pauseTenant}
+                              <Icon name="pause" className="sm" /> {t.pauseTenant}
                             </button>
                           )}
                           {tenant.status === "paused" && (
@@ -230,11 +295,16 @@ function GlobalPauseButton() {
           }
         };
         return (
-          <section className="card">
-            <h2>{t.globalPauseTitle}</h2>
-            <p>{paused ? t.globalIsPaused : t.globalIsRunning}</p>
+          <section className="card pad">
+            <div className="card-head">
+              <div>
+                <h2 className="card-title">{t.globalPauseTitle}</h2>
+                <p className="card-sub">{paused ? t.globalIsPaused : t.globalIsRunning}</p>
+              </div>
+              <Chip tone={paused ? "urgent" : "ok"}>{paused ? t.paused : t.agentOnline}</Chip>
+            </div>
             <button type="button" className={paused ? undefined : "danger"} onClick={() => setAsking(true)}>
-              {paused ? t.globalResume : t.globalPause}
+              <Icon name="pause" className="sm" /> {paused ? t.globalResume : t.globalPause}
             </button>
             {asking && <ReasonDialog title={paused ? t.globalResume : t.globalPause} onConfirm={(reason) => void confirm(reason)} onCancel={() => setAsking(false)} />}
           </section>
@@ -247,80 +317,99 @@ function GlobalPauseButton() {
 export function AdminOps() {
   const [jobs, reloadJobs] = useApi(() => api.get<Page<Job>>("/admin/jobs"));
   const [usage, reloadUsage] = useApi(() => api.get<LlmUsageRow[]>("/admin/llm-usage"));
+  const [jobSearch, setJobSearch] = useState("");
+
   return (
     <Screen title={t.opsTitle}>
-      <GlobalPauseButton />
-      <LlmSettingsPanel />
-      <h2>{t.jobs}</h2>
-      <Async value={jobs} reload={reloadJobs}>
-        {(page) =>
-          page.items.length === 0 ? (
-            <Empty>{t.noRows}</Empty>
-          ) : (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Kind</th>
-                    <th>Status</th>
-                    <th>Attempts</th>
-                    <th>Error</th>
-                    <th>Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {page.items.map((j) => (
-                    <tr key={j.id}>
-                      <td>{j.kind}</td>
-                      <td>
-                        <Chip tone={j.status === "needs_review" || j.status === "failed" ? "urgent" : undefined}>{j.status}</Chip>
-                      </td>
-                      <td>{j.attempts}</td>
-                      <td>{j.error_code ?? "-"} {j.error_id ?? ""}</td>
-                      <td>{formatIst(j.created_at)}</td>
+      <div className="grid-2">
+        <GlobalPauseButton />
+        <LlmSettingsPanel />
+      </div>
+      <section className="card pad">
+        <div className="card-head">
+          <h2 className="card-title">{t.jobs}</h2>
+          <div className="filter-right" style={{ marginLeft: 0 }}>
+            <input className="search" placeholder={t.searchJobs} value={jobSearch} onChange={(event) => setJobSearch(event.target.value)} />
+            <button type="button" className="btn small" onClick={() => reloadJobs()}>
+              <Icon name="refresh" className="sm" /> {t.refreshJobs}
+            </button>
+          </div>
+        </div>
+        <Async value={jobs} reload={reloadJobs}>
+          {(page) => {
+            const items = page.items.filter((j) =>
+              jobSearch.trim() === "" ? true : (j.kind + " " + j.status).toLowerCase().includes(jobSearch.trim().toLowerCase()),
+            );
+            return items.length === 0 ? (
+              <Empty>{t.noRows}</Empty>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Kind</th>
+                      <th>Status</th>
+                      <th>Attempts</th>
+                      <th>Error</th>
+                      <th>Time</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )
-        }
-      </Async>
-      <h2>{t.llmUsage}</h2>
-      <Async value={usage} reload={reloadUsage}>
-        {(rows) =>
-          rows.length === 0 ? (
-            <Empty>{t.noRows}</Empty>
-          ) : (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Din</th>
-                    <th>Calls</th>
-                    <th>In</th>
-                    <th>Out</th>
-                    <th>Cost (micro)</th>
-                    <th>p95 ms</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => (
-                    <tr key={`${r.tenant_id}-${r.day}`}>
-                      <td>{r.day}</td>
-                      <td>{r.calls}</td>
-                      <td>{r.input_tokens}</td>
-                      <td>{r.output_tokens}</td>
-                      <td>{r.est_cost_micro ?? "-"}</td>
-                      <td>{r.p95_latency_ms ?? "-"}</td>
+                  </thead>
+                  <tbody>
+                    {items.map((j) => (
+                      <tr key={j.id}>
+                        <td>{j.kind}</td>
+                        <td>
+                          <Chip tone={j.status === "needs_review" || j.status === "failed" ? "urgent" : j.status === "done" ? "ok" : undefined}>{j.status}</Chip>
+                        </td>
+                        <td>{j.attempts}</td>
+                        <td>{j.error_code ?? "-"} {j.error_id ?? ""}</td>
+                        <td>{formatIst(j.created_at)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          }}
+        </Async>
+      </section>
+      <section className="card pad">
+        <h2 className="card-title">{t.llmUsage}</h2>
+        <Async value={usage} reload={reloadUsage}>
+          {(rows) =>
+            rows.length === 0 ? (
+              <Empty>{t.noRows}</Empty>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Din</th>
+                      <th>Calls</th>
+                      <th>In</th>
+                      <th>Out</th>
+                      <th>Cost (micro)</th>
+                      <th>p95 ms</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )
-        }
-      </Async>
+                  </thead>
+                  <tbody>
+                    {rows.map((r) => (
+                      <tr key={`${r.tenant_id}-${r.day}`}>
+                        <td>{r.day}</td>
+                        <td>{r.calls}</td>
+                        <td>{r.input_tokens}</td>
+                        <td>{r.output_tokens}</td>
+                        <td>{r.est_cost_micro ?? "-"}</td>
+                        <td>{r.p95_latency_ms ?? "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          }
+        </Async>
+      </section>
     </Screen>
   );
 }
@@ -348,6 +437,7 @@ function LlmSettingsForm({ current, onSaved }: { current: LlmSettings; onSaved: 
   const [model, setModel] = useState(current.model);
   const [baseUrl, setBaseUrl] = useState(current.base_url);
   const [apiKey, setApiKey] = useState("");
+  const [showKey, setShowKey] = useState(false);
   const [asking, setAsking] = useState(false);
   const [testResult, setTestResult] = useState<LlmTestResult | null>(null);
 
@@ -381,8 +471,10 @@ function LlmSettingsForm({ current, onSaved }: { current: LlmSettings; onSaved: 
   };
 
   return (
-    <section className="card">
-      <h2>{t.llmSettingsTitle}</h2>
+    <section className="card pad">
+      <div className="card-head">
+        <h2 className="card-title">{t.llmSettingsTitle}</h2>
+      </div>
       <p>
         <Chip tone={current.source === "dashboard" ? "ok" : undefined}>{current.source === "dashboard" ? t.llmSourceDashboard : t.llmSourceDeploy}</Chip>{" "}
         <Chip tone={current.has_key ? "ok" : "warn"}>{current.has_key ? t.llmKeySet : t.llmKeyMissing}</Chip>
@@ -399,7 +491,21 @@ function LlmSettingsForm({ current, onSaved }: { current: LlmSettings; onSaved: 
       </label>
       <Field label={t.llmModel} value={model} onChange={setModel} />
       <Field label={t.llmBaseUrl} value={baseUrl} onChange={setBaseUrl} placeholder="https://api.example.com/v1" />
-      <Field label={t.llmApiKey} value={apiKey} onChange={setApiKey} type="password" autoComplete="off" placeholder={t.llmKeyKeep} />
+      <label className="field key-field">
+        <span className="field-label">{t.llmApiKey}</span>
+        <input
+          className="input"
+          type={showKey ? "text" : "password"}
+          value={apiKey}
+          autoComplete="off"
+          placeholder={t.llmKeyKeep}
+          aria-label={t.llmApiKey}
+          onChange={(event) => setApiKey(event.target.value)}
+        />
+        <button type="button" className="key-toggle" aria-label={showKey ? t.hidePassword : t.showPassword} onClick={() => setShowKey((v) => !v)}>
+          <Icon name={showKey ? "eye-off" : "eye"} className="sm" />
+        </button>
+      </label>
       <div className="row">
         <button type="button" className="secondary" onClick={() => void runTest()} disabled={model.trim() === ""}>
           {t.llmTest}

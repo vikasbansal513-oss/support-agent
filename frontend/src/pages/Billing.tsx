@@ -38,7 +38,8 @@ import {
   stateName,
   tokens,
 } from "../billing";
-import { Async, Chip, Empty, Field, Screen } from "../components/common";
+import { Async, Chip, Empty, Field, Screen, StatCard } from "../components/common";
+import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
 import { formatPaise, rupeesToPaise } from "../format";
@@ -89,7 +90,9 @@ export function AdminBilling() {
             }}
           />
         </label>
-        <Link to="/admin/billing/settings">{t.billSettingsLink}</Link>
+        <Link to="/admin/billing/settings" className="btn">
+          <Icon name="settings" className="sm" /> {t.billSettingsLink}
+        </Link>
       </div>
       <div className="tabs" role="tablist">
         <button type="button" role="tab" className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>
@@ -217,27 +220,17 @@ function PeriodView({ data, reload, tab }: { data: BillingPeriod; reload: () => 
     return (
       <>
         {banners}
-        <div className="grid">
-          <div className="stat">
-            <span className="stat-value">{formatPaise(cloudTotal)}</span>
-            <span className="stat-label">{t.billKpiCloud}</span>
-          </div>
-          <div className="stat">
-            <span className="stat-value">{formatPaise(llmTotal)}</span>
-            <span className="stat-label">{t.billKpiLlm}</span>
-          </div>
-          <div className="stat">
-            <span className="stat-value">{formatPaise(telTotal)}</span>
-            <span className="stat-label">{t.billKpiTelephony}</span>
-          </div>
-          <div className="stat">
-            <span className="stat-value">{formatPaise(feeTotal)}</span>
-            <span className="stat-label">{t.billKpiFee}</span>
-          </div>
+        <div className="stats">
+          <StatCard label={t.billKpiCloud} value={formatPaise(cloudTotal)} icon="file" />
+          <StatCard label={t.billKpiLlm} value={formatPaise(llmTotal)} icon="bot" />
+          <StatCard label={t.billKpiTelephony} value={formatPaise(telTotal)} icon="phone" />
+          <StatCard label={t.billKpiFee} value={formatPaise(feeTotal)} icon="info" />
         </div>
-        <section className="card">
-          <h2>{t.billBreakdownTitle}</h2>
-          <p className="empty" style={{ margin: "0 0 .5rem" }}>
+        <section className="card pad">
+          <div className="card-head">
+            <h2 className="card-title">{t.billBreakdownTitle}</h2>
+          </div>
+          <p className="card-sub" style={{ margin: "0 0 .8rem" }}>
             {t.billBreakdownSub}
           </p>
           <div className="breakrow">
@@ -273,8 +266,10 @@ function PeriodView({ data, reload, tab }: { data: BillingPeriod; reload: () => 
             <span className="empty">{pct(feeTotal)}%</span>
           </div>
         </section>
-        <section className="card">
-          <h2>{t.billPeriodSettings}</h2>
+        <section className="card pad">
+          <div className="card-head">
+            <h2 className="card-title">{t.billPeriodSettings}</h2>
+          </div>
           <Field label={t.billUsdInr} value={fx} onChange={setFx} placeholder="88" />
           <Field label={t.billCloudActual} value={actual} onChange={setActual} placeholder="0.00" />
           <small>{t.billCloudActualHint}</small>
@@ -289,9 +284,11 @@ function PeriodView({ data, reload, tab }: { data: BillingPeriod; reload: () => 
             </button>
           </div>
         </section>
-        <section className="card">
-          <h2>{t.billClientWiseTitle}</h2>
-          <p className="empty" style={{ margin: "0 0 .5rem" }}>
+        <section className="card pad">
+          <div className="card-head">
+            <h2 className="card-title">{t.billClientWiseTitle}</h2>
+          </div>
+          <p className="card-sub" style={{ margin: "0 0 .8rem" }}>
             {t.billClientWiseSub}
           </p>
           {data.rows.length === 0 ? (
@@ -371,35 +368,39 @@ function PeriodView({ data, reload, tab }: { data: BillingPeriod; reload: () => 
       <>
         {banners}
         <p className="banner">{t.billPaymentNote}</p>
-        <section className="card">
-          <h2>{t.billInvoicesTitle}</h2>
-          <p className="empty" style={{ margin: "0 0 .5rem" }}>
+        <section className="card pad">
+          <div className="card-head">
+            <h2 className="card-title">{t.billInvoicesTitle}</h2>
+          </div>
+          <p className="card-sub" style={{ margin: "0 0 .8rem" }}>
             {t.billInvoicesSub}
           </p>
-          <div className="subtabs">
-            <button type="button" className={invoiceFilter === "all" ? "active" : ""} onClick={() => setInvoiceFilter("all")}>
+          <div className="filters">
+            <button type="button" className={invoiceFilter === "all" ? "filter-tab active" : "filter-tab"} onClick={() => setInvoiceFilter("all")}>
               {t.billInvoiceFilterAll} ({withInvoice.length})
             </button>
-            <button type="button" className={invoiceFilter === "draft" ? "active" : ""} onClick={() => setInvoiceFilter("draft")}>
+            <button type="button" className={invoiceFilter === "draft" ? "filter-tab active" : "filter-tab"} onClick={() => setInvoiceFilter("draft")}>
               {t.billInvoiceFilterDraft} ({countOf("draft")})
             </button>
-            <button type="button" className={invoiceFilter === "paid" ? "active" : ""} onClick={() => setInvoiceFilter("paid")}>
+            <button type="button" className={invoiceFilter === "paid" ? "filter-tab active" : "filter-tab"} onClick={() => setInvoiceFilter("paid")}>
               {t.billInvoiceFilterPaid} ({countOf("paid")})
             </button>
-            <button type="button" className={invoiceFilter === "unpaid" ? "active" : ""} onClick={() => setInvoiceFilter("unpaid")}>
+            <button type="button" className={invoiceFilter === "unpaid" ? "filter-tab active" : "filter-tab"} onClick={() => setInvoiceFilter("unpaid")}>
               {t.billInvoiceFilterUnpaid} ({countOf("unpaid")})
             </button>
-            <button type="button" className={invoiceFilter === "overdue" ? "active" : ""} onClick={() => setInvoiceFilter("overdue")}>
+            <button type="button" className={invoiceFilter === "overdue" ? "filter-tab active" : "filter-tab"} onClick={() => setInvoiceFilter("overdue")}>
               {t.billInvoiceFilterOverdue} ({countOf("overdue")})
             </button>
-            <button type="button" className={invoiceFilter === "partially_paid" ? "active" : ""} onClick={() => setInvoiceFilter("partially_paid")}>
+            <button type="button" className={invoiceFilter === "partially_paid" ? "filter-tab active" : "filter-tab"} onClick={() => setInvoiceFilter("partially_paid")}>
               {t.billInvoiceFilterPartial} ({countOf("partially_paid")})
             </button>
-            <button type="button" className={invoiceFilter === "cancelled" ? "active" : ""} onClick={() => setInvoiceFilter("cancelled")}>
+            <button type="button" className={invoiceFilter === "cancelled" ? "filter-tab active" : "filter-tab"} onClick={() => setInvoiceFilter("cancelled")}>
               {t.billInvoiceFilterCancelled} ({countOf("cancelled")})
             </button>
+            <div className="filter-right">
+              <input className="search" aria-label={t.billSearchPlaceholder} placeholder={t.billSearchPlaceholder} value={search} onChange={(event) => setSearch(event.target.value)} />
+            </div>
           </div>
-          <input className="field" aria-label={t.billSearchPlaceholder} placeholder={t.billSearchPlaceholder} value={search} onChange={(event) => setSearch(event.target.value)} style={{ marginBottom: "1rem" }} />
           {filtered.length === 0 ? (
             <Empty>{t.noRows}</Empty>
           ) : (
@@ -468,9 +469,11 @@ function PeriodView({ data, reload, tab }: { data: BillingPeriod; reload: () => 
   return (
     <>
       {banners}
-      <section className="card">
-        <h2>{t.billUsageTitle}</h2>
-        <p className="empty" style={{ margin: "0 0 .5rem" }}>
+      <section className="card pad">
+        <div className="card-head">
+          <h2 className="card-title">{t.billUsageTitle}</h2>
+        </div>
+        <p className="card-sub" style={{ margin: "0 0 .8rem" }}>
           {t.billUsageSub}
         </p>
         {data.rows.length === 0 ? (
@@ -2015,7 +2018,7 @@ function InvoiceView({ invoice, reload }: { invoice: Invoice; reload: () => void
 
       {asking && (
         <div className="dialog no-print" role="dialog" aria-modal="true" aria-label={t.billFinalize}>
-          <div className="dialog-box">
+          <div className="card">
             <h2>{t.billFinalize}</h2>
             <p>{t.billFinalizeAsk}</p>
             <div className="row">
@@ -2031,7 +2034,7 @@ function InvoiceView({ invoice, reload }: { invoice: Invoice; reload: () => void
       )}
       {cancelling && (
         <div className="dialog no-print" role="dialog" aria-modal="true" aria-label={t.billCancelInvoice}>
-          <div className="dialog-box">
+          <div className="card">
             <h2>{t.billCancelInvoice}</h2>
             <Field label={t.billCancelReason} value={cancelReason} onChange={setCancelReason} />
             <div className="row">

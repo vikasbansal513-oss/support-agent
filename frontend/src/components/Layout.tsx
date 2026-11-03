@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { api } from "../api/client";
-import type { AgentStatus } from "../api/types";
+import type { AgentStatus, Alert, Page } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { t } from "../i18n";
 import { sendPerfBeacon } from "../lib/webVitals";
@@ -45,6 +45,13 @@ export function Layout() {
     () => (realm === "admin" ? Promise.resolve(null) : api.get<AgentStatus>("/agent/status")),
     [realm],
   );
+  // Admin-only: open-alert count for the bell badge. Not fetched for the brand
+  // realm, so client dashboard behaviour/requests are unchanged.
+  const [openAlerts] = useApi(
+    () => (realm === "admin" ? api.get<Page<Alert>>("/admin/alerts?status=open") : Promise.resolve(null)),
+    [realm],
+  );
+  const openAlertCount = openAlerts.state === "data" && openAlerts.data ? openAlerts.data.items.length : 0;
 
   // Client page-load metrics only (Control Tower's "client page performance"
   // section) — admin's own pages aren't a tenant's page-load experience.
@@ -93,6 +100,7 @@ export function Layout() {
             <Icon name="bot" />
           </span>
           {t.appName}
+          {realm === "admin" && <span className="admin-badge">Admin</span>}
         </div>
         <div className="top-spacer" />
         {status.state === "data" && status.data && (
@@ -106,6 +114,7 @@ export function Layout() {
         )}
         <div className="notification" title={t.notificationsLabel}>
           <Icon name="bell" />
+          {realm === "admin" && openAlertCount > 0 && <span className="notif-count">{openAlertCount}</span>}
         </div>
         <div className="top-divider" />
         <div className="account">

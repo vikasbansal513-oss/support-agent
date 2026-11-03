@@ -40,11 +40,13 @@ export function StatCard({
   value,
   tone,
   icon = "info",
+  trend,
 }: {
   label: string;
   value: ReactNode;
   tone?: "warn" | "ok";
   icon?: string;
+  trend?: { direction: "up" | "down"; text: string };
 }) {
   return (
     <div className="stat-card">
@@ -54,6 +56,7 @@ export function StatCard({
       <div>
         <div className="stat-number">{value}</div>
         <div className="stat-label">{label}</div>
+        {trend && <div className={`stat-trend ${trend.direction}`}>{trend.direction === "up" ? "↑" : "↓"} {trend.text}</div>}
       </div>
     </div>
   );

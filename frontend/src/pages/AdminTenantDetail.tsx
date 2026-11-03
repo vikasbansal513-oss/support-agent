@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
-import type { Quota, Tenant, TenantStats, VoiceSettings } from "../api/types";
-import { Async, Chip, Field, Screen, StatCard } from "../components/common";
+import type { Mode, Quota, Tenant, TenantStats, VoiceSettings } from "../api/types";
+import { Async, Chip, Field, ReasonDialog, Screen, StatCard } from "../components/common";
+import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
 import { formatIst } from "../format";
-import { t } from "../i18n";
+import { t, type Key } from "../i18n";
 
 function VoiceSection({ tenantId }: { tenantId: string }) {
   const [settings, reload] = useApi(
@@ -67,7 +68,7 @@ function VoiceForm({
   };
 
   return (
-    <section className="card">
+    <section className="card pad">
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -129,6 +130,86 @@ function VoiceForm({
   );
 }
 
+type Tab = "overview" | "quota" | "voice" | "advanced";
+
+function AdvancedTab({ tenant, reloadTenant }: { tenant: Tenant; reloadTenant: () => void }) {
+  const toast = useToast();
+  const [mode, setMode] = useState<Mode>(tenant.mode);
+  const [limitText, setLimitText] = useState(tenant.usage_override_limit === null ? "" : String(tenant.usage_override_limit));
+  const [confirming, setConfirming] = useState<null | { kind: "mode" | "limit" | "pause" | "resume" }>(null);
+  const [busy, setBusy] = useState(false);
+
+  const run = async (reason: string) => {
+    if (!confirming) return;
+    setBusy(true);
+    try {
+      if (confirming.kind === "mode") await api.put(`/admin/tenants/${tenant.id}/mode`, { mode, reason });
+      else if (confirming.kind === "limit")
+        await api.put(`/admin/tenants/${tenant.id}/usage-limit`, { usage_override_limit: limitText.trim() === "" ? null : Number(limitText), reason });
+      else await api.post(`/admin/tenants/${tenant.id}/${confirming.kind}`, { reason });
+      setConfirming(null);
+      reloadTenant();
+      toast.info(t.saved);
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <section className="card pad">
+        <h2 className="card-title">{t.advancedModeTitle}</h2>
+        <label className="field">
+          <span>{t.modeLabel}</span>
+          <select aria-label={t.modeLabel} value={mode} onChange={(event) => setMode(event.target.value as Mode)}>
+            {(["shadow", "draft", "auto"] as Mode[]).map((m) => (
+              <option key={m} value={m}>
+                {t[`mode_${m}` as Key]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="row">
+          <button type="button" disabled={busy || mode === tenant.mode} onClick={() => setConfirming({ kind: "mode" })}>
+            {t.save}
+          </button>
+          {tenant.status === "active" && (
+            <button type="button" className="secondary" disabled={busy} onClick={() => setConfirming({ kind: "pause" })}>
+              <Icon name="pause" className="sm" /> {t.pauseTenant}
+            </button>
+          )}
+          {tenant.status === "paused" && (
+            <button type="button" disabled={busy} onClick={() => setConfirming({ kind: "resume" })}>
+              {t.resumeTenant}
+            </button>
+          )}
+        </div>
+      </section>
+      <section className="card pad">
+        <h2 className="card-title">{t.advancedUsageLimitTitle}</h2>
+        <label className="field">
+          <span>{t.usageLimit}</span>
+          <input
+            aria-label={t.usageLimit}
+            inputMode="numeric"
+            placeholder={String(tenant.included_conversations)}
+            value={limitText}
+            onChange={(event) => setLimitText(event.target.value)}
+          />
+        </label>
+        <button type="button" disabled={busy} onClick={() => setConfirming({ kind: "limit" })}>
+          {t.save}
+        </button>
+      </section>
+      {confirming && (
+        <ReasonDialog title={`${tenant.name}: ${confirming.kind}`} onConfirm={(reason) => void run(reason)} onCancel={() => setConfirming(null)} />
+      )}
+    </>
+  );
+}
+
 export function AdminTenantDetail() {
   const { id = "" } = useParams();
   const toast = useToast();
@@ -138,6 +219,7 @@ export function AdminTenantDetail() {
   const [limitText, setLimitText] = useState("");
   const [warnText, setWarnText] = useState("");
   const [saving, setSaving] = useState(false);
+  const [tab, setTab] = useState<Tab>("overview");
 
   const saveQuota = async () => {
     setSaving(true);
@@ -158,69 +240,102 @@ export function AdminTenantDetail() {
     }
   };
 
+  const initials = (name: string) => {
+    const parts = name.trim().split(/\s+/);
+    return (parts[0]?.[0] ?? "").concat(parts.length > 1 ? parts[parts.length - 1]?.[0] ?? "" : "").toUpperCase() || "?";
+  };
+
   return (
     <Screen title={t.brandDetailTitle}>
       <p><Link to="/admin/tenants">{t.backToBrands}</Link></p>
       <Async value={tenant} reload={reloadTenant}>
         {(tn) => (
-          <section className="card">
-            <h2>{tn.name}</h2>
-            <p>
-              <Chip tone={tn.status === "active" ? "ok" : "warn"}>{tn.status}</Chip>{" "}
-              <Chip>{t.modeLabel}: {tn.mode}</Chip>
-            </p>
-          </section>
-        )}
-      </Async>
-      <Async value={stats} reload={reloadStats}>
-        {(s) => (
-          <div className="grid">
-            <StatCard label={t.messagesToday} value={s.messages_today} />
-            <StatCard label={t.monthlyCost} value={`₹${(s.monthly_cost_micro / 1_000_000).toFixed(2)}`} />
-            <StatCard label={t.lastActivity} value={s.last_activity_at ? formatIst(s.last_activity_at) : "-"} />
-          </div>
-        )}
-      </Async>
-      <h2>{t.quotaTitle}</h2>
-      <Async value={quota} reload={reloadQuota}>
-        {(q) => (
-          <section className="card">
-            <div className="grid">
-              <StatCard label={t.callsThisMonth} value={q.calls_this_month} />
-              <StatCard
-                label={t.usagePercent}
-                value={q.usage_percent === null ? t.noLimit : `${q.usage_percent.toFixed(1)}%`}
-                tone={q.usage_percent !== null && q.usage_percent >= 100 ? "warn" : undefined}
-              />
+          <>
+            <section className="card pad brand-detail-head">
+              <span className="initial">{initials(tn.name)}</span>
+              <div className="brand-detail-who">
+                <b>{tn.name}</b>
+                <span>{tn.slug}</span>
+              </div>
+              <Chip tone={tn.status === "active" ? "ok" : "warn"}>{tn.status}</Chip>
+              <Chip>{t.modeLabel}: {t[`mode_${tn.mode}` as Key]}</Chip>
+              {tn.agent_paused && <Chip tone="urgent">{t.paused}</Chip>}
+            </section>
+
+            <div className="tabs">
+              <button type="button" className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>
+                {t.tabOverview}
+              </button>
+              <button type="button" className={tab === "quota" ? "active" : ""} onClick={() => setTab("quota")}>
+                {t.tabQuota}
+              </button>
+              <button type="button" className={tab === "voice" ? "active" : ""} onClick={() => setTab("voice")}>
+                {t.tabCallSettings}
+              </button>
+              <button type="button" className={tab === "advanced" ? "active" : ""} onClick={() => setTab("advanced")}>
+                {t.tabAdvanced}
+              </button>
             </div>
-            <label className="field">
-              <span>{t.monthlyLimit}</span>
-              <input
-                aria-label={t.monthlyLimit}
-                inputMode="numeric"
-                placeholder={q.monthly_call_limit === null ? t.noLimit : String(q.monthly_call_limit)}
-                value={limitText}
-                onChange={(event) => setLimitText(event.target.value)}
-              />
-            </label>
-            <label className="field">
-              <span>{t.warnPercent}</span>
-              <input
-                aria-label={t.warnPercent}
-                inputMode="numeric"
-                placeholder={String(q.warn_percent)}
-                value={warnText}
-                onChange={(event) => setWarnText(event.target.value)}
-              />
-            </label>
-            <button type="button" disabled={saving} onClick={() => void saveQuota()}>
-              {t.saveQuota}
-            </button>
-          </section>
+
+            {tab === "overview" && (
+              <Async value={stats} reload={reloadStats}>
+                {(s) => (
+                  <div className="stats">
+                    <StatCard label={t.messagesToday} value={s.messages_today} icon="chat" />
+                    <StatCard label={t.monthlyCost} value={`₹${(s.monthly_cost_micro / 1_000_000).toFixed(2)}`} icon="file" />
+                    <StatCard label={t.lastActivity} value={s.last_activity_at ? formatIst(s.last_activity_at) : "-"} icon="clock" />
+                  </div>
+                )}
+              </Async>
+            )}
+
+            {tab === "quota" && (
+              <Async value={quota} reload={reloadQuota}>
+                {(q) => (
+                  <section className="card pad">
+                    <div className="stats">
+                      <StatCard label={t.callsThisMonth} value={q.calls_this_month} icon="phone" />
+                      <StatCard
+                        label={t.usagePercent}
+                        value={q.usage_percent === null ? t.noLimit : `${q.usage_percent.toFixed(1)}%`}
+                        tone={q.usage_percent !== null && q.usage_percent >= 100 ? "warn" : undefined}
+                        icon="info"
+                      />
+                    </div>
+                    <label className="field">
+                      <span>{t.monthlyLimit}</span>
+                      <input
+                        aria-label={t.monthlyLimit}
+                        inputMode="numeric"
+                        placeholder={q.monthly_call_limit === null ? t.noLimit : String(q.monthly_call_limit)}
+                        value={limitText}
+                        onChange={(event) => setLimitText(event.target.value)}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>{t.warnPercent}</span>
+                      <input
+                        aria-label={t.warnPercent}
+                        inputMode="numeric"
+                        placeholder={String(q.warn_percent)}
+                        value={warnText}
+                        onChange={(event) => setWarnText(event.target.value)}
+                      />
+                    </label>
+                    <button type="button" disabled={saving} onClick={() => void saveQuota()}>
+                      {t.saveQuota}
+                    </button>
+                  </section>
+                )}
+              </Async>
+            )}
+
+            {tab === "voice" && <VoiceSection tenantId={id} />}
+
+            {tab === "advanced" && <AdvancedTab tenant={tn} reloadTenant={reloadTenant} />}
+          </>
         )}
       </Async>
-      <h2>{t.voiceCallingTitle}</h2>
-      <VoiceSection tenantId={id} />
     </Screen>
   );
 }

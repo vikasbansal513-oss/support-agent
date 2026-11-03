@@ -751,7 +751,7 @@ export function BillingIntel() {
   const [tab, setTab] = useState<IntelTab>("overview");
   return (
     <div className="intel-panel">
-      <div className="tabs" role="tablist">
+      <div className="filters" role="tablist">
         {(
           [
             ["overview", t.intelTabOverview],
@@ -761,7 +761,7 @@ export function BillingIntel() {
             ["alerts", t.intelTabAlerts],
           ] as [IntelTab, string][]
         ).map(([key, label]) => (
-          <button key={key} type="button" role="tab" className={tab === key ? "active" : ""} onClick={() => setTab(key)}>
+          <button key={key} type="button" role="tab" className={tab === key ? "filter-tab active" : "filter-tab"} onClick={() => setTab(key)}>
             {label}
           </button>
         ))}

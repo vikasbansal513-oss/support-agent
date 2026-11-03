@@ -317,14 +317,34 @@ function TaskHistorySection() {
                   </tbody>
                 </table>
               </div>
-              <div className="row">
-                <button type="button" className="secondary" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-                  ‹
-                </button>
-                <span>{page}</span>
-                <button type="button" className="secondary" disabled={page * pageSize >= list.total} onClick={() => setPage((p) => p + 1)}>
-                  ›
-                </button>
+              <div className="pagination">
+                <span>
+                  {t.monitorShowing} {Math.min((page - 1) * pageSize + 1, list.total)}-{Math.min(page * pageSize, list.total)} {t.monitorOf} {list.total}
+                </span>
+                <div>
+                  <button type="button" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+                    {t.prevPage}
+                  </button>
+                  {Array.from({ length: Math.max(1, Math.ceil(list.total / pageSize)) }, (_, i) => i + 1)
+                    .filter((n) => n === 1 || n === Math.ceil(list.total / pageSize) || Math.abs(n - page) <= 2)
+                    .reduce<number[]>((acc, n) => {
+                      if (acc.length > 0 && n - acc[acc.length - 1] > 1) acc.push(-1);
+                      acc.push(n);
+                      return acc;
+                    }, [])
+                    .map((n, i) =>
+                      n === -1 ? (
+                        <span key={`gap-${i}`}>...</span>
+                      ) : (
+                        <button key={n} type="button" className={n === page ? "current" : undefined} onClick={() => setPage(n)}>
+                          {n}
+                        </button>
+                      ),
+                    )}
+                  <button type="button" disabled={page * pageSize >= list.total} onClick={() => setPage((p) => p + 1)}>
+                    {t.nextPage}
+                  </button>
+                </div>
               </div>
             </>
           )
