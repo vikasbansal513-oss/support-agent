@@ -891,9 +891,6 @@ export const t = {
   resetFilters: "Reset",
   searchAlertsPlaceholder: "Search alerts by keyword...",
   acknowledge: "Acknowledge",
-  severityCritical: "Critical",
-  severityWarning: "Warning",
-  severityInfo: "Info",
   statusResolvedLabel: "Resolved",
   advancedModeTitle: "Mode & autonomy",
   advancedUsageLimitTitle: "Usage limit override",
@@ -902,5 +899,6 @@ export const t = {
   monitorShowing: "Showing",
   monitorOf: "of",
 } as const;
+
 
 export type Key = keyof typeof t;

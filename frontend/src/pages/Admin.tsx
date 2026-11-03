@@ -22,8 +22,8 @@ export function AdminOverview() {
       <Async value={overview} reload={reload}>
         {(o) => {
           const days = o.calls_by_day;
-          const todayN = days.length > 0 ? days[days.length - 1].calls : null;
-          const yesterdayN = days.length > 1 ? days[days.length - 2].calls : null;
+          const todayN = days.length > 0 ? (days[days.length - 1]?.calls ?? null) : null;
+          const yesterdayN = days.length > 1 ? (days[days.length - 2]?.calls ?? null) : null;
           const trend =
             todayN !== null && yesterdayN !== null && yesterdayN > 0
               ? {

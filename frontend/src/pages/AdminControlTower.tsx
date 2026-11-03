@@ -328,7 +328,8 @@ function TaskHistorySection() {
                   {Array.from({ length: Math.max(1, Math.ceil(list.total / pageSize)) }, (_, i) => i + 1)
                     .filter((n) => n === 1 || n === Math.ceil(list.total / pageSize) || Math.abs(n - page) <= 2)
                     .reduce<number[]>((acc, n) => {
-                      if (acc.length > 0 && n - acc[acc.length - 1] > 1) acc.push(-1);
+                      const last = acc[acc.length - 1];
+                      if (last !== undefined && n - last > 1) acc.push(-1);
                       acc.push(n);
                       return acc;
                     }, [])

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api, downloadFile } from "../api/client";
 import type { AuditLogRow, Page } from "../api/types";
-import { Async, Chip, Empty, Screen } from "../components/common";
+import { Async, Empty, Screen } from "../components/common";
 import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
@@ -16,7 +16,7 @@ function actionTone(action: string): string {
   const key = action.split(".")[0] ?? action;
   let hash = 0;
   for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
-  return ACTION_TONES[hash % ACTION_TONES.length];
+  return ACTION_TONES[hash % ACTION_TONES.length] ?? "gray";
 }
 
 function rangeToSinceUntil(range: RangeKey): { since?: string; until?: string } {
