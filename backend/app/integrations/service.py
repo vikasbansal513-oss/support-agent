@@ -362,6 +362,10 @@ async def check_now_gmail(factory: Factory, principal: Principal) -> GmailCheckN
     # Isi request me turant chala do (whatsapp webhook ka wahi drain_now pattern, worker.py
     # ka drain_queue reuse). Fail/race ho jaye to bhi job queue me hi reh jaata hai — agla
     # scheduled tick use normal tareeke se process kar dega, fallback nahi tootta.
+    # idempotency_key hamesha fresh uuid4 hai, isliye enqueue() yahan kabhi None nahi
+    # deta — guard sirf queue.enqueue() ke general UUID | None return type ke liye (mypy).
+    if job_id is None:
+        return GmailCheckNowOut(queued=True, job_id=None)
     from app.worker import drain_queue
 
     done = await drain_queue(factory, job_id, "inline:gmail_check_now")
