@@ -386,6 +386,17 @@ async def check_now_gmail(factory: Factory, principal: Principal) -> GmailCheckN
             .scalars()
             .all()
         )
+    if pending:
+        # API service ka process real agent pipeline by default install nahi karta (sirf
+        # worker.py ka main() karta hai). Bina runner ke process_inbound sirf mail ingest
+        # karke job "done" kar deta hai, agent reply (Review me dikhne wala) banta hi nahi.
+        # Webhooks/whatsapp.py ka _drain_now yahi pattern use karta hai; installed ho to
+        # override nahi karte.
+        from app.agent import runner as agent_runner
+        from app.jobs import handlers as job_handlers
+
+        if not job_handlers.inbound_runner_installed():
+            agent_runner.install()
     for pending_id in pending:
         await drain_queue(factory, pending_id, "inline:gmail_check_now")
     return GmailCheckNowOut(queued=True, job_id=job_id, already_running=not done)
