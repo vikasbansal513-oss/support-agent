@@ -11,6 +11,7 @@ from app.auth.deps import require_owner, require_user
 from app.auth.service import Principal
 from app.contracts.contracts import (
     CourierIn,
+    GmailCheckNowOut,
     GupshupIn,
     IntegrationKind,
     IntegrationOut,
@@ -146,6 +147,14 @@ async def put_courier(
         factory, tenant_id=principal.tenant_id, user_id=principal.user_id
     ) as s:
         return await service.put_courier(s, principal, kind, parsed)
+
+
+@router.post("/gmail/check-now")
+async def gmail_check_now(
+    principal: Principal = Depends(require_owner),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> GmailCheckNowOut:
+    return await service.check_now_gmail(factory, principal)
 
 
 @router.post("/{kind}/test")

@@ -999,6 +999,12 @@ class ProbeResultOut(BaseModel):
     error_code: str | None = None
 
 
+class GmailCheckNowOut(BaseModel):
+    queued: bool
+    job_id: uuid.UUID | None = None
+    already_running: bool = False
+
+
 class NotificationSettings(Strict):
     notify_email_enabled: bool
     notify_email: EmailStr | None = None

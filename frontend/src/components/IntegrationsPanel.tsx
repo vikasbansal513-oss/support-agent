@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../api/client";
-import type { GmailConnect, Integration, IntegrationKind, ProbeResult } from "../api/types";
+import type { GmailCheckNow, GmailConnect, Integration, IntegrationKind, ProbeResult } from "../api/types";
 import { t } from "../i18n";
 import { Chip, Field, useSubmit } from "./common";
 import { useToast } from "./Toast";
@@ -98,6 +98,12 @@ function IntegrationCard({ kind, item, onChange }: { kind: IntegrationKind; item
     onChange();
   }, toast.error);
 
+  const checkNowGmail = useSubmit(async () => {
+    const out = await api.post<GmailCheckNow>("/integrations/gmail/check-now");
+    toast.info(out.already_running ? t.gmailCheckNowAlreadyToast : t.gmailCheckNowQueuedToast);
+    onChange();
+  }, toast.error);
+
   const editable = kind !== "gmail";
   const configured = item?.configured ?? false;
   return (
@@ -188,6 +194,11 @@ function IntegrationCard({ kind, item, onChange }: { kind: IntegrationKind; item
               {kind === "gmail" && configured && (
                 <button type="button" className="secondary small" disabled={disconnectGmail.busy} onClick={() => void disconnectGmail.run()}>
                   {t.gmailDisconnect}
+                </button>
+              )}
+              {kind === "gmail" && configured && (
+                <button type="button" className="small" disabled={checkNowGmail.busy} onClick={() => void checkNowGmail.run()}>
+                  {t.gmailCheckNow}
                 </button>
               )}
               {configured && (

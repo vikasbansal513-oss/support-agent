@@ -164,6 +164,12 @@ export interface ProbeResult {
   error_code: string | null;
 }
 
+export interface GmailCheckNow {
+  queued: boolean;
+  job_id: string | null;
+  already_running: boolean;
+}
+
 export interface OfficeHours {
   start: string;
   end: string;
