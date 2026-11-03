@@ -19,6 +19,7 @@ import type {
   Traffic,
 } from "../api/types";
 import { Async, Chip, Empty, Screen, StatCard } from "../components/common";
+import { Icon } from "../components/Icons";
 import { useApi } from "../components/useApi";
 import { type Key, t } from "../i18n";
 
@@ -105,7 +106,9 @@ function Sparkline({ series }: { series: HistoricalSeries }) {
 function SystemHealth({ c }: { c: ControlTower }) {
   return (
     <section className="card pad ct-card">
-      <h2>{t.systemHealthTitle}</h2>
+      <div className="card-head">
+        <h2 className="card-title">{t.systemHealthTitle}</h2>
+      </div>
       <div className="row">
         <Chip tone={c.health.status === "ok" ? "ok" : "urgent"}>
           {t.healthDb}: {c.health.db}
@@ -118,15 +121,17 @@ function SystemHealth({ c }: { c: ControlTower }) {
         </Chip>
       </div>
       <div className="stats ct-stats">
-        <StatCard label={t.errorRateTitle} value={`${c.error_rate_percent}%`} tone={c.error_rate_percent > 5 ? "warn" : "ok"} />
-        <StatCard label={t.skippedRunsTitle} value={c.skipped_count} />
-        <StatCard label={t.p95LatencyTitle} value={c.p95_latency_ms === null ? "-" : `${c.p95_latency_ms} ms`} />
-        <StatCard label={t.failedTodayTitle} value={c.failed_jobs_today} tone={c.failed_jobs_today > c.failed_jobs_avg_7d ? "warn" : "ok"} />
-        <StatCard label={t.failedAvg7dTitle} value={c.failed_jobs_avg_7d.toFixed(1)} />
-        <StatCard label={t.needsReviewTodayTitle} value={c.needs_review_jobs_today} tone={c.needs_review_jobs_today > c.needs_review_jobs_avg_7d ? "warn" : "ok"} />
-        <StatCard label={t.needsReviewAvg7dTitle} value={c.needs_review_jobs_avg_7d.toFixed(1)} />
+        <StatCard label={t.errorRateTitle} value={`${c.error_rate_percent}%`} tone={c.error_rate_percent > 5 ? "warn" : "ok"} icon="shield" />
+        <StatCard label={t.skippedRunsTitle} value={c.skipped_count} icon="pause" />
+        <StatCard label={t.p95LatencyTitle} value={c.p95_latency_ms === null ? "-" : `${c.p95_latency_ms} ms`} icon="clock" />
+        <StatCard label={t.failedTodayTitle} value={c.failed_jobs_today} tone={c.failed_jobs_today > c.failed_jobs_avg_7d ? "warn" : "ok"} icon="info" />
+        <StatCard label={t.failedAvg7dTitle} value={c.failed_jobs_avg_7d.toFixed(1)} icon="arrows" />
+        <StatCard label={t.needsReviewTodayTitle} value={c.needs_review_jobs_today} tone={c.needs_review_jobs_today > c.needs_review_jobs_avg_7d ? "warn" : "ok"} icon="bell" />
+        <StatCard label={t.needsReviewAvg7dTitle} value={c.needs_review_jobs_avg_7d.toFixed(1)} icon="arrows" />
       </div>
-      <h2>{t.topTenantsTitle}</h2>
+      <div className="card-head">
+        <h2 className="card-title">{t.topTenantsTitle}</h2>
+      </div>
       {c.top_tenants.length === 0 ? (
         <Empty>{t.noRows}</Empty>
       ) : (
@@ -165,7 +170,7 @@ function AccuracySection() {
   return (
     <section className="card pad ct-card">
       <div className="card-head">
-        <h2>{t.monitorAccuracySection}</h2>
+        <h2 className="card-title">{t.monitorAccuracySection}</h2>
         <label className="field">
           <span>{t.monitorAccuracyWindow}</span>
           <select value={window_} onChange={(e) => setWindow(e.target.value as typeof window_)}>
@@ -180,11 +185,11 @@ function AccuracySection() {
         {(a) => (
           <>
             <div className="stats ct-stats">
-              <StatCard label={t.monitorAccuracyPercent} value={`${a.overall.accuracy_percent}%`} tone={a.overall.accuracy_percent < 80 ? "warn" : "ok"} />
-              <StatCard label={t.monitorTaskSuccessPercent} value={`${a.overall.task_success_percent}%`} />
-              <StatCard label={t.monitorHumanCorrectionPercent} value={`${a.overall.human_correction_percent}%`} />
-              <StatCard label={t.monitorHandoffPercent} value={`${a.overall.handoff_percent}%`} />
-              <StatCard label={t.monitorEvaluatedCount} value={a.overall.total_evaluated} />
+              <StatCard label={t.monitorAccuracyPercent} value={`${a.overall.accuracy_percent}%`} tone={a.overall.accuracy_percent < 80 ? "warn" : "ok"} icon="target" />
+              <StatCard label={t.monitorTaskSuccessPercent} value={`${a.overall.task_success_percent}%`} icon="check-square" />
+              <StatCard label={t.monitorHumanCorrectionPercent} value={`${a.overall.human_correction_percent}%`} icon="user" />
+              <StatCard label={t.monitorHandoffPercent} value={`${a.overall.handoff_percent}%`} icon="arrows" />
+              <StatCard label={t.monitorEvaluatedCount} value={a.overall.total_evaluated} icon="file" />
             </div>
             <p className="card-sub">{t.monitorAccuracyUnverifiedNote}</p>
             {a.by_tenant.length > 0 && (
@@ -242,7 +247,9 @@ function TaskHistorySection() {
 
   return (
     <section className="card pad ct-card">
-      <h2>{t.monitorTaskHistorySection}</h2>
+      <div className="card-head">
+        <h2 className="card-title">{t.monitorTaskHistorySection}</h2>
+      </div>
       <div className="row">
         <label className="field">
           <span>{t.monitorFilterStatus}</span>
@@ -432,7 +439,9 @@ function PagePerfSection() {
   const [data, reload] = useApi(() => api.get<PagePerf>("/admin/monitoring/page-performance"));
   return (
     <section className="card pad ct-card">
-      <h2>{t.monitorPagePerfSection}</h2>
+      <div className="card-head">
+        <h2 className="card-title">{t.monitorPagePerfSection}</h2>
+      </div>
       <Async value={data} reload={reload}>
         {(p) =>
           p.rows.length === 0 ? (
@@ -499,30 +508,36 @@ function TrafficSection() {
   const [data, reload] = useApi(() => api.get<Traffic>("/admin/monitoring/traffic"));
   return (
     <section className="card pad ct-card">
-      <h2>{t.monitorTrafficSection}</h2>
+      <div className="card-head">
+        <h2 className="card-title">{t.monitorTrafficSection}</h2>
+      </div>
       <Async value={data} reload={reload}>
         {(tr) => (
           <>
             <div className="stats ct-stats">
-              <StatCard label={t.monitorTotalClients} value={tr.total_clients} />
-              <StatCard label={t.monitorActiveClients} value={tr.active_clients} />
-              <StatCard label={t.monitorActiveUsers} value={tr.active_users_5m} />
-              <StatCard label={t.monitorRunningJobs} value={tr.running_jobs} />
-              <StatCard label={t.monitorQueueDepthStat} value={tr.queue_depth} tone={tr.queue_depth > 0 ? "warn" : "ok"} />
-              <StatCard label={t.monitorDbConnections} value={tr.db_connections} />
-              <StatCard label={t.monitorProcessMemory} value={`${tr.process_rss_mb.toFixed(0)} MB`} />
+              <StatCard label={t.monitorTotalClients} value={tr.total_clients} icon="users" />
+              <StatCard label={t.monitorActiveClients} value={tr.active_clients} tone="ok" icon="check-circle" />
+              <StatCard label={t.monitorActiveUsers} value={tr.active_users_5m} tone="purple" icon="user" />
+              <StatCard label={t.monitorRunningJobs} value={tr.running_jobs} icon="bot" />
+              <StatCard label={t.monitorQueueDepthStat} value={tr.queue_depth} tone={tr.queue_depth > 0 ? "warn" : "ok"} icon="package" />
+              <StatCard label={t.monitorDbConnections} value={tr.db_connections} icon="database" />
+              <StatCard label={t.monitorProcessMemory} value={`${tr.process_rss_mb.toFixed(0)} MB`} icon="cpu" />
             </div>
-            <h3>{t.monitorApiPerfSection}</h3>
+            <div className="card-head">
+              <h3 className="card-title">{t.monitorApiPerfSection}</h3>
+            </div>
             <div className="stats ct-stats">
-              <StatCard label={t.monitorCallsPerMinute} value={tr.integration_calls_per_minute.toFixed(1)} />
-              <StatCard label={t.monitorAvgLatency} value={tr.avg_integration_latency_ms === null ? "-" : fmtMs(tr.avg_integration_latency_ms)} />
-              <StatCard label={t.monitorP95Latency} value={tr.p95_integration_latency_ms === null ? "-" : fmtMs(tr.p95_integration_latency_ms)} />
-              <StatCard label={t.monitorErrorRatePercent} value={`${tr.integration_error_rate_percent}%`} tone={tr.integration_error_rate_percent > 5 ? "warn" : "ok"} />
+              <StatCard label={t.monitorCallsPerMinute} value={tr.integration_calls_per_minute.toFixed(1)} icon="activity" />
+              <StatCard label={t.monitorAvgLatency} value={tr.avg_integration_latency_ms === null ? "-" : fmtMs(tr.avg_integration_latency_ms)} icon="clock" />
+              <StatCard label={t.monitorP95Latency} value={tr.p95_integration_latency_ms === null ? "-" : fmtMs(tr.p95_integration_latency_ms)} icon="clock" />
+              <StatCard label={t.monitorErrorRatePercent} value={`${tr.integration_error_rate_percent}%`} tone={tr.integration_error_rate_percent > 5 ? "warn" : "ok"} icon="shield" />
             </div>
             <p className="card-sub">{tr.note}</p>
             {tr.by_client.length > 0 && (
               <>
-                <h3>{t.monitorByClientTitle}</h3>
+                <div className="card-head">
+                  <h3 className="card-title">{t.monitorByClientTitle}</h3>
+                </div>
                 <div className="table-wrap">
                   <table>
                     <thead>
@@ -562,7 +577,7 @@ function HistoricalSection() {
   return (
     <section className="card pad ct-card">
       <div className="card-head">
-        <h2>{t.monitorHistoricalSection}</h2>
+        <h2 className="card-title">{t.monitorHistoricalSection}</h2>
         <label className="field">
           <span>{t.monitorHistoricalRange}</span>
           <select value={range} onChange={(e) => setRange(e.target.value as MonitorWindow)}>
@@ -607,7 +622,9 @@ function ThresholdsSection() {
 
   return (
     <section className="card pad ct-card">
-      <h2>{t.monitorThresholdsSection}</h2>
+      <div className="card-head">
+        <h2 className="card-title">{t.monitorThresholdsSection}</h2>
+      </div>
       <Async value={data} reload={reload}>
         {(rows) => (
           <>
@@ -662,7 +679,7 @@ function AgentPerformanceSection() {
   return (
     <section className="card pad ct-card">
       <div className="card-head">
-        <h2>Agent-wise performance</h2>
+        <h2 className="card-title">Agent-wise performance</h2>
       </div>
       <p className="card-sub">
         Each row is one agent generation × task it handles (graph_version · task_category) — this system runs a single graph per
@@ -706,7 +723,7 @@ function AgentPerformanceSection() {
                 <tbody>
                   {perf.rows.map((row) => (
                     <tr key={row.agent_key}>
-                      <td>#{row.rank}</td>
+                      <td>{row.rank === 1 ? <Icon name="trophy" className="sm" /> : `#${row.rank}`}</td>
                       <td>{row.agent_key}</td>
                       <td>{row.total_tasks}</td>
                       <td>
@@ -751,7 +768,7 @@ function ClientDrillSection() {
   return (
     <section className="card pad ct-card">
       <div className="card-head">
-        <h2>Client-wise monitoring</h2>
+        <h2 className="card-title">Client-wise monitoring</h2>
       </div>
       <div className="row">
         <label className="field">
@@ -790,16 +807,16 @@ function ClientDrillSection() {
             ) : (
               <>
                 <div className="stats ct-stats">
-                  <StatCard label="Agent runs" value={c.runs_total} />
-                  <StatCard label="Done / Failed / Skipped" value={`${c.runs_done} / ${c.runs_failed} / ${c.runs_skipped}`} />
-                  <StatCard label="Accuracy" value={`${c.accuracy.accuracy_percent}%`} tone={c.accuracy.accuracy_percent < 80 ? "warn" : "ok"} />
-                  <StatCard label="LLM calls" value={c.llm_calls_total} />
-                  <StatCard label="LLM failures" value={c.llm_calls_failed} tone={c.llm_calls_failed > 0 ? "warn" : "ok"} />
-                  <StatCard label="LLM p95 latency" value={fmtMs(c.llm_p95_latency_ms)} />
-                  <StatCard label="LLM cost" value={fmtMicro(c.llm_cost_micro)} />
-                  <StatCard label="Integration calls" value={c.integration_calls_total} />
-                  <StatCard label="Integration failures" value={c.integration_calls_failed} tone={c.integration_calls_failed > 0 ? "warn" : "ok"} />
-                  <StatCard label="Integration p95 latency" value={fmtMs(c.integration_p95_latency_ms)} />
+                  <StatCard label="Agent runs" value={c.runs_total} icon="bot" />
+                  <StatCard label="Done / Failed / Skipped" value={`${c.runs_done} / ${c.runs_failed} / ${c.runs_skipped}`} icon="check-square" />
+                  <StatCard label="Accuracy" value={`${c.accuracy.accuracy_percent}%`} tone={c.accuracy.accuracy_percent < 80 ? "warn" : "ok"} icon="target" />
+                  <StatCard label="LLM calls" value={c.llm_calls_total} icon="chat" />
+                  <StatCard label="LLM failures" value={c.llm_calls_failed} tone={c.llm_calls_failed > 0 ? "warn" : "ok"} icon="shield" />
+                  <StatCard label="LLM p95 latency" value={fmtMs(c.llm_p95_latency_ms)} icon="clock" />
+                  <StatCard label="LLM cost" value={fmtMicro(c.llm_cost_micro)} tone="purple" icon="file" />
+                  <StatCard label="Integration calls" value={c.integration_calls_total} icon="link" />
+                  <StatCard label="Integration failures" value={c.integration_calls_failed} tone={c.integration_calls_failed > 0 ? "warn" : "ok"} icon="shield" />
+                  <StatCard label="Integration p95 latency" value={fmtMs(c.integration_p95_latency_ms)} icon="clock" />
                 </div>
                 <div className="row">
                   {c.worst_agent_key && (
@@ -868,7 +885,7 @@ function ProvidersSection() {
   return (
     <section className="card pad ct-card">
       <div className="card-head">
-        <h2>Provider-wise API monitoring</h2>
+        <h2 className="card-title">Provider-wise API monitoring</h2>
         <label className="field">
           <span>Window</span>
           <select value={window_} onChange={(e) => setWindow(e.target.value as MonitorWindow)}>
@@ -906,8 +923,12 @@ export function AdminControlTower() {
       <TrafficSection />
       <HistoricalSection />
       <section className="card pad ct-card">
-        <h2>{t.monitorAlertsSection}</h2>
-        <Link to="/admin/alerts">{t.monitorViewAllAlerts}</Link>
+        <div className="card-head">
+          <h2 className="card-title">{t.monitorAlertsSection}</h2>
+          <Link to="/admin/alerts" className="btn">
+            <Icon name="bell" className="sm" /> {t.monitorViewAllAlerts}
+          </Link>
+        </div>
       </section>
       <ThresholdsSection />
     </Screen>

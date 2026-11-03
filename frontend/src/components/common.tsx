@@ -29,9 +29,10 @@ export function Screen({
   );
 }
 
-const STAT_ICON_TONE: Record<"warn" | "ok" | "default", string> = {
+const STAT_ICON_TONE: Record<"warn" | "ok" | "purple" | "default", string> = {
   warn: "orange",
   ok: "green",
+  purple: "purple",
   default: "blue",
 };
 
@@ -44,7 +45,7 @@ export function StatCard({
 }: {
   label: string;
   value: ReactNode;
-  tone?: "warn" | "ok";
+  tone?: "warn" | "ok" | "purple";
   icon?: string;
   trend?: { direction: "up" | "down"; text: string };
 }) {
