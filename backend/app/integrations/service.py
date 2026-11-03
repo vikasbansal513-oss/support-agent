@@ -369,6 +369,25 @@ async def check_now_gmail(factory: Factory, principal: Principal) -> GmailCheckN
     from app.worker import drain_queue
 
     done = await drain_queue(factory, job_id, "inline:gmail_check_now")
+    # fetch_gmail sirf mail store karta hai aur har mail ke liye alag "process_inbound" job
+    # enqueue karta hai (agent ka asli kaam). Unhe bhi yahin turant chalao, warna wo agle
+    # hourly tick tak queued pade rehte hain aur dashboard me kuch dikhta nahi. Cap isliye ki
+    # HTTP request lamba na ho; bacha hua kaam scheduled tick utha lega.
+    async with session_scope(factory, tenant_id=tenant_id, user_id=principal.user_id) as session:
+        pending = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT id FROM jobs WHERE kind = 'process_inbound' AND status = 'queued'"
+                        " ORDER BY created_at LIMIT 10"
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    for pending_id in pending:
+        await drain_queue(factory, pending_id, "inline:gmail_check_now")
     return GmailCheckNowOut(queued=True, job_id=job_id, already_running=not done)
 
 
