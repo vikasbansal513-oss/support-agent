@@ -358,7 +358,14 @@ async def check_now_gmail(factory: Factory, principal: Principal) -> GmailCheckN
             max_attempts=1,
             created_by=principal.user_id,
         )
-    return GmailCheckNowOut(queued=True, job_id=job_id)
+    # Owner ne khud button dabaya hai — hourly scheduler tick ka wait nahi karwana.
+    # Isi request me turant chala do (whatsapp webhook ka wahi drain_now pattern, worker.py
+    # ka drain_queue reuse). Fail/race ho jaye to bhi job queue me hi reh jaata hai — agla
+    # scheduled tick use normal tareeke se process kar dega, fallback nahi tootta.
+    from app.worker import drain_queue
+
+    done = await drain_queue(factory, job_id, "inline:gmail_check_now")
+    return GmailCheckNowOut(queued=True, job_id=job_id, already_running=not done)
 
 
 GMAIL_RECONNECT_TITLE = "Gmail reconnect karna zaroori hai"
