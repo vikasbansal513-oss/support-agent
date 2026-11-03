@@ -122,7 +122,6 @@ export const t = {
   testOk: "Connection is working",
   gmailCheckNow: "Check now",
   gmailCheckNowQueuedToast: "Checking inbox now, naya mail jaldi aa jayega.",
-  gmailCheckNowAlreadyToast: "Ek check already chal raha hai, thoda wait karein.",
   secretSet: "Set",
   secretWriteOnly: "Secret won't be shown again after saving",
   webhookUrl: "Webhook URL (shown only once)",

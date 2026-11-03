@@ -99,8 +99,8 @@ function IntegrationCard({ kind, item, onChange }: { kind: IntegrationKind; item
   }, toast.error);
 
   const checkNowGmail = useSubmit(async () => {
-    const out = await api.post<GmailCheckNow>("/integrations/gmail/check-now");
-    toast.info(out.already_running ? t.gmailCheckNowAlreadyToast : t.gmailCheckNowQueuedToast);
+    await api.post<GmailCheckNow>("/integrations/gmail/check-now");
+    toast.info(t.gmailCheckNowQueuedToast);
     onChange();
   }, toast.error);
 

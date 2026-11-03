@@ -336,26 +336,19 @@ async def probe_integration(
     return ProbeResultOut(ok=False, detail="connection failed", error_code="E-INT-001")
 
 
-_PENDING_FETCH_GMAIL = text(
-    "SELECT id FROM jobs WHERE tenant_id = :t AND kind = 'fetch_gmail'"
-    " AND status IN ('queued', 'processing') ORDER BY created_at DESC LIMIT 1"
-)
-
-
 async def check_now_gmail(factory: Factory, principal: Principal) -> GmailCheckNowOut:
     if principal.tenant_id is None:
         raise AppError("E-AUTH-007")
     tenant_id = principal.tenant_id
     async with session_scope(factory, tenant_id=tenant_id, user_id=principal.user_id) as session:
-        pending = (await session.execute(_PENDING_FETCH_GMAIL, {"t": tenant_id})).first()
-        if pending is not None:
-            return GmailCheckNowOut(queued=True, job_id=pending.id, already_running=True)
         loaded = await load_secret(session, "gmail")
         status = (
             await session.execute(text("SELECT status FROM integrations WHERE kind = 'gmail'"))
         ).scalar_one_or_none()
     if loaded is None or status != "ok":
         raise AppError("E-INT-002")
+    # Har click par naya job, purana queued/processing job ho bhi to ignore —
+    # fetch_gmail khud hi duplicate-safe hai (inbound_events external_id dedup).
     async with session_scope(factory, tenant_id=tenant_id, user_id=principal.user_id) as session:
         job_id = await queue.enqueue(
             session,
