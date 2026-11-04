@@ -93,6 +93,12 @@ class PolicyV2(BaseModel):
     max_write_actions: int = Field(default=3, ge=1, le=3)
     sentiment_min: float = Field(default=-0.4, ge=-1, le=0)
     tone_notes: str = Field(default="", max_length=500)
+    # Decision Framework Section 12.4: "several similar claims clustering in a short time
+    # window" - individually ordinary, together the signature of organised refund-ring
+    # abuse. A customer with this many refund/exchange/return claims inside the window is
+    # routed to a human on every one of those tools, regardless of mode or ₹ limit.
+    fraud_cluster_window_hours: int = Field(default=24, ge=1, le=168)
+    fraud_cluster_claim_limit: int = Field(default=3, ge=2, le=20)
 
     @property
     def refund_auto_limit_paise(self) -> int | None:

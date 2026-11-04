@@ -49,7 +49,11 @@ class RetryLater(Exception):
 
 
 async def load_v1_state(
-    session: AsyncSession, state: State, tenant_id: uuid.UUID, conversation_id: uuid.UUID
+    session: AsyncSession,
+    state: State,
+    tenant_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    policy: PolicyV2 | None = None,
 ) -> convstate.ConvRow:
     row = await convstate.load(session, conversation_id)
     pending: dict[str, Any] | None = None
@@ -74,13 +78,17 @@ async def load_v1_state(
         "pending": pending,
     }
     day: date = timeutil.to_ist(timeutil.utc_now()).date()
-    refunded, recent, brand = await customer_context(session, conversation_id, "refund_create", day)
+    window_hours = policy.fraud_cluster_window_hours if policy is not None else 24
+    refunded, recent, brand, recent_claims = await customer_context(
+        session, conversation_id, "refund_create", day, window_hours
+    )
     killed = {tool: await writes.killed(session, tool) for tool in WRITE_TOOLS}
     state["gate_ctx"] = {
         "refunded_today": refunded,
         "recent_refund": recent,
         "brand_today": brand,
         "killed": killed,
+        "recent_claims": recent_claims,
     }
     prior = (
         await session.execute(

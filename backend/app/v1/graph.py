@@ -32,6 +32,7 @@ from app.llm.client import (
     split_prompt,
 )
 from app.llm.guard import wrap_untrusted
+from app.policy import fraud
 from app.v1 import reply as reply_layer
 from app.v1 import templates as t
 from app.v1.confirm import parse_confirmation
@@ -487,6 +488,22 @@ def build_graph_v1(deps: V1Deps) -> Any:
             return _flag(state, "CONFUSED")
         if tool not in policy.enabled_tools:
             return _flag(state, "POLICY_EXCEPTION")
+        claim_tool = tool in ("refund_create", "exchange_request", "return_request")
+        if claim_tool and fraud.requires_evidence(plan.args.reason):
+            # Decision Framework Section 12.3: photo/video evidence is mandatory before any
+            # refund, replacement or exchange is promised for this claim category - the
+            # written claim alone is never enough, and the agent has no automated way to
+            # check a photo. So it never auto-proposes this write: it asks for the photo,
+            # and the moment one arrives the MEDIA_RECEIVED precheck above hands the whole
+            # case - claim text and photo together - to a human. Repeated asking without a
+            # photo ever arriving converges to the same handoff via MAX_CLARIFY below.
+            conv["unclear_count"] = int(conv.get("unclear_count", 0)) + 1
+            conv["order_ref"] = order.order_name
+            if conv["unclear_count"] > MAX_CLARIFY:
+                conv["awaiting"] = "none"
+                return _flag(state, "POLICY_EXCEPTION", conv=conv)
+            conv["awaiting"] = "evidence"
+            return {"conv": conv, "v1_reply": _reply(state, "ask_evidence_photo")}
         args: dict[str, Any] = {"reason": plan.args.reason}
         item = ""
         if tool == "exchange_request":
@@ -535,6 +552,7 @@ def build_graph_v1(deps: V1Deps) -> Any:
             killed=bool(ctx_raw.get("killed", {}).get(tool, False)),
             write_count=int(conv.get("write_count", 0)),
             channel="voice" if state.get("channel") == "voice" else "text",
+            recent_claim_count=int(ctx_raw.get("recent_claims", 0)),
         )
         decision = evaluate(policy, ctx)
         gate_note = {"gate_ctx": {**ctx_raw, "last_reason": decision.reason}}

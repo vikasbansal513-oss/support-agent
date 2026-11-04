@@ -37,6 +37,13 @@ class GateContext:
     killed: bool = False
     write_count: int = 0
     channel: str = "text"
+    # Count of this customer's refund/exchange/return claims inside
+    # policy.fraud_cluster_window_hours (see app.v1.regate.customer_context). Independent
+    # of amount/mode - Section 12.4's claim-clustering signal.
+    recent_claim_count: int = 0
+
+
+CLAIM_TOOLS: tuple[WriteTool, ...] = ("refund_create", "exchange_request", "return_request")
 
 
 @dataclass(frozen=True)
@@ -89,6 +96,10 @@ def _evaluate(policy: PolicyV2, ctx: GateContext) -> GateDecision:
         return _handoff(tool, "WRITE_LIMIT", "STEP_LIMIT", amount)
     if order.disputed:
         return _handoff(tool, "ORDER_DISPUTED", "HIGH_RISK_FLAG", amount)
+    if tool in CLAIM_TOOLS and ctx.recent_claim_count >= policy.fraud_cluster_claim_limit:
+        # Section 12.4: claim-clustering - hard block, always to a human, even if every
+        # individual rule elsewhere in this gate would otherwise allow auto-approval.
+        return _handoff(tool, "CLAIM_CLUSTERING", "FRAUD", amount)
     if order.total_paise >= policy.limits.high_value_threshold_paise:
         return _handoff(tool, "HIGH_VALUE_ORDER", "HIGH_RISK_FLAG", amount)
     if tool in ("refund_create", "exchange_request") and ctx.customer_refund_in_last_30d:

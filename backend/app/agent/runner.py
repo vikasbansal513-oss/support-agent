@@ -274,7 +274,7 @@ async def run_inbound(
         from app.agent import runner_v1
 
         async with session_scope(factory, tenant_id=tenant_id) as session:
-            await runner_v1.load_v1_state(session, state, tenant_id, conversation_id)
+            await runner_v1.load_v1_state(session, state, tenant_id, conversation_id, parsed)
         await runner_v1.run(
             ctx,
             tenant_id=tenant_id,

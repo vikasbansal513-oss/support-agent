@@ -68,8 +68,12 @@ def get_facts(writer: ShopifyWriter) -> GateFacts:
 
 
 async def customer_context(
-    session: AsyncSession, conversation_id: uuid.UUID, tool: str, day: date
-) -> tuple[int, bool, int]:
+    session: AsyncSession,
+    conversation_id: uuid.UUID,
+    tool: str,
+    day: date,
+    fraud_cluster_window_hours: int = 24,
+) -> tuple[int, bool, int, int]:
     customer = await writes._customer_of(session, conversation_id)
     refunded_today = await writes.customer_usage_today(session, customer, "refund_create", day)
     recent = (
@@ -83,7 +87,29 @@ async def customer_context(
         )
     ).first()
     brand = await writes.brand_auto_value_today(session, day)
-    return refunded_today, recent is not None, brand
+    recent_claims = await claim_cluster_count(session, customer, fraud_cluster_window_hours)
+    return refunded_today, recent is not None, brand, recent_claims
+
+
+async def claim_cluster_count(
+    session: AsyncSession, customer_id: uuid.UUID, window_hours: int
+) -> int:
+    """How many refund/exchange/return proposals this customer has made in the last
+    window_hours, of any status - Section 12.4's claim-clustering signal. Deliberately not
+    scoped to a single order: the documented fraud pattern is several DIFFERENT orders'
+    claims clustering together, not repeats on one order."""
+    count = (
+        await session.execute(
+            text(
+                "SELECT count(*) FROM agent_actions a JOIN conversations c"
+                " ON c.id = a.conversation_id WHERE c.customer_id = :c"
+                " AND a.tool_name IN ('refund_create','exchange_request','return_request')"
+                " AND a.created_at >= :s"
+            ),
+            {"c": customer_id, "s": timeutil.utc_now() - timedelta(hours=window_hours)},
+        )
+    ).scalar_one()
+    return int(count)
 
 
 async def regate(
@@ -99,8 +125,8 @@ async def regate(
     now = timeutil.utc_now()
     day = timeutil.to_ist(now).date()
     async with session_scope(factory, tenant_id=tenant_id) as session:
-        refunded_today, recent, brand = await customer_context(
-            session, action.conversation_id, action.tool, day
+        refunded_today, recent, brand, recent_claims = await customer_context(
+            session, action.conversation_id, action.tool, day, policy.fraud_cluster_window_hours
         )
         killed = await writes.killed(session, action.tool)
     ctx = GateContext(
@@ -112,6 +138,7 @@ async def regate(
         brand_auto_value_today_paise=brand,
         killed=killed,
         write_count=0,
+        recent_claim_count=recent_claims,
     )
     decision = evaluate(policy, ctx)
     if decision.route != "handoff" and amount_for(action.tool, order) != action.amount_paise:

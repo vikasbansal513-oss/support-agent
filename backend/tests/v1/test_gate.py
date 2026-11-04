@@ -182,3 +182,27 @@ def test_cancel_financial_status_rules() -> None:
         evaluate(policy(), ctx("order_cancel", order(financial_status="partially_refunded"))).reason
         == "FINANCIAL_STATUS"
     )
+
+
+def test_claim_cluster_hard_blocks_regardless_of_level_or_limits() -> None:
+    # Decision Framework Section 12.4: claim-clustering overrides mode and ₹ limits both.
+    p = policy("auto", refund_auto_limit_paise=50_000)
+    under = evaluate(p, ctx("refund_create", delivered(), recent_claim_count=2))
+    assert under.route == "auto"
+    at_limit = evaluate(p, ctx("refund_create", delivered(), recent_claim_count=3))
+    assert at_limit.route == "handoff" and at_limit.handoff_reason == "FRAUD"
+    assert at_limit.reason == "CLAIM_CLUSTERING"
+    approval_level = evaluate(
+        policy("approval"), ctx("refund_create", delivered(), recent_claim_count=3)
+    )
+    assert approval_level.route == "handoff" and approval_level.reason == "CLAIM_CLUSTERING"
+
+
+def test_claim_cluster_applies_to_every_claim_tool_not_address_update() -> None:
+    for tool in ("refund_create", "exchange_request", "return_request"):
+        d = evaluate(policy("auto"), ctx(tool, delivered(), recent_claim_count=3))  # type: ignore[arg-type]
+        assert d.route == "handoff" and d.reason == "CLAIM_CLUSTERING"
+    # address_update never moves money and is outside CLAIM_TOOLS - the signal must not
+    # leak into a tool the framework never asked it to gate.
+    addr = evaluate(policy("auto"), ctx("address_update", order(), recent_claim_count=3))
+    assert addr.route == "auto"

@@ -49,6 +49,11 @@ T: dict[str, dict[str, str]] = {
         "en": "Which item in order {order} would you like to exchange, and for which size or variant?",
         "hi": "ऑर्डर {order} में कौन सा आइटम किस साइज़ या वेरिएंट में बदलना है?",
     },
+    "ask_evidence_photo": {
+        "hinglish": "Isse aage le jaane ke liye product ki clear photo ya video bhejna zaroori hai. Kripya bhejein, hamari team usko dekh kar aapko confirm karegi.",
+        "en": "To proceed with this, please send a clear photo or video of the product. Our team will review it and confirm with you.",
+        "hi": "आगे बढ़ने के लिए प्रोडक्ट की साफ़ फ़ोटो या वीडियो भेजना ज़रूरी है। कृपया भेजें, हमारी टीम देखकर आपको कन्फर्म करेगी।",
+    },
     "confirm_reask": {
         "hinglish": "Kripya sirf 'haan' ya 'nahi' likhein.",
         "en": "Please reply with just 'yes' or 'no'.",

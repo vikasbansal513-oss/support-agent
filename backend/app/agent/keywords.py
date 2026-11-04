@@ -229,6 +229,51 @@ SAFETY = _rx(
         "आग",
         "धमाका",
         "करंट",
+        # Decision Framework Section 12.5: a self-harm or crisis statement, even raised
+        # alongside a refund/cancel demand, is always a wellbeing/safety matter first -
+        # immediate human handoff, never used as leverage either way.
+        "suicide",
+        "kill myself",
+        "end my life",
+        "harm myself",
+        "hurt myself",
+        "khud ko nuksan",
+        "khud ko khatam",
+        "jaan de doon",
+        "jaan de dunga",
+        "marna chahta",
+        "marna chahti",
+        "aatmahatya",
+        "आत्महत्या",
+        "जान दे",
+        "खुद को नुकसान",
+    ]
+)
+INJECTION = _rx(
+    [
+        # Decision Framework Section 12.5: an attempt to instruct the agent directly
+        # ("ignore your rules", "act as admin") is customer text to read, never an
+        # instruction to follow - the agent treats it as an attempted override and
+        # routes to a human, same as any other unsupported/suspicious request.
+        "ignore your rules",
+        "ignore previous instructions",
+        "ignore all instructions",
+        "ignore the rules",
+        "forget your rules",
+        "apna rule bhool",
+        "apne rules bhool",
+        "act as admin",
+        "act as system",
+        "act as developer",
+        "you are now admin",
+        "developer mode",
+        "admin mode",
+        "jailbreak",
+        "system prompt",
+        "bypass your rules",
+        "admin override",
+        "i am the admin",
+        "main admin hoon",
     ]
 )
 GREETING_ONLY = re.compile(
@@ -245,7 +290,8 @@ def is_opt_in(text: str) -> bool:
 
 
 def detect_flags(text: str, extra_keywords: list[str] | None = None) -> set[str]:
-    """Returns subset of: human, ai_question, angry, legal, medical, fraud, press, safety, extra."""
+    """Returns subset of: human, ai_question, angry, legal, medical, fraud, press, safety,
+    injection, extra."""
     t = norm(text)
     out: set[str] = set()
     for name, rx in (
@@ -257,6 +303,7 @@ def detect_flags(text: str, extra_keywords: list[str] | None = None) -> set[str]
         ("fraud", FRAUD),
         ("press", PRESS),
         ("safety", SAFETY),
+        ("injection", INJECTION),
     ):
         if rx.search(t):
             out.add(name)
@@ -272,6 +319,7 @@ FLAG_REASON = {
     "fraud": "FRAUD",
     "press": "PRESS",
     "safety": "SAFETY",
+    "injection": "FRAUD",
     "angry": "ANGRY",
     "extra": "SAFETY",
     "human": "HUMAN_REQUESTED",

@@ -26,6 +26,7 @@ _SWAPS: dict[str, dict[str, str]] = {
 RUPEE_WORD = {"hinglish": "rupaye", "hi": "रुपये", "en": "rupees"}
 PAISE_WORD = {"hinglish": "paise", "hi": "पैसे", "en": "paise"}
 MAX_SPOKEN_CHARS = 400
+_TWO_DIGITS = re.compile(r"\d.*\d")
 
 
 def _money(match: re.Match[str], lang: str) -> str:
@@ -61,9 +62,22 @@ def speakable(text: str, lang: str) -> str:
 
 VOICE_T: dict[str, dict[str, str]] = {
     "greeting": {
-        "hinglish": "Namaste! Main {brand} ka AI sahayak hoon, aur is baat-cheet ka text quality ke liye save hota hai. Aap order ka status, tracking, cancel ya exchange ke baare mein pooch sakte hain. Bataiye, main kya madad karun?",
-        "en": "Hello! I am the AI assistant for {brand}, and a text transcript of this call is saved for quality. You can ask about order status, tracking, cancellation or exchange. How can I help?",
-        "hi": "नमस्ते! मैं {brand} का एआई सहायक हूँ, और इस बातचीत का टेक्स्ट गुणवत्ता के लिए सहेजा जाता है। आप ऑर्डर स्टेटस, ट्रैकिंग, कैंसिल या एक्सचेंज के बारे में पूछ सकते हैं। बताइए, मैं क्या मदद करूँ?",
+        # Decision Framework Section 17.1: disclose AI + recording, then ask an explicit
+        # yes/no question - the customer must actively agree before anything else happens.
+        # service._consent_turn() handles the reply to this question.
+        "hinglish": "Namaste! Main {brand} ka AI sahayak hoon, aur is baat-cheet ka text quality ke liye save hota hai. Kya aap is tarah baat karne ke liye theek hain? Kripya haan ya nahi bolein.",
+        "en": "Hello! I am the AI assistant for {brand}, and a text transcript of this call is saved for quality. Are you okay to continue this way? Please say yes or no.",
+        "hi": "नमस्ते! मैं {brand} का एआई सहायक हूँ, और इस बातचीत का टेक्स्ट गुणवत्ता के लिए सहेजा जाता है। क्या आप इस तरह बात करने के लिए ठीक हैं? कृपया हाँ या नहीं बोलें।",
+    },
+    "consent_ack": {
+        "hinglish": "Dhanyavaad. Bataiye, main kya madad karun?",
+        "en": "Thank you. How can I help?",
+        "hi": "धन्यवाद। बताइए, मैं क्या मदद करूँ?",
+    },
+    "consent_reask": {
+        "hinglish": "Kripya sirf haan ya nahi bolein - kya aap is tarah baat karne ke liye theek hain?",
+        "en": "Please say just yes or no - are you okay to continue this way?",
+        "hi": "कृपया सिर्फ हाँ या नहीं बोलें - क्या आप इस तरह बात करने के लिए ठीक हैं?",
     },
     "unclear_audio": {
         "hinglish": "Maaf kijiye, awaaz saaf nahi aayi. Kya aap dobara bol sakte hain?",
@@ -131,6 +145,17 @@ VOICE_T: dict[str, dict[str, str]] = {
         "hi": "माफ़ कीजिए, अभी कुछ तकनीकी दिक्कत आ गई। मैं आपको हमारी टीम से जोड़ रहा हूँ।",
     },
 }
+
+
+def has_spoken_number(text: str) -> bool:
+    """Decision Framework Section 17.2: an order ID, amount or similar number being read
+    out should not be interrupted mid-number by a false barge-in trigger. There is no OTP/
+    card/bank-number readout in this pipeline (Section 17.3 - nothing collects those by
+    voice), so the only numbers ever spoken here are order references and rupee amounts,
+    already rendered into speakable digits/words by speakable()/_money()/_ref() before this
+    is called. Two or more digit characters anywhere in the text is a reasonable proxy for
+    "a number is being read" without needing to know which template produced it."""
+    return bool(_TWO_DIGITS.search(text))
 
 
 def voice_line(template: str, lang: str, **facts: str) -> str:

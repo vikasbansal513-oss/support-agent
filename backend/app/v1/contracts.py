@@ -232,7 +232,7 @@ class ReplyDraft(BaseModel):
         return text if text in ("hi", "en", "hinglish") else "hinglish"
 
 
-Awaiting = Literal["confirm", "address", "order_ref", "none"]
+Awaiting = Literal["confirm", "address", "order_ref", "evidence", "none"]
 
 
 class ConversationState(BaseModel):

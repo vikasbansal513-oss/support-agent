@@ -451,6 +451,39 @@ def _delivery_cases(tool: WriteTool, cap: int) -> list[GateScenario]:
             ctx={"customer_refund_in_last_30d": True},
         )
     )
+    out.append(
+        GateScenario(
+            f"{tool}:claim_cluster_under_limit_ok",
+            tool,
+            ("auto", "AUTO_OK"),
+            ctx={"recent_claim_count": 2},
+        )
+    )
+    out.append(
+        GateScenario(
+            f"{tool}:claim_cluster_at_limit_handoff",
+            tool,
+            ("handoff", "CLAIM_CLUSTERING"),
+            ctx={"recent_claim_count": 3},
+        )
+    )
+    out.append(
+        GateScenario(
+            f"{tool}:claim_cluster_above_limit_handoff",
+            tool,
+            ("handoff", "CLAIM_CLUSTERING"),
+            ctx={"recent_claim_count": 5},
+        )
+    )
+    out.append(
+        GateScenario(
+            f"{tool}:claim_cluster_beats_approval_level",
+            tool,
+            ("handoff", "CLAIM_CLUSTERING"),
+            level="approval",
+            ctx={"recent_claim_count": 3},
+        )
+    )
     for used in (0, 1_000_000, BRAND_DAILY - cap):
         out.append(
             GateScenario(

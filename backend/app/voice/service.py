@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.actions import engine
 from app.actions.senders import Senders, build_senders
-from app.agent import runner
+from app.agent import keywords, runner
 from app.channels import identity
 from app.channels.gupshup_parse import hash_token, tokens_equal
 from app.contracts.contracts import NormalizedInbound
@@ -25,6 +25,7 @@ from app.handoffs import service as handoffs
 from app.jobs import handlers, queue
 from app.privacy import service as privacy
 from app.v1 import templates as v1t
+from app.v1.confirm import parse_confirmation
 from app.v1.contracts import ConvUpdate, DecisionV1, HandoffSummaryV1
 from app.v1.policy import PolicyV2, parse_any
 from app.voice import speech
@@ -223,6 +224,12 @@ WHY = {
     "STEP_LIMIT": "Call bahut lambi chali, insaan ko sambhalni chahiye.",
     "POLICY_EXCEPTION": "Voice agent is brand ke liye abhi chalu nahi hai ya request policy ke bahar thi.",
     "ACTION_FAILED": "Call ke dauran takneeki dikkat aayi.",
+    # Section 17.1 consent-capture (see _consent_turn):
+    "HUMAN_REQUESTED": "Customer ne call shuru me hi insaan se baat karne ko kaha.",
+    "CONSENT_DECLINED": "Customer ne AI assistant se baat karne / call record hone ke liye consent nahi diya.",
+    "CONSENT_UNCLEAR": "Customer se call shuru me consent confirm nahi ho paaya.",
+    # Section 17.4:
+    "SILENCE_NO_RESPONSE": "Customer ne dobara prompt karne ke baad bhi jawaab nahi diya.",
 }
 
 
@@ -532,8 +539,62 @@ async def _end(
             body=f"Customer {row.caller_masked} ko team se jodna fail hua ({reason}). "
             "Unhe jaldi call karein.",
         )
+    await _flag_high_value_for_review(
+        factory, voice, row.id, row.conversation_id, row.caller_masked, transport
+    )
     await _send_summary(factory, voice, row.id, row.conversation_id, transport)
     return _reply("", "hinglish", "hangup")
+
+
+async def _flag_high_value_for_review(
+    factory: Factory,
+    voice: VoiceTenant,
+    call_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    caller_masked: str | None,
+    transport: httpx.AsyncBaseTransport | None,
+) -> None:
+    """Decision Framework Section 17.7: calls where a high-value write action happened get
+    an automated QA review flag, same as a disputed/escalated call already does. Reuses the
+    exact handoffs.escalate_urgent(...) call already used above for failed transfers, rather
+    than adding a new review mechanism. Skipped when a handoff already exists for this call
+    (live escalation already means a human is looking at it) or when the policy has no
+    published high_value_threshold_paise to compare against."""
+    async with session_scope(factory, tenant_id=voice.tenant_id) as session:
+        view = await _tenant_view(session)
+        threshold = view.policy.limits.high_value_threshold_paise if view.policy else None
+        high_value_paise = None
+        if threshold is not None:
+            high_value_paise = (
+                await session.execute(
+                    text(
+                        "SELECT amount_paise FROM agent_actions WHERE conversation_id = :c"
+                        " AND amount_paise IS NOT NULL AND amount_paise >= :t"
+                        " ORDER BY amount_paise DESC LIMIT 1"
+                    ),
+                    {"c": conversation_id, "t": threshold},
+                )
+            ).scalar_one_or_none()
+        if high_value_paise is None:
+            return
+        already_flagged = (
+            await session.execute(
+                text("SELECT 1 FROM handoffs WHERE conversation_id = :c"), {"c": conversation_id}
+            )
+        ).first()
+    if already_flagged is not None:
+        return
+    base = await build_senders(factory, voice.tenant_id, transport)
+    await handoffs.escalate_urgent(
+        factory,
+        get_mailer(),
+        base,
+        tenant_id=voice.tenant_id,
+        conversation_id=conversation_id,
+        title="Voice call: high-value action, QA review zaroori",
+        body=f"Customer {caller_masked} ki call me Rs {high_value_paise // 100} ya usse zyada"
+        " ka action hua. Section 17.7 ke mutabik is call ki QA review karein.",
+    )
 
 
 async def _summary_text(
@@ -653,6 +714,7 @@ class CallRow:
     silence_streak: int
     language: str
     awaiting: str
+    consent_response: str | None
 
 
 async def _load_call(session: AsyncSession, call_id: str) -> CallRow | None:
@@ -661,7 +723,7 @@ async def _load_call(session: AsyncSession, call_id: str) -> CallRow | None:
             text(
                 "SELECT v.id, v.conversation_id, v.customer_id, v.status, v.turn_count,"
                 " v.low_confidence_streak, v.silence_streak, c.language,"
-                " COALESCE(s.awaiting, 'none') AS awaiting FROM voice_calls v"
+                " COALESCE(s.awaiting, 'none') AS awaiting, v.consent_response FROM voice_calls v"
                 " JOIN conversations c ON c.id = v.conversation_id"
                 " LEFT JOIN conversation_state s ON s.conversation_id = v.conversation_id"
                 " WHERE v.provider_call_id = :p FOR UPDATE OF v"
@@ -681,6 +743,7 @@ async def _load_call(session: AsyncSession, call_id: str) -> CallRow | None:
         row.silence_streak,
         row.language or "hinglish",
         row.awaiting,
+        row.consent_response,
     )
 
 
@@ -700,6 +763,85 @@ async def _bump(
         ),
         {"t": turns, "l": low, "q": quiet, "i": call.id},
     )
+
+
+async def _consent_turn(
+    factory: Factory,
+    voice: VoiceTenant,
+    view: TenantView,
+    call: CallRow,
+    event: VoiceEventIn,
+    utterance: str,
+    lang: str,
+) -> VoiceReplyOut:
+    """Decision Framework Section 17.1: the greeting discloses AI + recording and ends with
+    an explicit yes/no question. This handles the reply to that question - the very first
+    real turn of the call - before any normal eligibility/step-limit/agent processing runs.
+    A customer who asks for a human instead of answering is sent straight to one. 'no' ends
+    the call the same way. 'unclear' gets one reprompt (bounded by call.turn_count, which is
+    still 0 on the first attempt) and then also hands off rather than looping forever."""
+    if "human" in keywords.detect_flags(utterance):
+        return await _end_with_human(
+            factory,
+            voice,
+            view,
+            call.id,
+            call.conversation_id,
+            None,
+            "HUMAN_REQUESTED",
+            utterance,
+            event.from_number,
+            lang,
+        )
+    answer = parse_confirmation(utterance)
+    if answer == "yes":
+        async with session_scope(factory, tenant_id=voice.tenant_id) as session:
+            await _bump(session, call, turns=1)
+            await session.execute(
+                text(
+                    "UPDATE voice_calls SET consent_response = 'yes', consent_responded_at = now()"
+                    " WHERE id = :i"
+                ),
+                {"i": call.id},
+            )
+        return _reply(speech.voice_line("consent_ack", lang), lang)
+    if answer == "no":
+        async with session_scope(factory, tenant_id=voice.tenant_id) as session:
+            await session.execute(
+                text(
+                    "UPDATE voice_calls SET consent_response = 'no', consent_responded_at = now()"
+                    " WHERE id = :i"
+                ),
+                {"i": call.id},
+            )
+        return await _end_with_human(
+            factory,
+            voice,
+            view,
+            call.id,
+            call.conversation_id,
+            None,
+            "CONSENT_DECLINED",
+            utterance,
+            event.from_number,
+            lang,
+        )
+    if call.turn_count >= 1:
+        return await _end_with_human(
+            factory,
+            voice,
+            view,
+            call.id,
+            call.conversation_id,
+            None,
+            "CONSENT_UNCLEAR",
+            utterance,
+            event.from_number,
+            lang,
+        )
+    async with session_scope(factory, tenant_id=voice.tenant_id) as session:
+        await _bump(session, call, turns=1)
+    return _reply(speech.voice_line("consent_reask", lang), lang)
 
 
 async def _turn(
@@ -723,16 +865,26 @@ async def _turn(
         async with session_scope(factory, tenant_id=voice.tenant_id) as session:
             await _bump(session, call, quiet=call.silence_streak + 1)
         if call.silence_streak + 1 >= settings.voice_silence_limit:
-            async with session_scope(factory, tenant_id=voice.tenant_id) as session:
-                await session.execute(
-                    text(
-                        "UPDATE voice_calls SET status = 'completed', end_reason = 'silence',"
-                        " ended_at = now() WHERE id = :i"
-                    ),
-                    {"i": call.id},
-                )
-            return _reply(speech.voice_line("goodbye", lang), lang, "hangup")
+            # Section 17.4: after the reprompt goes unanswered, offer a callback and end
+            # politely rather than just hanging up with a plain goodbye - reuses the same
+            # handoff/transfer-or-callback machinery as CONFUSED/STEP_LIMIT, so a real
+            # follow-up record exists for the team to call the customer back on.
+            return await _end_with_human(
+                factory,
+                voice,
+                view,
+                call.id,
+                call.conversation_id,
+                None,
+                "SILENCE_NO_RESPONSE",
+                "no response",
+                event.from_number,
+                lang,
+            )
         return _reply(speech.voice_line("silence", lang), lang)
+
+    if call.consent_response is None:
+        return await _consent_turn(factory, voice, view, call, event, utterance, lang)
 
     ext = event.turn_id or f"{event.call_id}:{call.turn_count + 1}"
     blocked = _eligible(view, voice)
@@ -933,7 +1085,9 @@ async def _finish_turn(
             ):
                 say = speech.voice_line("approval_pending", lang)
                 break
-        reply = _reply(say, lang)
+        # Section 17.2: an order ref or amount being read out (confirm_*/done_* templates,
+        # tracking status) must not be cut off mid-number by a false barge-in trigger.
+        reply = _reply(say, lang, barge_in=not speech.has_spoken_number(say))
     async with session_scope(factory, tenant_id=voice.tenant_id) as session:
         await session.execute(
             text(
