@@ -96,9 +96,9 @@ async def create_request(
             row = (
                 await session.execute(
                     text(
-                        "INSERT INTO privacy_requests (tenant_id, subject_ref, kind, created_by,"
+                        "INSERT INTO privacy_requests (tenant_id, subject_ref, kind, created_by,"  # noqa: S608
                         " correction_field, correction_value)"
-                        f" VALUES (:t, :s, :k, :u, :cf, :cv) RETURNING {_REQUEST_COLS}"  # noqa: S608
+                        f" VALUES (:t, :s, :k, :u, :cf, :cv) RETURNING {_REQUEST_COLS}"
                     ),
                     {
                         "t": tenant_id,
