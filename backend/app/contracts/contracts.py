@@ -104,6 +104,38 @@ ReasonCode = Literal[
     "WINDOW_CLOSED",
     "CUSTOMER_REPORT",
 ]
+V1_NEW_REASONS = (
+    "ABUSE",
+    "THREAT",
+    "SENTIMENT_NEGATIVE",
+    "CONFUSED",
+    "NO_PROGRESS",
+    "STEP_LIMIT",
+    "CONFIRM_UNCLEAR",
+    "POLICY_EXCEPTION",
+    "LIMIT_EXCEEDED",
+    "HIGH_RISK_FLAG",
+    "ACTION_FAILED",
+)
+# Handoffs from the V0 and V1 graphs land in the same `handoffs` table and are read back
+# through the same API (HandoffOut/HandoffSummary below), so those response models must
+# accept either graph's reason codes, not just V0's.
+ReasonCodeV1 = (
+    ReasonCode
+    | Literal[
+        "ABUSE",
+        "THREAT",
+        "SENTIMENT_NEGATIVE",
+        "CONFUSED",
+        "NO_PROGRESS",
+        "STEP_LIMIT",
+        "CONFIRM_UNCLEAR",
+        "POLICY_EXCEPTION",
+        "LIMIT_EXCEEDED",
+        "HIGH_RISK_FLAG",
+        "ACTION_FAILED",
+    ]
+)
 URGENT_REASONS = frozenset(
     {"ANGRY", "SAFETY", "LEGAL", "MEDICAL", "FRAUD", "PRESS", "REPEAT_COMPLAINT"}
 )
@@ -290,7 +322,7 @@ class HandoffSummary(BaseModel):
     order_ref: str | None = None
     customer_asked: str = Field(max_length=400)
     agent_did: list[str] = Field(default_factory=list, max_length=10)
-    reason_code: ReasonCode
+    reason_code: ReasonCodeV1
     why_stuck: str = Field(max_length=300)
     language: Language = "hinglish"
 
@@ -1083,7 +1115,7 @@ class HumanReplyIn(Strict):
 class HandoffOut(BaseModel):
     id: uuid.UUID
     conversation_id: uuid.UUID
-    reason_code: ReasonCode
+    reason_code: ReasonCodeV1
     priority: Literal["normal", "urgent"]
     status: HandoffStatus
     would_handoff: bool

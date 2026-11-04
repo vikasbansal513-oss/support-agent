@@ -2,7 +2,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
-from app.contracts.contracts import Language, ReasonCode
+from app.contracts.contracts import Language, ReasonCodeV1, V1_NEW_REASONS
 
 Tier = Literal["T0", "T1", "T2", "T3"]
 WriteTool = Literal["address_update", "order_cancel", "exchange_request", "refund_create"]
@@ -22,35 +22,6 @@ TOOL_TIER: dict[str, Tier] = {
     "refund_create": "T3",
 }
 
-V1_NEW_REASONS = (
-    "ABUSE",
-    "THREAT",
-    "SENTIMENT_NEGATIVE",
-    "CONFUSED",
-    "NO_PROGRESS",
-    "STEP_LIMIT",
-    "CONFIRM_UNCLEAR",
-    "POLICY_EXCEPTION",
-    "LIMIT_EXCEEDED",
-    "HIGH_RISK_FLAG",
-    "ACTION_FAILED",
-)
-ReasonCodeV1 = (
-    ReasonCode
-    | Literal[
-        "ABUSE",
-        "THREAT",
-        "SENTIMENT_NEGATIVE",
-        "CONFUSED",
-        "NO_PROGRESS",
-        "STEP_LIMIT",
-        "CONFIRM_UNCLEAR",
-        "POLICY_EXCEPTION",
-        "LIMIT_EXCEEDED",
-        "HIGH_RISK_FLAG",
-        "ACTION_FAILED",
-    ]
-)
 URGENT_REASONS_V1 = frozenset(
     {
         "ANGRY",
