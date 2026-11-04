@@ -524,7 +524,9 @@ async def refresh(factory: Factory, refresh_token: str, realm: Realm) -> AuthRes
             tenant_name: str | None = None
             if not revoke_family:
                 try:
-                    role, tenant_id, tenant_name = await _principal_info(session, row.user_id, realm)
+                    role, tenant_id, tenant_name = await _principal_info(
+                        session, row.user_id, realm
+                    )
                 except AppError:
                     revoke_family = True
             if revoke_family:

@@ -95,8 +95,7 @@ _SELECT = text(
     "FROM integrations WHERE kind = :k"
 )
 _SELECT_ALL = text(
-    "SELECT kind, config, secret_enc, status, last_error_code, last_checked_at "
-    "FROM integrations"
+    "SELECT kind, config, secret_enc, status, last_error_code, last_checked_at FROM integrations"
 )
 _UPSERT = text(
     "INSERT INTO integrations (kind, config, secret_enc, webhook_secret_hash, status,"

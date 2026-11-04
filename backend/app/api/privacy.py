@@ -69,7 +69,12 @@ async def reject_request(
     factory: Factory = Depends(get_session_factory),  # noqa: B008
 ) -> PrivacyRequestOut:
     return await privacy.decide_correction(
-        factory, _tenant(principal), principal.user_id, request_id, approve=False, reason=body.reason
+        factory,
+        _tenant(principal),
+        principal.user_id,
+        request_id,
+        approve=False,
+        reason=body.reason,
     )
 
 

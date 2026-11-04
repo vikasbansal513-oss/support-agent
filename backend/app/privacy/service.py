@@ -50,9 +50,7 @@ async def find_customer(session: AsyncSession, ref: str) -> uuid.UUID | None:
     return None if row is None else uuid.UUID(str(row.id))
 
 
-_REQUEST_COLS = (
-    "id, kind, status, due_at, created_at, correction_field, correction_value"
-)
+_REQUEST_COLS = "id, kind, status, due_at, created_at, correction_field, correction_value"
 
 
 def _out(row: Any) -> PrivacyRequestOut:
@@ -175,9 +173,7 @@ async def decide_correction(
                 {"v": normalized_value, "c": customer_id},
             )
             await session.execute(
-                text(
-                    "UPDATE privacy_requests SET status = 'done', done_at = now() WHERE id = :i"
-                ),
+                text("UPDATE privacy_requests SET status = 'done', done_at = now() WHERE id = :i"),
                 {"i": request_id},
             )
             await record(
@@ -195,8 +191,7 @@ async def decide_correction(
         else:
             await session.execute(
                 text(
-                    "UPDATE privacy_requests SET status = 'rejected', done_at = now()"
-                    " WHERE id = :i"
+                    "UPDATE privacy_requests SET status = 'rejected', done_at = now() WHERE id = :i"
                 ),
                 {"i": request_id},
             )
