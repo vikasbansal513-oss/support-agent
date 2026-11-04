@@ -183,36 +183,10 @@ async def test_usage_endpoint(env: AgentEnv) -> None:
     assert usage["limit_reached"] is False
 
 
-async def test_admin_mode_gate_needs_shadow_review(env: AgentEnv, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    from app.core.config import get_settings
-
-    monkeypatch.setenv("SHADOW_MIN_REVIEWED", "2")
-    monkeypatch.setenv("SHADOW_MIN_CORRECT_PCT", "90")
-    get_settings.cache_clear()
-    await env.publish_policy()
-    env.provider.responses = [cls(), cls()]
-    await send(env, "order #1001", "g1")
-    await send(env, "order #1001 status", "g2")
+async def test_admin_mode_change_has_no_review_gate(env: AgentEnv) -> None:
     _, verified, _ = await _admin_login_with_mfa(env.client, env.factory)
     admin = bearer(verified)
     url = f"/admin/tenants/{env.wa.tenant_id}/mode"
-    blocked = await env.client.put(
-        url, json={"mode": "draft", "reason": "pilot start"}, headers=admin
-    )
-    assert blocked.status_code == 409 and error_code(blocked) == "E-ADM-002"
-    items = (await env.client.get("/actions?status=shadow", headers=env.wa.headers)).json()["items"]
-    await env.client.post(
-        f"/actions/{items[0]['id']}/verdict", json={"verdict": "correct"}, headers=env.wa.headers
-    )
-    await env.client.post(
-        f"/actions/{items[1]['id']}/verdict", json={"verdict": "wrong"}, headers=env.wa.headers
-    )
-    assert (
-        await env.client.put(url, json={"mode": "draft", "reason": "pilot start"}, headers=admin)
-    ).status_code == 409
-    await env.client.post(
-        f"/actions/{items[1]['id']}/verdict", json={"verdict": "correct"}, headers=env.wa.headers
-    )
     ok = await env.client.put(url, json={"mode": "draft", "reason": "pilot start"}, headers=admin)
     assert ok.status_code == 200 and ok.json()["mode"] == "draft"
     back = await env.client.put(
@@ -223,7 +197,6 @@ async def test_admin_mode_gate_needs_shadow_review(env: AgentEnv, monkeypatch) -
         url, json={"mode": "auto", "reason": "no way"}, headers=env.wa.headers
     )
     assert brand.status_code in (401, 403)
-    get_settings.cache_clear()
 
 
 async def test_agent_role_endpoints_need_login(client: httpx.AsyncClient) -> None:

@@ -23,7 +23,6 @@ from app.contracts.contracts import (
 )
 from app.core import timeutil
 from app.core.audit import AuditEvent, record
-from app.core.config import get_settings
 from app.core.db import get_session_factory, session_scope
 from app.core.errors import AppError
 from app.voice import admin as voice_admin
@@ -435,25 +434,8 @@ async def set_mode(
     admin: Principal = Depends(require_admin),  # noqa: B008
     factory: Factory = Depends(get_session_factory),  # noqa: B008
 ) -> TenantOut:
-    settings = get_settings()
     async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
         before = await _get(session, tenant_id, lock=True)
-        if body.mode != "shadow" and before.mode == "shadow":
-            async with session_scope(factory, tenant_id=tenant_id) as tenant_session:
-                counts = (
-                    await tenant_session.execute(
-                        text(
-                            "SELECT count(*) FILTER (WHERE verdict = 'correct') AS correct,"
-                            " count(*) AS reviewed FROM shadow_verdicts"
-                        )
-                    )
-                ).one()
-            passed = (
-                counts.reviewed >= settings.shadow_min_reviewed
-                and counts.correct * 100 >= settings.shadow_min_correct_pct * counts.reviewed
-            )
-            if not passed:
-                raise AppError("E-ADM-002")
         await session.execute(
             text("UPDATE tenants SET mode = :m WHERE id = :i"), {"m": body.mode, "i": tenant_id}
         )
