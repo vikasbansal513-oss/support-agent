@@ -200,7 +200,7 @@ def test_claim_cluster_hard_blocks_regardless_of_level_or_limits() -> None:
 
 def test_claim_cluster_applies_to_every_claim_tool_not_address_update() -> None:
     for tool in ("refund_create", "exchange_request", "return_request"):
-        d = evaluate(policy("auto"), ctx(tool, delivered(), recent_claim_count=3))  # type: ignore[arg-type]
+        d = evaluate(policy("auto"), ctx(tool, delivered(), recent_claim_count=3))
         assert d.route == "handoff" and d.reason == "CLAIM_CLUSTERING"
     # address_update never moves money and is outside CLAIM_TOOLS - the signal must not
     # leak into a tool the framework never asked it to gate.
