@@ -8,7 +8,14 @@ from app.v1.gate import GateContext, GateOrder, amount_for, evaluate
 from app.v1.policy import PolicyV2
 
 NOW = datetime(2026, 3, 10, 12, 0, tzinfo=UTC)
-TOOLS = ["handoff_to_human", "address_update", "order_cancel", "exchange_request", "refund_create"]
+TOOLS = [
+    "handoff_to_human",
+    "address_update",
+    "order_cancel",
+    "exchange_request",
+    "refund_create",
+    "return_request",
+]
 
 
 def policy(level: str = "auto", **limits: int) -> PolicyV2:
@@ -20,6 +27,7 @@ def policy(level: str = "auto", **limits: int) -> PolicyV2:
                 "order_cancel": level,
                 "exchange_request": level,
                 "refund_create": level,
+                "return_request": level,
             },
             "limits": limits,
         }
