@@ -76,7 +76,11 @@ ARGS: dict[str, dict[str, Any]] = {
     "cancel": {},
     "address_update": {"new_address": ADDRESS},
     "exchange_request": {"line_item": "Kurta", "new_variant": "L"},
-    "refund_create": {"reason": "damaged"},
+    # Not "damaged"/"wrong item"/etc - those now trigger Section 12.3's mandatory
+    # evidence-photo ask (app.policy.fraud.requires_evidence), which is a different flow
+    # with its own dedicated unit tests in tests/policy/test_fraud.py. This fixture is the
+    # generic "customer wants a refund" case these multiturn tests are actually about.
+    "refund_create": {"reason": "no longer needed"},
 }
 NEEDS_DELIVERED = {"exchange_request", "refund_create"}
 TOTAL = 40_000

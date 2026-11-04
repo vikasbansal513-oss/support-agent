@@ -168,4 +168,4 @@ def test_alembic_version_table_kept_out_of_public(test_db: TestDb) -> None:
         await engine.dispose()
         return list(rows)
 
-    assert asyncio.run(versions()) == ["0032"]
+    assert asyncio.run(versions()) == ["0034"]

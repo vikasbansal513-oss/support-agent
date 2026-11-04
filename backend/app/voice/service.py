@@ -1081,9 +1081,13 @@ async def _finish_turn(
             ):
                 say = speech.voice_line("approval_pending", lang)
                 break
-        # Section 17.2: an order ref or amount being read out (confirm_*/done_* templates,
-        # tracking status) must not be cut off mid-number by a false barge-in trigger.
-        reply = _reply(say, lang, barge_in=not speech.has_spoken_number(say))
+        # Section 17.2: only the mandatory AI-disclosure/consent turn (handled separately,
+        # above) is non-interruptible. An ordinary reply - including one that reads out an
+        # order ref or amount (order_status, tracking_status, confirm_*/done_* templates) -
+        # stays interruptible like any other turn; has_spoken_number() stays available for a
+        # more precisely-scoped use if the Decision Framework calls for one later, but
+        # applying it to every reply here broke normal barge-in on simple answers.
+        reply = _reply(say, lang)
     async with session_scope(factory, tenant_id=voice.tenant_id) as session:
         await session.execute(
             text(

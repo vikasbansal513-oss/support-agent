@@ -24,6 +24,7 @@ REASON_BY_FLAG = {
     "medical": "MEDICAL",
     "legal": "LEGAL",
     "fraud": "FRAUD",
+    "injection": "FRAUD",
     "press": "PRESS",
     "angry": "ANGRY",
     "human": "HUMAN_REQUESTED",

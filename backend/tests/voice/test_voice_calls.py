@@ -69,7 +69,7 @@ async def test_refund_on_a_call_always_waits_for_a_human_even_at_auto(env: Agent
     await voice.start()
     await voice.say(
         "order 2001 ka refund chahiye",
-        plan("refund", "propose", "refund_create", "#2001", args={"reason": "damaged"}),
+        plan("refund", "propose", "refund_create", "#2001", args={"reason": "no longer needed"}),
     )
     out = await voice.say("haan", confidence=0.95)
     assert "call karke batayegi" in out["say"] and shop.calls == []
