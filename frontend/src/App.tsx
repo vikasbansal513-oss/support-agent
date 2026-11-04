@@ -12,7 +12,9 @@ import { t } from "./i18n";
 // loading upfront on first paint.
 function lazyNamed<M, K extends keyof M>(loader: () => Promise<M>, key: K) {
   return lazy(() =>
-    loader().then((mod) => ({ default: mod[key] as unknown as ComponentType })),
+    loader().then((mod) => ({
+      default: mod[key] as unknown as Extract<M[K], ComponentType<any>>,
+    })),
   );
 }
 

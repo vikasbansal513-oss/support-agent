@@ -98,7 +98,7 @@ async def create_request(
                     text(
                         "INSERT INTO privacy_requests (tenant_id, subject_ref, kind, created_by,"
                         " correction_field, correction_value)"
-                        " VALUES (:t, :s, :k, :u, :cf, :cv) RETURNING " + _REQUEST_COLS
+                        f" VALUES (:t, :s, :k, :u, :cf, :cv) RETURNING {_REQUEST_COLS}"  # noqa: S608
                     ),
                     {
                         "t": tenant_id,
