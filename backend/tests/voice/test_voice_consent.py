@@ -25,7 +25,7 @@ def test_call_row_tracks_consent_response() -> None:
 
 
 def test_why_dict_covers_every_new_consent_reason() -> None:
-    for reason in ("HUMAN_REQUESTED", "CONSENT_DECLINED", "CONSENT_UNCLEAR"):
+    for reason in ("HUMAN_REQUESTED", "CONSENT_DECLINED"):
         assert reason in WHY and WHY[reason]
 
 

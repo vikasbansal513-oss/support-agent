@@ -227,7 +227,6 @@ WHY = {
     # Section 17.1 consent-capture (see _consent_turn):
     "HUMAN_REQUESTED": "Customer ne call shuru me hi insaan se baat karne ko kaha.",
     "CONSENT_DECLINED": "Customer ne AI assistant se baat karne / call record hone ke liye consent nahi diya.",
-    "CONSENT_UNCLEAR": "Customer se call shuru me consent confirm nahi ho paaya.",
     # Section 17.4:
     "SILENCE_NO_RESPONSE": "Customer ne dobara prompt karne ke baad bhi jawaab nahi diya.",
 }
@@ -773,13 +772,18 @@ async def _consent_turn(
     event: VoiceEventIn,
     utterance: str,
     lang: str,
-) -> VoiceReplyOut:
+) -> VoiceReplyOut | None:
     """Decision Framework Section 17.1: the greeting discloses AI + recording and ends with
     an explicit yes/no question. This handles the reply to that question - the very first
     real turn of the call - before any normal eligibility/step-limit/agent processing runs.
-    A customer who asks for a human instead of answering is sent straight to one. 'no' ends
-    the call the same way. 'unclear' gets one reprompt (bounded by call.turn_count, which is
-    still 0 on the first attempt) and then also hands off rather than looping forever."""
+
+    Returns a VoiceReplyOut to end the turn here (human-request/explicit-no/literal-yes),
+    or None to mean "treat this same utterance as the first real turn" - a customer who
+    skips the question and states their need directly ("order 1001 cancel kar do") is not
+    an explicit decline, so it is handled as implicit consent rather than trapped in a
+    reprompt loop; _turn()'s existing low-confidence/step-limit/eligibility checks already
+    cover a genuinely unclear or garbled utterance on this turn exactly as they do on every
+    other turn, so no separate "unclear" handling is needed here."""
     if "human" in keywords.detect_flags(utterance):
         return await _end_with_human(
             factory,
@@ -794,17 +798,6 @@ async def _consent_turn(
             lang,
         )
     answer = parse_confirmation(utterance)
-    if answer == "yes":
-        async with session_scope(factory, tenant_id=voice.tenant_id) as session:
-            await _bump(session, call, turns=1)
-            await session.execute(
-                text(
-                    "UPDATE voice_calls SET consent_response = 'yes', consent_responded_at = now()"
-                    " WHERE id = :i"
-                ),
-                {"i": call.id},
-            )
-        return _reply(speech.voice_line("consent_ack", lang), lang)
     if answer == "no":
         async with session_scope(factory, tenant_id=voice.tenant_id) as session:
             await session.execute(
@@ -826,22 +819,20 @@ async def _consent_turn(
             event.from_number,
             lang,
         )
-    if call.turn_count >= 1:
-        return await _end_with_human(
-            factory,
-            voice,
-            view,
-            call.id,
-            call.conversation_id,
-            None,
-            "CONSENT_UNCLEAR",
-            utterance,
-            event.from_number,
-            lang,
-        )
     async with session_scope(factory, tenant_id=voice.tenant_id) as session:
-        await _bump(session, call, turns=1)
-    return _reply(speech.voice_line("consent_reask", lang), lang)
+        await session.execute(
+            text(
+                "UPDATE voice_calls SET consent_response = 'yes', consent_responded_at = now()"
+                " WHERE id = :i"
+            ),
+            {"i": call.id},
+        )
+    if answer == "yes":
+        async with session_scope(factory, tenant_id=voice.tenant_id) as session:
+            await _bump(session, call, turns=1)
+        return _reply(speech.voice_line("consent_ack", lang), lang)
+    call.consent_response = "yes"
+    return None
 
 
 async def _turn(
@@ -884,7 +875,12 @@ async def _turn(
         return _reply(speech.voice_line("silence", lang), lang)
 
     if call.consent_response is None:
-        return await _consent_turn(factory, voice, view, call, event, utterance, lang)
+        reply = await _consent_turn(factory, voice, view, call, event, utterance, lang)
+        if reply is not None:
+            return reply
+        # Implicit consent granted (customer went straight into a request instead of a
+        # literal yes/no) - fall through and process this same utterance as the first
+        # real turn, instead of discarding it.
 
     ext = event.turn_id or f"{event.call_id}:{call.turn_count + 1}"
     blocked = _eligible(view, voice)

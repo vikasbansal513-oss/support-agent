@@ -132,7 +132,11 @@ async def test_silence_twice_ends_the_call(env: AgentEnv) -> None:
     first = await voice.send("turn", speech="", confidence=None)
     assert "line par" in first["say"] and first["action"] == "continue"
     second = await voice.send("turn", speech="")
-    assert second["action"] == "hangup" and (await call_row(env)).end_reason == "silence"
+    # Section 17.4: silence-limit now ends via the handoff/callback path (offers a callback,
+    # logs a real handoff record) instead of a bare goodbye - end_reason reflects that.
+    assert (
+        second["action"] == "hangup" and (await call_row(env)).end_reason == "SILENCE_NO_RESPONSE"
+    )
 
 
 async def test_keypad_digits_become_the_order_number(env: AgentEnv) -> None:

@@ -117,9 +117,19 @@ V1_NEW_REASONS = (
     "HIGH_RISK_FLAG",
     "ACTION_FAILED",
 )
-# Handoffs from the V0 and V1 graphs land in the same `handoffs` table and are read back
-# through the same API (HandoffOut/HandoffSummary below), so those response models must
-# accept either graph's reason codes, not just V0's.
+# Voice-only reasons (Decision Framework Section 17.1/17.4 - app.voice.service's own WHY
+# dict and _handoff_decision()), kept separate from V1_NEW_REASONS/HANDOFF_ORDER_V1 above
+# since those are specifically the text-graph's reasons in their display-priority order
+# (test_new_reason_codes_are_ordered_and_distinct asserts an exact count/order on them) -
+# these four are additive to the handoff reason-code type, not part of that ordering.
+VOICE_NEW_REASONS = (
+    "HUMAN_REQUESTED",
+    "CONSENT_DECLINED",
+    "SILENCE_NO_RESPONSE",
+)
+# Handoffs from the V0 and V1 graphs (and voice, which shares the same `handoffs` table)
+# land in the same place and are read back through the same API (HandoffOut/HandoffSummary
+# below), so those response models must accept any of their reason codes, not just V0's.
 ReasonCodeV1 = (
     ReasonCode
     | Literal[
@@ -134,6 +144,11 @@ ReasonCodeV1 = (
         "LIMIT_EXCEEDED",
         "HIGH_RISK_FLAG",
         "ACTION_FAILED",
+    ]
+    | Literal[
+        "HUMAN_REQUESTED",
+        "CONSENT_DECLINED",
+        "SILENCE_NO_RESPONSE",
     ]
 )
 URGENT_REASONS = frozenset(
