@@ -9,7 +9,7 @@ import { useApi } from "../components/useApi";
 import { formatPaise, rupeesToPaise } from "../format";
 import { t, type Key } from "../i18n";
 
-const TOOLS: WriteTool[] = ["address_update", "order_cancel", "exchange_request", "refund_create"];
+const TOOLS: WriteTool[] = ["address_update", "order_cancel", "exchange_request", "return_request", "refund_create"];
 const LIMIT_KEYS: (keyof Limits)[] = [
   "cancel_auto_limit_paise",
   "exchange_auto_limit_paise",
@@ -93,6 +93,7 @@ function Editor({ policy, latest, onDone }: { policy: Policy; latest: number; on
     address_update: c.autonomy?.address_update ?? "off",
     order_cancel: c.autonomy?.order_cancel ?? "off",
     exchange_request: c.autonomy?.exchange_request ?? "off",
+    return_request: c.autonomy?.return_request ?? "off",
     refund_create: c.autonomy?.refund_create ?? "off",
   });
   const [limits, setLimits] = useState<Record<keyof Limits, string>>(() => {

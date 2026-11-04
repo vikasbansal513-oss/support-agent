@@ -8,6 +8,7 @@ export interface User {
   name: string;
   role: Role | "super_admin";
   tenant_id: string | null;
+  tenant_name: string | null;
   mfa_ok: boolean;
 }
 
@@ -182,7 +183,7 @@ export interface Disclosure {
   hinglish: string;
 }
 
-export type WriteTool = "address_update" | "order_cancel" | "exchange_request" | "refund_create";
+export type WriteTool = "address_update" | "order_cancel" | "exchange_request" | "return_request" | "refund_create";
 export type Level = "off" | "approval" | "auto";
 export type Autonomy = Record<WriteTool, Level> & { order_status: "auto" };
 
@@ -621,6 +622,8 @@ export interface PrivacyRequest {
   status: "open" | "done" | "rejected";
   due_at: string;
   created_at: string;
+  correction_field: "phone" | "email" | null;
+  correction_value: string | null;
 }
 
 export interface PublicNotice {

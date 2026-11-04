@@ -64,7 +64,7 @@ function Editor({ policy, onSaved }: { policy: Policy; onSaved: () => void }) {
     <div className="policy-layout">
       <div className="card policy-main">
         <div className="row">
-          <h2 className="policy-section-title">v{policy.version}</h2>
+          <h2 className="policy-section-title">Configuration Settings</h2>
           <Chip tone={policy.status === "published" ? "ok" : undefined}>
             {policy.status === "draft" ? t.policyDraft : policy.status === "published" ? t.policyPublished : t.policyArchived}
           </Chip>

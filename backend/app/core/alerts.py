@@ -4,6 +4,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.billing import usage as billing_usage
+from app.core.config import get_settings
 
 _UPSERT = text(
     "INSERT INTO alerts (tenant_id, kind, severity, message, dedupe_key, service,"
@@ -523,3 +524,24 @@ async def scan_and_upsert(session: AsyncSession) -> None:
                 ),
                 {"d": dedupe},
             )
+
+    # Platform-wide: flag (never force-publish) a production deployment that is still
+    # serving the Privacy Notice/Terms in Draft because NOTICE_PUBLISHED hasn't been set
+    # to true. Defaulting to false is the safe choice (no notice goes live without an
+    # explicit flip), but it should never stay that way in prod *unintentionally* - this
+    # makes the gap visible to admins instead of it being silently missed.
+    settings = get_settings()
+    if settings.app_env.lower() in ("prod", "production") and not settings.notice_published:
+        await _upsert(
+            session,
+            Condition(
+                kind="privacy_notice_unpublished",
+                severity="warning",
+                message="Production me NOTICE_PUBLISHED=false hai, Privacy Notice/Terms abhi"
+                " Draft dikh rahe hain. Legal review ho jaane ke baad hi"
+                " NOTICE_PUBLISHED=true set karein.",
+                dedupe_key="privacy_notice_unpublished",
+            ),
+        )
+    else:
+        await _resolve_missing(session, "privacy_notice_unpublished", None)

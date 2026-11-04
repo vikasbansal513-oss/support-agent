@@ -23,6 +23,7 @@ class GateOrder:
     disputed: bool = False
     address_already_changed: bool = False
     exchange_already_requested: bool = False
+    return_already_requested: bool = False
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,7 @@ def _handoff(tool: WriteTool, reason: str, code: ReasonCodeV1, amount: int = 0) 
 VOICE_APPROVAL_REASON: dict[str, str] = {
     "refund_create": "VOICE_REFUND",
     "exchange_request": "VOICE_EXCHANGE",
+    "return_request": "VOICE_RETURN",
 }
 
 
@@ -124,6 +126,8 @@ def _evaluate(policy: PolicyV2, ctx: GateContext) -> GateDecision:
             return _handoff(tool, "ALREADY_REFUNDED", "POLICY_EXCEPTION", amount)
         if tool == "exchange_request" and order.exchange_already_requested:
             return _handoff(tool, "EXCHANGE_EXISTS", "POLICY_EXCEPTION", amount)
+        if tool == "return_request" and order.return_already_requested:
+            return _handoff(tool, "RETURN_EXISTS", "POLICY_EXCEPTION", amount)
 
     if level == "approval":
         return GateDecision("approval", "LEVEL_APPROVAL", None, amount, tier)
@@ -133,7 +137,11 @@ def _evaluate(policy: PolicyV2, ctx: GateContext) -> GateDecision:
 def _within_auto(policy: PolicyV2, ctx: GateContext, amount: int, tier: Tier) -> GateDecision:
     tool = ctx.tool
     limits = policy.limits
-    if tool == "address_update":
+    if tool in ("address_update", "return_request"):
+        # Neither tool moves money (return_request only registers a return;
+        # the later refund, if any, is a separate refund_create action that
+        # goes through its own limit check), so there is no paise cap to
+        # apply here - same treatment as address_update.
         return GateDecision("auto", "AUTO_OK", None, 0, tier)
     cap = limits.auto_limit(tool)
     if cap is None or amount > cap:

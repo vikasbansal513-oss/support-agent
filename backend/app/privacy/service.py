@@ -50,9 +50,20 @@ async def find_customer(session: AsyncSession, ref: str) -> uuid.UUID | None:
     return None if row is None else uuid.UUID(str(row.id))
 
 
+_REQUEST_COLS = (
+    "id, kind, status, due_at, created_at, correction_field, correction_value"
+)
+
+
 def _out(row: Any) -> PrivacyRequestOut:
     return PrivacyRequestOut(
-        id=row.id, kind=row.kind, status=row.status, due_at=row.due_at, created_at=row.created_at
+        id=row.id,
+        kind=row.kind,
+        status=row.status,
+        due_at=row.due_at,
+        created_at=row.created_at,
+        correction_field=row.correction_field,
+        correction_value=row.correction_value,
     )
 
 
@@ -61,7 +72,7 @@ async def list_requests(factory: Factory, tenant_id: uuid.UUID) -> list[PrivacyR
         rows = (
             await session.execute(
                 text(
-                    "SELECT id, kind, status, due_at, created_at FROM privacy_requests"
+                    f"SELECT {_REQUEST_COLS} FROM privacy_requests"  # noqa: S608
                     " WHERE tenant_id = :t ORDER BY created_at DESC, id DESC LIMIT 200"
                 ),
                 {"t": tenant_id},
@@ -71,7 +82,13 @@ async def list_requests(factory: Factory, tenant_id: uuid.UUID) -> list[PrivacyR
 
 
 async def create_request(
-    factory: Factory, tenant_id: uuid.UUID, user_id: uuid.UUID, subject_ref: str, kind: str
+    factory: Factory,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    subject_ref: str,
+    kind: str,
+    correction_field: str | None = None,
+    correction_value: str | None = None,
 ) -> PrivacyRequestOut:
     _, normalized = normalize_subject(subject_ref)
     try:
@@ -79,10 +96,18 @@ async def create_request(
             row = (
                 await session.execute(
                     text(
-                        "INSERT INTO privacy_requests (tenant_id, subject_ref, kind, created_by)"
-                        " VALUES (:t, :s, :k, :u) RETURNING id, kind, status, due_at, created_at"
+                        "INSERT INTO privacy_requests (tenant_id, subject_ref, kind, created_by,"
+                        " correction_field, correction_value)"
+                        " VALUES (:t, :s, :k, :u, :cf, :cv) RETURNING " + _REQUEST_COLS
                     ),
-                    {"t": tenant_id, "s": normalized, "k": kind, "u": user_id},
+                    {
+                        "t": tenant_id,
+                        "s": normalized,
+                        "k": kind,
+                        "u": user_id,
+                        "cf": correction_field,
+                        "cv": correction_value,
+                    },
                 )
             ).one()
             await record(
@@ -91,7 +116,11 @@ async def create_request(
                     action="privacy.request_created",
                     entity_type="privacy_request",
                     entity_id=str(row.id),
-                    new_value={"kind": kind},
+                    new_value={
+                        "kind": kind,
+                        "correction_field": correction_field,
+                        "correction_value": correction_value,
+                    },
                     actor_user_id=user_id,
                     actor_role="owner",
                 ),
@@ -99,6 +128,96 @@ async def create_request(
     except IntegrityError as exc:
         raise AppError("E-PRV-001") from exc
     return _out(row)
+
+
+async def decide_correction(
+    factory: Factory,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    request_id: uuid.UUID,
+    approve: bool,
+    reason: str | None = None,
+) -> PrivacyRequestOut:
+    """Owner review step for a kind=correct privacy request.
+
+    Approving applies the customer's requested phone/email correction to their own
+    `customers` row (never another tenant's - RLS scopes every statement below to
+    tenant_id) and marks the request done; rejecting just closes it with a reason.
+    This never touches `refund_create`/order data - it only edits contact details,
+    kept entirely separate from the export/delete flows above.
+    """
+    async with session_scope(factory, tenant_id=tenant_id, user_id=user_id) as session:
+        row = (
+            await session.execute(
+                text(
+                    f"SELECT {_REQUEST_COLS}, subject_ref FROM privacy_requests"  # noqa: S608
+                    " WHERE id = :i FOR UPDATE"
+                ),
+                {"i": request_id},
+            )
+        ).first()
+        if row is None:
+            raise AppError("E-NF-001")
+        if row.kind != "correct" or row.status != "open":
+            raise AppError("E-PRV-002")
+        if approve:
+            if row.correction_field is None or row.correction_value is None:
+                raise AppError("E-PRV-002")
+            kind, normalized_value = normalize_subject(row.correction_value)
+            if kind != row.correction_field:
+                raise AppError("E-PRV-004")
+            customer_id = await find_customer(session, row.subject_ref)
+            if customer_id is None:
+                raise AppError("E-PRV-003")
+            column = "email_lower" if row.correction_field == "email" else "phone_e164"
+            await session.execute(
+                text(f"UPDATE customers SET {column} = :v WHERE id = :c"),  # noqa: S608
+                {"v": normalized_value, "c": customer_id},
+            )
+            await session.execute(
+                text(
+                    "UPDATE privacy_requests SET status = 'done', done_at = now() WHERE id = :i"
+                ),
+                {"i": request_id},
+            )
+            await record(
+                session,
+                AuditEvent(
+                    action="privacy.correction_approved",
+                    entity_type="privacy_request",
+                    entity_id=str(request_id),
+                    new_value={"field": row.correction_field, "value": normalized_value},
+                    reason=reason,
+                    actor_user_id=user_id,
+                    actor_role="owner",
+                ),
+            )
+        else:
+            await session.execute(
+                text(
+                    "UPDATE privacy_requests SET status = 'rejected', done_at = now()"
+                    " WHERE id = :i"
+                ),
+                {"i": request_id},
+            )
+            await record(
+                session,
+                AuditEvent(
+                    action="privacy.correction_rejected",
+                    entity_type="privacy_request",
+                    entity_id=str(request_id),
+                    reason=reason,
+                    actor_user_id=user_id,
+                    actor_role="owner",
+                ),
+            )
+        updated = (
+            await session.execute(
+                text(f"SELECT {_REQUEST_COLS} FROM privacy_requests WHERE id = :i"),  # noqa: S608
+                {"i": request_id},
+            )
+        ).one()
+    return _out(updated)
 
 
 async def purge_conversations(session: AsyncSession, conversation_ids: list[uuid.UUID]) -> int:

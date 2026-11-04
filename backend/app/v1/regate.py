@@ -39,6 +39,7 @@ class WriterFacts:
             refunded_paise=raw.refunded_paise,
             delivered_at=None,
             exchange_already_requested=raw.exchange_requested,
+            return_already_requested=raw.return_requested,
         )
 
 

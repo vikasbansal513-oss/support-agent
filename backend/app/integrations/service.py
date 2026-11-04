@@ -94,6 +94,10 @@ _SELECT = text(
     "SELECT kind, config, secret_enc, status, last_error_code, last_checked_at "
     "FROM integrations WHERE kind = :k"
 )
+_SELECT_ALL = text(
+    "SELECT kind, config, secret_enc, status, last_error_code, last_checked_at "
+    "FROM integrations"
+)
 _UPSERT = text(
     "INSERT INTO integrations (kind, config, secret_enc, webhook_secret_hash, status,"
     " last_error_code, last_checked_at) VALUES"
@@ -118,11 +122,12 @@ def _hint_from_row(row: Any) -> str | None:
 
 
 async def list_integrations(session: AsyncSession) -> list[IntegrationOut]:
-    out = []
-    for kind in KINDS:
-        row = await _load(session, kind)
-        out.append(_out(kind, row, _hint_from_row(row)))
-    return out
+    # Single combined query instead of one SELECT per kind (was N sequential
+    # DB round-trips for len(KINDS) kinds); RLS already scopes the rows to
+    # the caller's tenant exactly as the per-kind query did.
+    rows = (await session.execute(_SELECT_ALL)).all()
+    by_kind = {row.kind: row for row in rows}
+    return [_out(kind, by_kind.get(kind), _hint_from_row(by_kind.get(kind))) for kind in KINDS]
 
 
 async def _audit(session: AsyncSession, principal: Principal, kind: str, action: str) -> None:

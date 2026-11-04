@@ -19,6 +19,7 @@ ToolNameV2 = Literal[
     "address_update",
     "order_cancel",
     "exchange_request",
+    "return_request",
     "refund_create",
 ]
 V2_TOOLS: tuple[str, ...] = (*V0_TOOLS, *WRITE_TOOLS)
@@ -30,6 +31,7 @@ class Autonomy(BaseModel):
     address_update: Level = "off"
     order_cancel: Level = "off"
     exchange_request: Level = "off"
+    return_request: Level = "off"
     refund_create: Level = "off"
 
     def level(self, tool: str) -> Level:

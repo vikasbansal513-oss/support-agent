@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.deps import require_owner
 from app.auth.service import Principal
-from app.contracts.contracts import PrivacyRequestIn, PrivacyRequestOut, PublicNoticeOut
+from app.contracts.contracts import PrivacyRequestIn, PrivacyRequestOut, PublicNoticeOut, ReasonIn
 from app.core.db import get_session_factory
 from app.core.errors import AppError
 from app.privacy import notices
@@ -40,7 +40,36 @@ async def create_request(
     factory: Factory = Depends(get_session_factory),  # noqa: B008
 ) -> PrivacyRequestOut:
     return await privacy.create_request(
-        factory, _tenant(principal), principal.user_id, body.subject_ref, body.kind
+        factory,
+        _tenant(principal),
+        principal.user_id,
+        body.subject_ref,
+        body.kind,
+        correction_field=body.correction_field,
+        correction_value=body.correction_value,
+    )
+
+
+@router.post("/privacy/requests/{request_id}/approve")
+async def approve_request(
+    request_id: uuid.UUID,
+    principal: Principal = Depends(require_owner),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> PrivacyRequestOut:
+    return await privacy.decide_correction(
+        factory, _tenant(principal), principal.user_id, request_id, approve=True
+    )
+
+
+@router.post("/privacy/requests/{request_id}/reject")
+async def reject_request(
+    request_id: uuid.UUID,
+    body: ReasonIn,
+    principal: Principal = Depends(require_owner),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> PrivacyRequestOut:
+    return await privacy.decide_correction(
+        factory, _tenant(principal), principal.user_id, request_id, approve=False, reason=body.reason
     )
 
 

@@ -29,6 +29,7 @@ def to_login_out(result: AuthResult) -> LoginOut:
             name=user.name,
             role=user.role,
             tenant_id=user.tenant_id,
+            tenant_name=user.tenant_name,
             mfa_ok=user.mfa_ok,
         ),
     )

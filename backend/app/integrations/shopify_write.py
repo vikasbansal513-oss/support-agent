@@ -30,6 +30,7 @@ class WrittenOrder:
     exchange_requested: bool
     customer_phone: str | None
     customer_email: str | None
+    return_requested: bool = False
 
 
 class ShopifyWriter(Protocol):
@@ -44,6 +45,10 @@ class ShopifyWriter(Protocol):
     ) -> WriteResult: ...
 
     async def create_refund(self, order_ref: str, amount_paise: int, key: str) -> WriteResult: ...
+
+    async def create_return(self, order_ref: str, reason: str, key: str) -> WriteResult:
+        """Registers a return request (no refund) - refund_create stays a separate action."""
+        ...
 
 
 class DisabledShopifyWriter:
@@ -64,6 +69,9 @@ class DisabledShopifyWriter:
         raise WriteUnavailable("shopify write client not verified")
 
     async def create_refund(self, order_ref: str, amount_paise: int, key: str) -> WriteResult:
+        raise WriteUnavailable("shopify write client not verified")
+
+    async def create_return(self, order_ref: str, reason: str, key: str) -> WriteResult:
         raise WriteUnavailable("shopify write client not verified")
 
 
@@ -105,6 +113,7 @@ class FakeShopify:
             exchange_requested=False,
             customer_phone=phone,
             customer_email=email,
+            return_requested=False,
         )
         self.orders[order_ref] = order
         return order
@@ -184,6 +193,12 @@ class FakeShopify:
             "refund_create", order_ref, key, {"amount_paise": amount_paise}, apply
         )
 
+    async def create_return(self, order_ref: str, reason: str, key: str) -> WriteResult:
+        def apply(partial: bool) -> None:
+            self._replace(order_ref, return_requested=True)
+
+        return await self._run("return_request", order_ref, key, {"reason": reason}, apply)
+
 
 _override: ShopifyWriter | None = None
 
@@ -213,4 +228,6 @@ def verify_effect(
         return after.exchange_requested
     if tool == "refund_create":
         return amount_paise is not None and after.refunded_paise - before_refunded == amount_paise
+    if tool == "return_request":
+        return after.return_requested
     return False

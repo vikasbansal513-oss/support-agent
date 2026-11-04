@@ -529,6 +529,7 @@ class UserOut(BaseModel):
     name: str
     role: Role | Literal["super_admin"]
     tenant_id: uuid.UUID | None
+    tenant_name: str | None = None
     mfa_ok: bool
 
 
@@ -1173,6 +1174,22 @@ class PrivacyRequestIn(Strict):
         description="customer phone/email to export, delete or correct",
     )
     kind: Literal["export", "delete", "correct"]
+    correction_field: Literal["phone", "email"] | None = Field(
+        default=None, description="only for kind=correct: which field the customer wants fixed"
+    )
+    correction_value: str | None = Field(
+        default=None, min_length=1, max_length=200, description="only for kind=correct: the corrected value"
+    )
+
+    @model_validator(mode="after")
+    def _correction_shape(self) -> "PrivacyRequestIn":
+        has_correction = self.correction_field is not None or self.correction_value is not None
+        if self.kind == "correct":
+            if self.correction_field is None or self.correction_value is None:
+                raise ValueError("correct requests need correction_field and correction_value")
+        elif has_correction:
+            raise ValueError("correction_field/correction_value only apply to kind=correct")
+        return self
 
 
 class PrivacyRequestOut(BaseModel):
@@ -1181,6 +1198,8 @@ class PrivacyRequestOut(BaseModel):
     status: Literal["open", "done", "rejected"]
     due_at: AwareDatetime
     created_at: AwareDatetime
+    correction_field: Literal["phone", "email"] | None = None
+    correction_value: str | None = None
 
 
 class PublicNoticeOut(BaseModel):

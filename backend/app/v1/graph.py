@@ -520,6 +520,8 @@ def build_graph_v1(deps: V1Deps) -> Any:
                 "address_already_changed": ("address_update", order.order_name) in done,
                 "exchange_already_requested": ("exchange_request", order.order_name) in done
                 or gate_order.exchange_already_requested,
+                "return_already_requested": ("return_request", order.order_name) in done
+                or gate_order.return_already_requested,
             }
         )
         ctx_raw = state.get("gate_ctx", {})
@@ -556,6 +558,8 @@ def build_graph_v1(deps: V1Deps) -> Any:
             facts.update(amount=t.rs(decision.amount_paise))
         elif tool == "exchange_request":
             facts.update(item=item, variant=plan.args.new_variant or "-")
+        elif tool == "return_request":
+            pass
         else:
             facts.update(address=_address_text(args["new_address"]))
         conv.update(awaiting="confirm", unclear_count=0, order_ref=order.order_name)

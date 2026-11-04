@@ -2,6 +2,7 @@ import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { MfaStatus } from "../api/types";
+import { useAuth } from "../auth/AuthContext";
 import { Async, Field, Screen, useSubmit } from "../components/common";
 import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
@@ -137,10 +138,31 @@ function PasswordCard() {
   );
 }
 
+function AccountCard() {
+  const { user } = useAuth();
+  return (
+    <div className="card security-mfa">
+      <span className="security-icon">
+        <Icon name="shield" />
+      </span>
+      <div className="security-copy">
+        <h2>{t.accountSectionTitle}</h2>
+        <p>
+          {t.name}: {user?.name ?? ""}
+        </p>
+        <p>
+          {t.email}: {user?.email ?? ""}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function Security() {
   const [status, reload] = useApi(() => api.get<MfaStatus>("/auth/mfa"));
   return (
     <Screen title={t.securityTitle}>
+      <AccountCard />
       <Async value={status} reload={reload}>
         {(s) => <MfaCard status={s} onChange={reload} />}
       </Async>

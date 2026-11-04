@@ -11,11 +11,14 @@ from app.contracts.contracts import (
 )
 
 Tier = Literal["T0", "T1", "T2", "T3"]
-WriteTool = Literal["address_update", "order_cancel", "exchange_request", "refund_create"]
+WriteTool = Literal[
+    "address_update", "order_cancel", "exchange_request", "return_request", "refund_create"
+]
 WRITE_TOOLS: tuple[WriteTool, ...] = (
     "address_update",
     "order_cancel",
     "exchange_request",
+    "return_request",
     "refund_create",
 )
 Level = Literal["off", "approval", "auto"]
@@ -25,6 +28,7 @@ TOOL_TIER: dict[str, Tier] = {
     "address_update": "T1",
     "order_cancel": "T2",
     "exchange_request": "T2",
+    "return_request": "T2",
     "refund_create": "T3",
 }
 

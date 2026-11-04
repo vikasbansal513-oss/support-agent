@@ -19,6 +19,7 @@ const TOOL_ICON: Record<WriteTool, string> = {
   address_update: "home",
   order_cancel: "package",
   exchange_request: "arrows",
+  return_request: "refresh",
   refund_create: "check-circle",
 };
 

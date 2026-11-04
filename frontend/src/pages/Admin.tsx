@@ -230,7 +230,7 @@ export function AdminTenants() {
                       <td>
                         <div className="row">
                           <select aria-label={`${t.adminAutonomy} tool ${tenant.name}`} value={auto.tool} onChange={(event) => setAuto({ ...auto, tool: event.target.value as WriteTool })}>
-                            {(["address_update", "order_cancel", "exchange_request", "refund_create"] as WriteTool[]).map((tool) => (
+                            {(["address_update", "order_cancel", "exchange_request", "return_request", "refund_create"] as WriteTool[]).map((tool) => (
                               <option key={tool} value={tool}>
                                 {t[`tool_${tool}` as Key]}
                               </option>

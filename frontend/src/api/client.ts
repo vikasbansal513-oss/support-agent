@@ -25,6 +25,27 @@ const session: Session = { accessToken: null, csrf: null, realm: "brand" };
 let onSessionLost: (() => void) | null = null;
 let refreshing: Promise<boolean> | null = null;
 
+// Session-restore calls are on the critical path for first paint (every full
+// page load/refresh waits on one of these before the dashboard can render),
+// so they're bounded by a timeout instead of being able to hang indefinitely
+// on a stalled connection.
+const AUTH_TIMEOUT_MS = 10_000;
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// De-dupes identical concurrent GETs (e.g. two components mounting at once
+// and requesting the same resource) into a single network request; callers
+// still each get their own copy of the resolved value.
+const inflightGets = new Map<string, Promise<unknown>>();
+
 export function baseUrl(): string {
   const value = import.meta.env.VITE_API_BASE_URL as string | undefined;
   return (value ?? "").replace(/\/$/, "");
@@ -67,7 +88,7 @@ async function parseError(response: Response): Promise<ApiError> {
     body = {};
   }
   const code = typeof body.code === "string" ? body.code : "E-SYS-001";
-  const message = typeof body.message === "string" ? body.message : "Kuch gadbad hui. Dobara try karein.";
+  const message = typeof body.message === "string" ? body.message : "Something went wrong. Please try again.";
   const errorId = typeof body.error_id === "string" ? body.error_id : null;
   const severity = body.severity === "critical" || body.severity === "warning" ? body.severity : "error";
   return new ApiError(response.status, code, message, errorId, severity);
@@ -86,11 +107,11 @@ async function refresh(): Promise<boolean> {
   const path = session.realm === "admin" ? "/admin/auth/refresh" : "/auth/refresh";
   refreshing = (async () => {
     try {
-      const response = await fetch(baseUrl() + path, {
-        method: "POST",
-        credentials: "include",
-        headers: headersFor("POST", false, false),
-      });
+      const response = await fetchWithTimeout(
+        baseUrl() + path,
+        { method: "POST", credentials: "include", headers: headersFor("POST", false, false) },
+        AUTH_TIMEOUT_MS,
+      );
       if (!response.ok) return false;
       applyLogin((await response.json()) as LoginOut, session.realm);
       return true;
@@ -117,11 +138,11 @@ export async function restoreSession(realm: Realm, activate = true): Promise<Log
     const headers = new Headers();
     const csrf = readCookie(csrfCookieName(realm));
     if (csrf) headers.set("X-CSRF-Token", csrf);
-    const response = await fetch(baseUrl() + path, {
-      method: "POST",
-      credentials: "include",
-      headers,
-    });
+    const response = await fetchWithTimeout(
+      baseUrl() + path,
+      { method: "POST", credentials: "include", headers },
+      AUTH_TIMEOUT_MS,
+    );
     if (!response.ok) return null;
     const out = (await response.json()) as LoginOut;
     if (activate) applyLogin(out, realm);
@@ -131,7 +152,7 @@ export async function restoreSession(realm: Realm, activate = true): Promise<Log
   }
 }
 
-export async function request<T>(method: string, path: string, body?: unknown, retry = true): Promise<T> {
+async function doRequest<T>(method: string, path: string, body: unknown, retry: boolean): Promise<T> {
   const response = await fetch(baseUrl() + path, {
     method,
     credentials: "include",
@@ -144,11 +165,27 @@ export async function request<T>(method: string, path: string, body?: unknown, r
   }
   const error = await parseError(response);
   if (error.code === "E-AUTH-004" && retry) {
-    if (await refresh()) return request<T>(method, path, body, false);
+    if (await refresh()) return doRequest<T>(method, path, body, false);
     clearSession();
     onSessionLost?.();
   }
   throw error;
+}
+
+export async function request<T>(method: string, path: string, body?: unknown, retry = true): Promise<T> {
+  // GET requests have no side effects, so identical concurrent calls (e.g.
+  // two components mounting at once and asking for the same resource) are
+  // collapsed into one network request instead of firing one each.
+  if (method === "GET") {
+    const existing = inflightGets.get(path);
+    if (existing) return existing as Promise<T>;
+    const promise = doRequest<T>(method, path, body, retry).finally(() => {
+      inflightGets.delete(path);
+    });
+    inflightGets.set(path, promise);
+    return promise;
+  }
+  return doRequest<T>(method, path, body, retry);
 }
 
 export const api = {
@@ -171,8 +208,15 @@ export async function downloadFile(path: string, filename: string): Promise<void
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
+  link.rel = "noopener";
+  document.body.appendChild(link);
   link.click();
-  URL.revokeObjectURL(url);
+  link.remove();
+  // Revoking the object URL immediately after click() can cut the download
+  // off in some browsers (the download is handed off asynchronously, not
+  // completed by the time click() returns), so free it on the next tick
+  // instead of synchronously.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export async function publicPost<T>(path: string, body: unknown): Promise<T> {

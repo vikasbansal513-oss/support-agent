@@ -1,8 +1,9 @@
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { api } from "../api/client";
 import type { AgentStatus, Alert, Page } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
+import { PageSkeleton } from "./common";
 import { t } from "../i18n";
 import { sendPerfBeacon } from "../lib/webVitals";
 import { Icon, IconSprite } from "./Icons";
@@ -40,6 +41,11 @@ function initials(name: string | undefined): string {
 export function Layout() {
   const { user, realm, logout } = useAuth();
   const owner = user?.role === "owner";
+  // Header shows the tenant's brand name (client dashboard), never the
+  // logged-in user's own name - the admin realm has no tenant, so it keeps
+  // showing the admin's own name there. The user's own name/email stay
+  // available separately under Settings > Security.
+  const headerName = realm === "admin" ? user?.name : user?.tenant_name ?? user?.name;
   const location = useLocation();
   const [status] = useApi(
     () => (realm === "admin" ? Promise.resolve(null) : api.get<AgentStatus>("/agent/status")),
@@ -118,8 +124,8 @@ export function Layout() {
         </div>
         <div className="top-divider" />
         <div className="account">
-          <span className="account-avatar">{initials(user?.name)}</span>
-          <span className="account-name">{user?.name ?? user?.email ?? ""}</span>
+          <span className="account-avatar">{initials(headerName)}</span>
+          <span className="account-name">{headerName ?? user?.email ?? ""}</span>
           <button type="button" className="secondary" onClick={() => void logout()}>
             {t.logout}
           </button>
@@ -146,7 +152,9 @@ export function Layout() {
           </div>
         </aside>
         <main>
-          <Outlet />
+          <Suspense fallback={<PageSkeleton />}>
+            <Outlet />
+          </Suspense>
         </main>
       </div>
       <footer className="footer">

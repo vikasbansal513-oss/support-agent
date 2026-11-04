@@ -33,5 +33,5 @@ GLOBAL_RULES = [
  "Secret fields are write-only: after save the UI shows secret_hint only.",
  "Role-gated routes: owner-only screens hidden for agent role; admin routes only with admin token realm.",
  "Mobile first: single-column under 640px; handoff and review screens usable one-handed.",
- "Plain Hindi-English labels (Hinglish) for brand UI strings are kept in one i18n file; no string literals in components.",
+ "English-only UI strings are kept in one i18n file; no string literals in components.",
 ]

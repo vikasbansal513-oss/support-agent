@@ -98,16 +98,58 @@ export function ErrorBox({ error, onRetry }: { error: Error; onRetry?: () => voi
   );
 }
 
+export function Skeleton({ rows = 3 }: { rows?: number }) {
+  return (
+    <div className="skeleton-block" role="status" aria-label={t.loading}>
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="skeleton-row" />
+      ))}
+    </div>
+  );
+}
+
+export function PageSkeleton() {
+  return (
+    <div className="skeleton-page" role="status" aria-label={t.loading}>
+      <div className="skeleton-row skeleton-title" />
+      <div className="stats">
+        <div className="skeleton-card" />
+        <div className="skeleton-card" />
+        <div className="skeleton-card" />
+        <div className="skeleton-card" />
+      </div>
+      <Skeleton rows={4} />
+    </div>
+  );
+}
+
+// Full-page loading state shown only while the very first session-restore call is in
+// flight (AuthContext's `loading`), before we even know whether there is a logged-in
+// user - distinct from PageSkeleton, which shows the shape of a page we already know is
+// coming (an authenticated route's chunk loading). Replaces the earlier blank screen.
+export function AuthLoadingScreen() {
+  return (
+    <div className="auth-loading" role="status" aria-live="polite">
+      <span className="brand-mark">
+        <Icon name="bot" />
+      </span>
+      <p>{t.loadingDashboard}</p>
+    </div>
+  );
+}
+
 export function Async<T>({
   value,
   reload,
   children,
+  skeleton,
 }: {
   value: Loadable<T>;
   reload?: () => void;
   children: (data: T) => ReactNode;
+  skeleton?: ReactNode;
 }) {
-  if (value.state === "loading") return <p className="loading">{t.loading}</p>;
+  if (value.state === "loading") return <>{skeleton ?? <Skeleton />}</>;
   if (value.state === "error") return <ErrorBox error={value.error} onRetry={reload} />;
   return <>{children(value.data)}</>;
 }

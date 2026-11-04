@@ -19,7 +19,9 @@ Factory = async_sessionmaker[AsyncSession]
 
 
 class AutonomyIn(BaseModel):
-    tool: Literal["address_update", "order_cancel", "exchange_request", "refund_create"]
+    tool: Literal[
+        "address_update", "order_cancel", "exchange_request", "return_request", "refund_create"
+    ]
     level: Literal["off", "approval", "auto"]
     reason: str = Field(min_length=5, max_length=300)
     confirmed: bool = False

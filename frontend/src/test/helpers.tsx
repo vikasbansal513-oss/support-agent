@@ -54,6 +54,7 @@ export const OWNER: User = {
   name: "Owner",
   role: "owner",
   tenant_id: "t1",
+  tenant_name: "Brand Co",
   mfa_ok: true,
 };
 

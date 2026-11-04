@@ -348,6 +348,10 @@ async def _call_writer(writer: ShopifyWriter, action: ActionRow) -> WriteResult:
         return await writer.create_exchange(
             action.order_ref, str(args["line_item"]), str(args["new_variant"]), action.key
         )
+    if action.tool == "return_request":
+        return await writer.create_return(
+            action.order_ref, str(args.get("reason") or "customer request"), action.key
+        )
     return await writer.update_address(
         action.order_ref, AddressIn.model_validate(args["new_address"]), action.key
     )

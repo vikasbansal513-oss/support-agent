@@ -23,6 +23,11 @@ T: dict[str, dict[str, str]] = {
         "en": "Start a refund of Rs {amount} for order {order}? {note}Reply 'yes' to confirm, or 'no'.",
         "hi": "क्या ऑर्डर {order} का Rs {amount} रिफंड शुरू करना है? {note}कन्फर्म के लिए 'हाँ' लिखें, नहीं तो 'नहीं'।",
     },
+    "confirm_return_request": {
+        "hinglish": "Order {order} ke liye return request bhejna hai? {note}Confirm ke liye 'haan' likhein, nahi to 'nahi'.",
+        "en": "Submit a return request for order {order}? {note}Reply 'yes' to confirm, or 'no'.",
+        "hi": "क्या ऑर्डर {order} के लिए रिटर्न रिक्वेस्ट भेजनी है? {note}कन्फर्म के लिए 'हाँ' लिखें, नहीं तो 'नहीं'।",
+    },
     "approval_note": {
         "hinglish": "Confirm ke baad hamari team isse dekhkar approve karegi. ",
         "en": "After you confirm, our team will review and approve it. ",
@@ -83,6 +88,11 @@ T: dict[str, dict[str, str]] = {
         "hinglish": "Order {order} ka Rs {amount} refund shuru ho gaya hai.",
         "en": "A refund of Rs {amount} has been started for order {order}.",
         "hi": "ऑर्डर {order} का Rs {amount} रिफंड शुरू हो गया है।",
+    },
+    "done_return_request": {
+        "hinglish": "Order {order} ke liye return request register ho gayi hai.",
+        "en": "The return request for order {order} has been registered.",
+        "hi": "ऑर्डर {order} के लिए रिटर्न रिक्वेस्ट दर्ज हो गई है।",
     },
 }
 

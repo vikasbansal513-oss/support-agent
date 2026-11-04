@@ -41,6 +41,7 @@ class Principal:
     role: str
     tenant_id: uuid.UUID | None
     mfa_ok: bool
+    tenant_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -322,7 +323,7 @@ async def change_password(
 
 async def _principal_info(
     session: AsyncSession, user_id: uuid.UUID, realm: Realm
-) -> tuple[str, uuid.UUID | None]:
+) -> tuple[str, uuid.UUID | None, str | None]:
     if realm == "admin":
         row = (
             await session.execute(
@@ -331,11 +332,14 @@ async def _principal_info(
         ).first()
         if row is None:
             raise AppError("E-AUTH-007")
-        return "super_admin", None
+        return "super_admin", None, None
+    # tenant_id is taken from this user's own membership row, so the brand name
+    # fetched below is always the authenticated user's own tenant - never another
+    # client's.
     row = (
         await session.execute(
             text(
-                "SELECT m.role, m.tenant_id, t.status FROM memberships m "
+                "SELECT m.role, m.tenant_id, t.status, t.name FROM memberships m "
                 "JOIN tenants t ON t.id = m.tenant_id WHERE m.user_id = :u"
             ),
             {"u": user_id},
@@ -345,13 +349,13 @@ async def _principal_info(
         raise AppError("E-AUTH-007")
     if row[2] != "active":
         raise AppError("E-AUTH-009")
-    return str(row[0]), row[1]
+    return str(row[0]), row[1], row[3]
 
 
 async def _issue_session(
     session: AsyncSession, user: Any, realm: Realm, mfa_ok: bool
 ) -> AuthResult:
-    role, tenant_id = await _principal_info(session, user.id, realm)
+    role, tenant_id, tenant_name = await _principal_info(session, user.id, realm)
     settings = get_settings()
     now = timeutil.utc_now()
     refresh_token = new_opaque_token()
@@ -370,7 +374,7 @@ async def _issue_session(
             "now": now,
         },
     )
-    return _build_result(user, realm, role, tenant_id, mfa_ok, refresh_token)
+    return _build_result(user, realm, role, tenant_id, mfa_ok, refresh_token, tenant_name)
 
 
 def _build_result(
@@ -380,6 +384,7 @@ def _build_result(
     tenant_id: uuid.UUID | None,
     mfa_ok: bool,
     refresh_token: str,
+    tenant_name: str | None = None,
 ) -> AuthResult:
     access, expires_in = create_access_token(
         user_id=user.id, realm=realm, role=role, tenant_id=tenant_id, mfa_ok=mfa_ok
@@ -389,7 +394,7 @@ def _build_result(
         expires_in=expires_in,
         refresh_token=refresh_token,
         csrf_token=csrf_token_for(refresh_token, realm),
-        user=Principal(user.id, user.email, user.name, realm, role, tenant_id, mfa_ok),
+        user=Principal(user.id, user.email, user.name, realm, role, tenant_id, mfa_ok, tenant_name),
     )
 
 
@@ -516,9 +521,10 @@ async def refresh(factory: Factory, refresh_token: str, realm: Realm) -> AuthRes
                 revoke_family = True
             role = ""
             tenant_id: uuid.UUID | None = None
+            tenant_name: str | None = None
             if not revoke_family:
                 try:
-                    role, tenant_id = await _principal_info(session, row.user_id, realm)
+                    role, tenant_id, tenant_name = await _principal_info(session, row.user_id, realm)
                 except AppError:
                     revoke_family = True
             if revoke_family:
@@ -558,7 +564,7 @@ async def refresh(factory: Factory, refresh_token: str, realm: Realm) -> AuthRes
                     ),
                     {"now": now, "n": new_id, "i": row.id},
                 )
-                result = _build_result(user, realm, role, tenant_id, mfa_ok, new_token)
+                result = _build_result(user, realm, role, tenant_id, mfa_ok, new_token, tenant_name)
     if failure is not None or result is None:
         raise failure or AppError("E-AUTH-004")
     return result
@@ -593,10 +599,12 @@ async def load_principal(factory: Factory, claims: AccessClaims) -> Principal:
             user.password_changed_at.timestamp()
         ):
             raise AppError("E-AUTH-004")
-        role, tenant_id = await _principal_info(session, claims.user_id, claims.realm)
+        role, tenant_id, tenant_name = await _principal_info(session, claims.user_id, claims.realm)
     if tenant_id != claims.tenant_id:
         raise AppError("E-AUTH-004")
-    return Principal(user.id, user.email, user.name, claims.realm, role, tenant_id, claims.mfa_ok)
+    return Principal(
+        user.id, user.email, user.name, claims.realm, role, tenant_id, claims.mfa_ok, tenant_name
+    )
 
 
 async def confirm_mfa(factory: Factory, principal: Principal, code: str) -> list[str]:

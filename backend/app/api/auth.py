@@ -144,6 +144,7 @@ async def me(principal: Principal = Depends(current_principal)) -> UserOut:  # n
         name=principal.name,
         role=principal.role,
         tenant_id=principal.tenant_id,
+        tenant_name=principal.tenant_name,
         mfa_ok=principal.mfa_ok,
     )
 
