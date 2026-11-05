@@ -351,9 +351,12 @@ async def run_inbound(
     # that count. When there's no reply at all (decision.reply is None), the reference line
     # is sent on its own so the customer isn't left with nothing; if folding would overflow
     # the 1500-char text limit (very rare), it falls back to a second, separate send.
+    # AGENT_PAUSED is the one established exception (SILENT_REASONS in app/agent/graph.py,
+    # test_paused_agent_hands_off_silently asserts zero reply_customer actions): a paused
+    # agent must stay fully silent, so no reference line is synthesized for it either.
     reply_text = decision.reply.text if decision.reply is not None else None
     extra: str | None = None
-    if handoff_id is not None:
+    if handoff_id is not None and decision.reason_code != "AGENT_PAUSED":
         lang = decision.handoff.language if decision.handoff else "hinglish"
         ref_line = agent_templates.render(
             "handoff_reference", lang, ref=handoffs.reference_code(handoff_id)

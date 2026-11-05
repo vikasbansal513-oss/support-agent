@@ -6,6 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /srv
 
+# Patches OS-level packages (apt, etc.) in the base image at build time, so a known CVE in
+# the Debian base (e.g. the Trivy "image-scan" CI job catching a HIGH-severity apt CVE) is
+# fixed here instead of waiting for python:3.13-slim itself to be rebuilt upstream.
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+
 COPY constraints.txt pyproject.toml ./
 COPY app ./app
 COPY migrations ./migrations

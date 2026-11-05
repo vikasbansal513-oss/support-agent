@@ -268,10 +268,13 @@ async def _handoff(
     # handoff broke that count. When there's no acknowledgement reply at all (decision.reply
     # is None), the reference line is sent on its own so the customer isn't left with
     # nothing; if folding would overflow V1Reply's 1500-char limit (very rare), it falls
-    # back to a second, separate send instead of raising.
+    # back to a second, separate send instead of raising. AGENT_PAUSED is the one
+    # established exception (build_graph_v1's handoff() sets ack=None for it on purpose,
+    # test_paused_agent_hands_off_silently asserts zero reply_customer actions): a paused
+    # agent must stay fully silent, so no reference line is synthesized for it either.
     reply = decision.reply
     extra: str | None = None
-    if handoff_id is not None:
+    if handoff_id is not None and decision.reason_code != "AGENT_PAUSED":
         lang = decision.handoff.language if decision.handoff else "hinglish"
         ref_line = t.render("handoff_reference", lang, ref=handoffs.reference_code(handoff_id))
         if reply is not None:
