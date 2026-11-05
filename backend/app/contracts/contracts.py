@@ -178,6 +178,7 @@ TEMPLATE_IDS = (
     "ai_disclosure_line",
     "ai_identity_answer",
     "opt_out_confirm",
+    "handoff_reference",
 )
 V0_TOOLS = ("order_lookup", "tracking_lookup", "handoff_to_human")
 

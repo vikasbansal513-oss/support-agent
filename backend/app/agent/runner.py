@@ -331,17 +331,7 @@ async def run_inbound(
     mailer = overrides.mailer or get_mailer()
     if decision.action == "skip":
         return
-    if decision.reply is not None:
-        await engine.submit_reply(
-            factory,
-            senders,
-            tenant_id=tenant_id,
-            conversation_id=conversation_id,
-            run_id=run_id,
-            body=decision.reply.text,
-            key=f"{run_id}:reply_customer:1",
-            mode=mode,
-        )
+    handoff_id: uuid.UUID | None = None
     if decision.action == "handoff":
         handoff_id = await handoffs.create_handoff(
             factory,
@@ -353,22 +343,51 @@ async def run_inbound(
             decision=decision,
             mode=mode,
         )
-        if handoff_id is not None:
-            # Decision Framework Sections 3/4/8/9: the customer gets a reference number
-            # for every complaint/investigation/escalation, not just an SLA promise.
-            lang = decision.handoff.language if decision.handoff else "hinglish"
-            await engine.submit_reply(
-                factory,
-                senders,
-                tenant_id=tenant_id,
-                conversation_id=conversation_id,
-                run_id=run_id,
-                body=agent_templates.render(
-                    "handoff_reference", lang, ref=handoffs.reference_code(handoff_id)
-                ),
-                key=f"{run_id}:handoff_ref:1",
-                mode=mode,
-            )
+    # Decision Framework Sections 3/4/8/9: every complaint/investigation/escalation handed
+    # to a human gets the customer a reference number. create_handoff() must run first to
+    # mint the id, so the reference line is folded into the SAME outbound reply as ONE
+    # engine.submit_reply call, not a second one - draft/shadow review and several existing
+    # tests count actions 1:1 against each handoff, and a second action per handoff broke
+    # that count. When there's no reply at all (decision.reply is None), the reference line
+    # is sent on its own so the customer isn't left with nothing; if folding would overflow
+    # the 1500-char text limit (very rare), it falls back to a second, separate send.
+    reply_text = decision.reply.text if decision.reply is not None else None
+    extra: str | None = None
+    if handoff_id is not None:
+        lang = decision.handoff.language if decision.handoff else "hinglish"
+        ref_line = agent_templates.render(
+            "handoff_reference", lang, ref=handoffs.reference_code(handoff_id)
+        )
+        if reply_text is not None:
+            combined = f"{reply_text}\n\n{ref_line}"
+            if len(combined) <= 1500:
+                reply_text = combined
+            else:
+                extra = ref_line
+        else:
+            reply_text = ref_line
+    if reply_text is not None:
+        await engine.submit_reply(
+            factory,
+            senders,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            body=reply_text,
+            key=f"{run_id}:reply_customer:1",
+            mode=mode,
+        )
+    if extra is not None:
+        await engine.submit_reply(
+            factory,
+            senders,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            body=extra,
+            key=f"{run_id}:handoff_ref:1",
+            mode=mode,
+        )
     async with session_scope(factory, tenant_id=tenant_id) as session:
         await session.execute(
             text("UPDATE inbound_events SET status = 'processed' WHERE id = :i"), {"i": event_id}

@@ -250,8 +250,6 @@ async def _handoff(
     convstate.apply_update(row, decision.conv)
     row.awaiting = "none"
     await _save(factory, tenant_id, conversation_id, row)
-    if decision.reply is not None:
-        await _send(factory, senders, tenant_id, conversation_id, run_id, decision.reply, mode)
     handoff_id = await handoffs.create_handoff(
         factory,
         mailer,
@@ -262,17 +260,38 @@ async def _handoff(
         decision=decision,
         mode=mode,
     )
+    # Decision Framework Sections 3/4/8/9: every complaint/investigation/escalation handed
+    # to a human gets the customer a reference number. create_handoff() must run first to
+    # mint the id, so the reference line is folded into the SAME acknowledgement reply as
+    # ONE engine.submit_reply call, not a second one - draft/shadow review and several
+    # existing tests count actions 1:1 against each handoff, and a second action per
+    # handoff broke that count. When there's no acknowledgement reply at all (decision.reply
+    # is None), the reference line is sent on its own so the customer isn't left with
+    # nothing; if folding would overflow V1Reply's 1500-char limit (very rare), it falls
+    # back to a second, separate send instead of raising.
+    reply = decision.reply
+    extra: str | None = None
     if handoff_id is not None:
-        # Decision Framework Sections 3/4/8/9: every complaint/investigation/escalation
-        # handed to a human gets the customer a reference number, not just an SLA promise.
         lang = decision.handoff.language if decision.handoff else "hinglish"
+        ref_line = t.render("handoff_reference", lang, ref=handoffs.reference_code(handoff_id))
+        if reply is not None:
+            combined = f"{reply.text}\n\n{ref_line}"
+            if len(combined) <= 1500:
+                reply = reply.model_copy(update={"text": combined})
+            else:
+                extra = ref_line
+        else:
+            reply = V1Reply(template_id="handoff_reference", language=lang, text=ref_line)
+    if reply is not None:
+        await _send(factory, senders, tenant_id, conversation_id, run_id, reply, mode)
+    if extra is not None:
         await engine.submit_reply(
             factory,
             senders,
             tenant_id=tenant_id,
             conversation_id=conversation_id,
             run_id=run_id,
-            body=t.render("handoff_reference", lang, ref=handoffs.reference_code(handoff_id)),
+            body=extra,
             key=f"{run_id}:handoff_ref:1",
             mode=mode,
             critical=True,
