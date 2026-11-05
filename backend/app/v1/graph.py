@@ -589,6 +589,11 @@ def build_graph_v1(deps: V1Deps) -> Any:
         )
         lang = _lang(state)
         note = t.render("approval_note" if decision.route == "approval" else "no_note", lang)
+        if plan.sentiment < 0:
+            # Already past rules()'s SENTIMENT_NEGATIVE handoff check (plan.sentiment >=
+            # policy.sentiment_min there), so any remaining negative score here is a
+            # described delay/problem, not anger that already went to a human.
+            note = t.render("empathy_note", lang) + note
         items = ", ".join(f"{ln.title} x{ln.quantity}" for ln in order.lines)[:120] or "-"
         facts: dict[str, object] = {"order": order.order_name, "note": note}
         if tool == "order_cancel":

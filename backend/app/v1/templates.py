@@ -34,6 +34,17 @@ T: dict[str, dict[str, str]] = {
         "hi": "कन्फर्म के बाद हमारी टीम इसे देखकर अप्रूव करेगी। ",
     },
     "no_note": {"hinglish": "", "en": "", "hi": ""},
+    # Agent_Reply_TopClass_Notes.md Section 3 / KNOWN_GAPS.md #7: shown before the
+    # confirm_* templates below, only when the planner's sentiment for this message is
+    # negative (plan.sentiment < 0) - i.e. the customer described a delay/problem, not a
+    # plain request. These confirm_* replies are static templates, not LLM-composed, so
+    # the reply.v1.md empathy rule does not reach them; this is the template-path version
+    # of the same fix.
+    "empathy_note": {
+        "hinglish": "Isme hui dikkat ke liye maaf kijiye. ",
+        "en": "I'm sorry for the trouble. ",
+        "hi": "इसमें हुई असुविधा के लिए खेद है। ",
+    },
     "ask_address": {
         "hinglish": "Naya address bhejein: ghar/flat, area, city, state aur 6 digit pin code.",
         "en": "Please send the new address: house/flat, area, city, state and 6-digit pin code.",
