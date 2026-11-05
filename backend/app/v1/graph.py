@@ -19,7 +19,6 @@ from app.agent.graph import (
     build_reply,
 )
 from app.agent.state import State
-from app.agent.validate import pick_language
 from app.contracts.contracts import OrderFacts, ToolResult
 from app.core import timeutil
 from app.core.masking import redact_for_llm
@@ -131,7 +130,7 @@ def _reply(state: State, template_id: str, **facts: object) -> dict[str, Any]:
         text = f"{_disclosure_text(state, lang)}\n\n{text}"
         used = [*used, "ai_disclosure"]
     return V1Reply(
-        template_id=template_id, language=pick_language(lang), text=text, facts_used=used
+        template_id=template_id, language=lang, text=text, facts_used=used
     ).model_dump(mode="json")
 
 
@@ -161,7 +160,7 @@ def handoff_decision(state: State, reason: str) -> DecisionV1:
     gate = state.get("gate_ctx", {}).get("last_reason")
     if gate:
         did.append(f"gate: {gate}")
-    lang = pick_language(_lang(state))
+    lang = _lang(state)
     summary = HandoffSummaryV1(
         customer_masked_phone=state.get("customer_masked"),
         order_ref=(state.get("identity") or {}).get("order_ref"),
@@ -476,9 +475,7 @@ def build_graph_v1(deps: V1Deps) -> Any:
         if state.get("first_message"):
             text = f"{_disclosure_text(state, lang)}\n\n{text}"
             used.append("ai_disclosure")
-        reply = V1Reply(
-            template_id="llm_reply", language=pick_language(lang), text=text, facts_used=used
-        )
+        reply = V1Reply(template_id="llm_reply", language=lang, text=text, facts_used=used)
         return {"reply": reply.model_dump(mode="json"), "needs_human": False, "meta": meta}
 
     def clarify(

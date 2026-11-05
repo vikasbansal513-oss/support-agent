@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.actions.senders import Senders
 from app.agent import keywords
-from app.channels import identity, normalize, prechecks
-from app.contracts.contracts import IntegrationKind, NormalizedInbound
+from app.channels import email_classify, identity, normalize, prechecks
+from app.contracts.contracts import EmailClassification, IntegrationKind, NormalizedInbound
 from app.core import timeutil
 from app.core.config import get_settings
 from app.core.db import session_scope
@@ -22,6 +22,7 @@ from app.integrations.gmail import GmailAuthError, GmailClient, GmailUpstreamErr
 from app.integrations.http import DbCallRecorder, ExternalHttp
 from app.jobs import queue
 from app.privacy import service as privacy
+from app.v1.policy import PolicyV2, parse_any
 
 logger = logging.getLogger("app.jobs.handlers")
 Factory = async_sessionmaker[AsyncSession]
@@ -91,6 +92,38 @@ async def _own_address(session: AsyncSession) -> str | None:
     return str((row.config or {}).get("address", "")) or None if row else None
 
 
+async def _published_policy(session: AsyncSession) -> PolicyV2 | None:
+    row = (
+        await session.execute(text("SELECT content FROM policies WHERE status = 'published'"))
+    ).first()
+    parsed = parse_any(row.content) if row else None
+    return parsed if isinstance(parsed, PolicyV2) else None
+
+
+async def _classify_email(
+    ctx: JobContext,
+    session: AsyncSession,
+    event_id: uuid.UUID,
+    inbound: NormalizedInbound,
+) -> EmailClassification:
+    """Email_Filter_v2.2.md Section 14 integration point: runs after prechecks
+    (bounce/auto-reply/no-reply already short-circuited for free) and before any
+    customer/conversation/workflow is created."""
+    policy = await _published_policy(session)
+    llm = await email_classify.build_llm_client(ctx.factory, ctx.job.tenant_id, ctx.transport)
+    result = await email_classify.classify_email(
+        llm, tenant_id=ctx.job.tenant_id, run_id=None, policy=policy, inbound=inbound
+    )
+    await session.execute(
+        text(
+            "UPDATE inbound_events SET raw_payload = raw_payload ||"
+            " jsonb_build_object('email_classification', CAST(:c AS jsonb)) WHERE id = :i"
+        ),
+        {"c": result.model_dump_json(), "i": event_id},
+    )
+    return result
+
+
 Staged = tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, NormalizedInbound]
 
 
@@ -132,6 +165,11 @@ async def _ingest(ctx: JobContext) -> dict[str, Any] | Staged:
             if reason:
                 await _set_event(session, event_id, "skipped", reason)
                 return {"stage": "skipped", "reason": reason}
+            classification = await _classify_email(ctx, session, event_id, inbound)
+            if classification.action in ("SKIP", "SKIP_DUPLICATE", "QUARANTINE"):
+                email_reason = f"EMAIL_FILTER_{classification.action}:{classification.category}"
+                await _set_event(session, event_id, "skipped", email_reason)
+                return {"stage": "skipped", "reason": email_reason}
         customer_id = await identity.get_or_create_customer(session, inbound)
         ref = await identity.get_or_create_conversation(session, customer_id, inbound.channel)
         await privacy.ensure_consent(session, customer_id, inbound.channel, "first_inbound")

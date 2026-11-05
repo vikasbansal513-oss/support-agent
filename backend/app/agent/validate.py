@@ -63,13 +63,21 @@ def disclosure_variants(
     return variants
 
 
-def pick_language(value: str | None) -> Language:
-    """All WhatsApp/email replies go out in English, whatever script the customer used.
+def pick_language(value: str | None, reply_language: Language = "en") -> Language:
+    """Every WhatsApp/email reply goes out in `reply_language`, whatever script the
+    customer used - this is the single choke point every V0/V1 reply and
+    outcome-notify path routes through (see DECISIONS.md 2026-11-02).
 
-    `value` (detected/classified customer language) is intentionally ignored here: this
-    is the single choke point every V0/V1 reply and outcome-notify path routes through
-    (see DECISIONS.md 2026-11-02). Voice/calling is untouched (out of scope; it uses
-    call.language directly for speech, not this function).
+    `value` (detected/classified customer language) is intentionally ignored: it is
+    kept as a parameter only so call sites that pass the customer's language still
+    type-check and read naturally. `reply_language` is the brand's own choice from
+    `PolicyV2.reply_language` (Dashboard -> Policy page), default "en" - see
+    Agent_Reply_TopClass_Notes.md Section 3b. Voice/calling is untouched (out of
+    scope; it uses call.language directly for speech, not this function).
+
+    Call this exactly once per reply to resolve the language, then reuse that result -
+    do not pass an already-resolved language back into this function, since a second
+    call with no explicit `reply_language` would silently reset it to "en".
     """
     del value
-    return "en"
+    return reply_language

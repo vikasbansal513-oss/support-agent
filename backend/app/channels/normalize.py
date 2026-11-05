@@ -20,6 +20,9 @@ KEPT_HEADERS = (
     "return-path",
     "message-id",
     "references",
+    "authentication-results",
+    "reply-to",
+    "x-auto-response-suppress",
 )
 _QUOTE_MARKER = re.compile(
     r"^(on .{5,120} wrote:|-{2,}\s*original message\s*-{2,}|from:\s.+)$", re.I
@@ -65,6 +68,20 @@ def strip_quoted(text: str) -> str:
     return "\n".join(kept).strip()
 
 
+def _attachment_names(part: dict[str, Any], out: list[str]) -> None:
+    filename = str(part.get("filename") or "").strip()
+    if filename and (part.get("body") or {}).get("attachmentId"):
+        out.append(filename[:200])
+    for child in part.get("parts") or []:
+        _attachment_names(child, out)
+
+
+def email_attachment_names(payload: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    _attachment_names(payload, out)
+    return out[:20]
+
+
 def email_body(payload: dict[str, Any]) -> str:
     plain = _walk(payload, "text/plain")
     if plain:
@@ -101,6 +118,7 @@ def from_gmail(message: dict[str, Any]) -> NormalizedInbound | None:
             email_headers={k: v[:500] for k, v in headers.items() if k in KEPT_HEADERS},
             email_subject=headers.get("subject", "")[:300] or None,
             email_thread_id=str(message["threadId"]) if message.get("threadId") else None,
+            email_attachment_names=email_attachment_names(payload),
             received_at=received,
         )
     except ValidationError:

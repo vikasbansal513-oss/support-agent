@@ -123,19 +123,40 @@ V0 ka D4 (sirf templates) badalta hai. Ab LLM jawab likhta hai, par ek sakht cha
 
 Niyam: jab kuch samajh na aaye, ya customer gusse me kuch bhi bole, insaan ko do. V0 ke 15 reason codes (V0 7.7) rehte hain; V1 me neeche ke jodte hain aur unka kram badalta hai. Pehle match hone wala jeetta hai.
 
-| Reason code | Kab | Priority | Layer |
+**2026-11: this table replaces the outdated one below it. It is the complete, current
+handoff-reason list, consolidated out of this section, DECISIONS.md and PROGRESS.md -
+see `docs/KNOWN_GAPS.md` for the behaviours that existed only in code with no
+documentation anywhere before that.**
+
+| Reason code | When it fires | Priority | Decided by |
 | --- | --- | --- | --- |
-| `ANGRY`, `ABUSE`, `THREAT` | Gaali, dhamki, chillana, "consumer court", "police", legal/fraud/press/safety shabd | urgent | Keyword (code, LLM down ho tab bhi) |
-| `SENTIMENT_NEGATIVE` | LLM `sentiment` score threshold se neeche, ya do message lagatar naraazgi | urgent | LLM |
-| `CONFUSED` | Agent customer ki baat samajh nahi paya: low confidence, ya `unclear` intent | normal | LLM + code |
-| `NO_PROGRESS` | 2 baar ek hi sawal dohraya ya customer ne "ye nahi" kaha, kaam aage nahi badha | normal | Code (turn counter) |
-| `STEP_LIMIT` | Ek message me 4 tool step ya conversation me 3 write action se zyada | normal | Code |
-| `CONFIRM_UNCLEAR` | Confirm ke jawab me haan/na saaf nahi, 2 baar poochha | normal | Code |
-| `POLICY_EXCEPTION` | Customer policy se bahar kuch maang raha (window ke baad return, extra compensation) | normal | Policy engine |
-| `LIMIT_EXCEEDED` | Amount auto limit ke upar. Ye handoff nahi, `pending_approval` banta hai; customer ko batate hain "team dekhegi" | normal | Policy engine |
-| `HIGH_RISK_FLAG` | Pichla refund 30 din me, dispute, high-value order, identity mismatch | urgent | Code |
-| `ACTION_FAILED` | Tool 2 retry ke baad fail, ya Shopify ka jawab `needs_review` | normal | Code |
-| `REPLY_VALIDATION_FAILED` | Reply do baar reject, template bhi na bane | normal | Code |
+| `ANGRY` / `ABUSE` / `THREAT` | Gaali, dhamki, chillana, "consumer court", "police", legal/fraud/press/safety words | Urgent | Keyword (code) - runs before LLM, works even if LLM is down |
+| `SENTIMENT_NEGATIVE` | LLM sentiment score below policy threshold, or two angry messages in a row | Urgent | LLM |
+| `CONFUSED` | Agent can't understand: low confidence, or intent = unclear | Normal | LLM + code |
+| `NO_PROGRESS` | Same question asked twice, or customer said "not this", conversation not moving forward | Normal | Code (turn counter) |
+| `STEP_LIMIT` | 4+ tool steps in one message, or 3+ write actions in one conversation | Normal | Code |
+| `CONFIRM_UNCLEAR` | Yes/no answer to a confirmation isn't clear, asked twice | Normal | Code |
+| `POLICY_EXCEPTION` | Customer asks for something outside policy (return window over, extra compensation) | Normal | Policy engine |
+| `LIMIT_EXCEEDED` | Amount is above the auto-approval limit - becomes `pending_approval`, not a handoff | Normal | Policy engine |
+| `HIGH_RISK_FLAG` | General bucket: recent refund, dispute, high-value order, identity mismatch | Urgent | Code |
+| `ACTION_FAILED` | Tool failed after 2 retries, or Shopify returned `needs_review` | Normal | Code |
+| `REPLY_VALIDATION_FAILED` | LLM reply rejected twice, no template fallback available either | Normal | Code |
+| `UNSUPPORTED_INTENT` | intent = "other", or 2+ different requests in one message (planner can only handle one request per turn) | Normal | LLM (`plan.v1.md`) + code |
+| `TOOL_OFF` / `TOOL_KILLED` | Admin has this write-tool turned off, or kill-switched | Normal | Code (policy gate) |
+| `WRITE_LIMIT` | Too many write actions already attempted in this conversation | Normal | Code (policy gate) |
+| `ORDER_DISPUTED` | Order already flagged as disputed | Urgent | Code (policy gate) |
+| `CLAIM_CLUSTERING` (reason: `FRAUD`) | Same customer makes a 3rd refund/return/exchange claim within 24 hours - hard block, always to a human, even in full Auto mode | Urgent | Code (policy gate) - P28 |
+| `HIGH_VALUE_ORDER` (reason: `HIGH_RISK_FLAG`) | Order total is above the configured high-value threshold | Urgent | Code (policy gate) |
+| `RECENT_REFUND` (reason: `HIGH_RISK_FLAG`) | Customer already got a refund in the last 30 days | Urgent | Code (policy gate) |
+| `ORDER_CLOSED` (reason: `POLICY_EXCEPTION`) | Order is already cancelled, refunded, or voided | Normal | Code (policy gate) |
+| `ALREADY_SHIPPED` (reason: `POLICY_EXCEPTION`) | Address-change or cancel asked after the order has already shipped | Normal | Code (policy gate) |
+| `ADDRESS_ALREADY_CHANGED` (reason: `POLICY_EXCEPTION`) | Customer already used their one address-change for this order | Normal | Code (policy gate) |
+| `DELIVERY_DISPUTE` | Tracking shows "delivered" but customer says parcel never arrived - agent never repeats "delivered" status, goes straight to investigation handoff | Normal | Code - `app/policy/tracking.py` (P32) |
+| `DELIVERY_STUCK` | Courier's `last_update_at` is 48+ hours old and status isn't "delivered" - treated as "stuck in transit" | Normal | Code - `app/policy/tracking.py` (P32) |
+| `IDENTITY_FAILED` | Order number + phone/email didn't match, 3 attempts used up | Normal | Code - `MAX_IDENTITY_ATTEMPTS = 3` |
+| `MEDIA_RECEIVED` | Customer sent a photo/video (e.g. damage evidence) - always goes to a human to judge, agent never auto-approves from an image | Normal | Code (precheck) |
+| `AGENT_PAUSED` | Admin manually paused the agent - special case: NO customer-facing message is sent at all, not even a handoff acknowledgement or reference number | - | Code |
+| `QUOTA_EXCEEDED` - does not exist yet | Tenant has gone over their monthly message/cost limit (`usage_limits`, P23). Today this ONLY raises an admin alert - the agent keeps working normally, nothing stops for the brand or the customer | - (not wired) | Not implemented - add this row only once/if quota-enforcement (vs. alert-only) is decided |
 
 **Handoff ke samay:** agent chup (V0 ka `human_active`), customer ko ek `handoff_ack` (wada nahi), aur brand ko summary: customer ne kya maanga, agent ne kya kiya, kaunsa action pending hai, kyon ruka. Urgent par WhatsApp aur email alert tez; SLA re-alert V0 jaisa (`sla_check`).
 

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
-import type { Conversation, ConversationDetail, Message, Page } from "../api/types";
+import type { Conversation, ConversationDetail, EmailClassificationSummary, Message, Page } from "../api/types";
 import { Async, Chip, Empty, ErrorBox, Screen, useSubmit } from "../components/common";
 import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
@@ -11,6 +11,13 @@ import { t, type Key } from "../i18n";
 
 const STATUSES = ["", "open", "handoff", "resolved", "closed"] as const;
 const CHANNEL_ICON: Record<Conversation["channel"], string> = { whatsapp: "whatsapp", email: "mail", voice: "phone" };
+const EMAIL_ACTION_TONE: Record<EmailClassificationSummary["action"], "warn" | "ok" | "urgent" | undefined> = {
+  PROCESS: "ok",
+  SKIP: undefined,
+  SKIP_DUPLICATE: undefined,
+  MANUAL_REVIEW: "warn",
+  QUARANTINE: "urgent",
+};
 
 export function Conversations() {
   const [status, setStatus] = useState<string>("");
@@ -115,6 +122,13 @@ function Bubble({ message, canReport, onReport }: { message: Message; canReport:
           {message.sender} · {formatIst(message.created_at)}
           {unsent && ` · ${t.notSent} (${message.action_status})`}
         </span>
+        {message.email_classification && (
+          <div>
+            <Chip tone={EMAIL_ACTION_TONE[message.email_classification.action]}>
+              {message.email_classification.category} · {message.email_classification.action}
+            </Chip>
+          </div>
+        )}
         {canReport && message.sender === "agent" && !unsent && (
           <div>
             <button type="button" className="secondary small" onClick={() => onReport(message)}>

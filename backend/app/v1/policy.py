@@ -84,7 +84,20 @@ class PolicyV2(BaseModel):
     brand_daily_msg_cap: int = Field(default=2000, ge=1, le=100000)
     handoff_sla_minutes: int = Field(default=30, ge=5, le=1440)
     ai_disclosure: Disclosure = DEFAULT_DISCLOSURE
+    # Agent_Reply_TopClass_Notes.md Section 3b: every reply used to go out in English
+    # regardless of what the customer wrote in, by a hardcoded constant
+    # (agent/validate.py::pick_language()). That is a real product risk for Indian
+    # D2C brands whose end-customers write in Hindi/Hinglish. This is now the brand's
+    # own choice (Dashboard -> Policy page), default "en" so existing behaviour is
+    # unchanged until a brand opts in.
+    reply_language: Literal["hi", "en", "hinglish"] = "en"
     extra_handoff_keywords: list[str] = Field(default_factory=list, max_length=100)
+    # Email_Filter_v2.2.md Section 15: per-brand override of the classifier's default
+    # action for a given email category (e.g. one brand auto-skips wholesale enquiries,
+    # another wants them processed). Checked after the LLM returns its category.
+    email_filter_overrides: dict[str, Literal["PROCESS", "SKIP", "MANUAL_REVIEW"]] = Field(
+        default_factory=dict
+    )
     enabled_tools: list[ToolNameV2] = Field(default_factory=lambda: _default_tools())
     autonomy: Autonomy = Field(default_factory=Autonomy)
     limits: Limits = Field(default_factory=Limits)

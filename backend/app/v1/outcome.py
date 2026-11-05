@@ -11,6 +11,7 @@ from app.core.mail import Mailer
 from app.handoffs import service as handoffs
 from app.v1 import templates as t
 from app.v1.contracts import ConvUpdate, DecisionV1, HandoffSummaryV1
+from app.v1.policy import PolicyV2, parse_any
 
 Factory = async_sessionmaker[AsyncSession]
 HANDOFF_FOR = {
@@ -30,7 +31,12 @@ async def _language(session: AsyncSession, conversation_id: uuid.UUID) -> str:
             text("SELECT language FROM conversations WHERE id = :c"), {"c": conversation_id}
         )
     ).first()
-    return pick_language(row.language if row and row.language else "hinglish")
+    policy_row = (
+        await session.execute(text("SELECT content FROM policies WHERE status = 'published'"))
+    ).first()
+    parsed = parse_any(policy_row.content) if policy_row else None
+    reply_language = parsed.reply_language if isinstance(parsed, PolicyV2) else "en"
+    return pick_language(row.language if row and row.language else "hinglish", reply_language)
 
 
 def done_text(action: writes.ActionRow, lang: str) -> str:
@@ -47,7 +53,7 @@ def handoff_for(action: writes.ActionRow, reason: str, lang: str) -> DecisionV1:
         agent_did=[f"action {action.status}: {action.error or '-'}"[:200]],
         reason_code=reason,
         why_stuck=WHY.get(reason, "Insaan ki madad chahiye."),
-        language=pick_language(lang),
+        language=lang,
     )
     return DecisionV1(
         action="handoff",

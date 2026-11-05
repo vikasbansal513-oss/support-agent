@@ -88,13 +88,19 @@ def _trace(state: State, node: str, started: float, note: str = "") -> list[dict
     return [*state.get("trace", []), entry]
 
 
+def _reply_language(state: State) -> Literal["hi", "en", "hinglish"]:
+    policy = _policy(state)
+    return getattr(policy, "reply_language", "en") if policy else "en"
+
+
 def _lang(state: State) -> Literal["hi", "en", "hinglish"]:
+    reply_language = _reply_language(state)
     classification = state.get("classification")
     if classification and classification.get("language"):
-        return pick_language(classification["language"])
+        return pick_language(classification["language"], reply_language)
     if state.get("last_language"):
-        return pick_language(state["last_language"])
-    return pick_language(keywords.detect_language(state.get("incoming_text", "")))
+        return pick_language(state["last_language"], reply_language)
+    return pick_language(keywords.detect_language(state.get("incoming_text", "")), reply_language)
 
 
 def _policy(state: State) -> AnyPolicy | None:

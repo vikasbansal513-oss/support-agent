@@ -57,6 +57,12 @@ export type ActionStatus =
   | "rejected"
   | "suppressed";
 
+export interface EmailClassificationSummary {
+  category: string;
+  action: "PROCESS" | "SKIP" | "SKIP_DUPLICATE" | "MANUAL_REVIEW" | "QUARANTINE";
+  reply_allowed: boolean;
+}
+
 export interface Message {
   id: string;
   direction: "in" | "out";
@@ -64,6 +70,7 @@ export interface Message {
   content: string;
   created_at: string;
   action_status: ActionStatus | null;
+  email_classification?: EmailClassificationSummary | null;
 }
 
 export interface ConversationDetail extends Conversation {
@@ -211,6 +218,7 @@ export interface PolicyContent {
   ai_disclosure: Disclosure;
   extra_handoff_keywords: string[];
   enabled_tools: string[];
+  reply_language?: "hi" | "en" | "hinglish";
 }
 
 export interface Policy {

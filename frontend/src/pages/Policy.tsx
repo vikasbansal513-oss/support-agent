@@ -110,6 +110,20 @@ function Editor({ policy, onSaved }: { policy: Policy; onSaved: () => void }) {
             <Field label={t.disclosureEn} value={c.ai_disclosure.en} onChange={(v) => setC({ ...c, ai_disclosure: { ...c.ai_disclosure, en: v } })} />
             <Field label={t.disclosureHinglish} value={c.ai_disclosure.hinglish} onChange={(v) => setC({ ...c, ai_disclosure: { ...c.ai_disclosure, hinglish: v } })} />
           </div>
+          {c.schema_version === 2 && (
+            <label className="field">
+              <span className="field-label">{t.replyLanguage}</span>
+              <select
+                aria-label={t.replyLanguage}
+                value={c.reply_language ?? "en"}
+                onChange={(event) => setC({ ...c, reply_language: event.target.value as "hi" | "en" | "hinglish" })}
+              >
+                <option value="en">{t.replyLanguageEn}</option>
+                <option value="hi">{t.replyLanguageHi}</option>
+                <option value="hinglish">{t.replyLanguageHinglish}</option>
+              </select>
+            </label>
+          )}
         </fieldset>
         {c.schema_version !== 2 && c.refund_auto_limit_paise != null && <small className="help">{formatPaise(c.refund_auto_limit_paise)}</small>}
         {!locked && (

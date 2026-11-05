@@ -223,6 +223,7 @@ class NormalizedInbound(BaseModel):
     email_headers: dict[str, str] = Field(default_factory=dict)
     email_subject: str | None = None
     email_thread_id: str | None = None
+    email_attachment_names: list[str] = Field(default_factory=list, max_length=20)
     received_at: AwareDatetime
 
     @model_validator(mode="after")
@@ -290,6 +291,162 @@ class Classification(BaseModel):
             if isinstance(v, list)
             else []
         )
+
+
+# ------------------------------------------------------------------ email filter v2.2 (spec: Email_Filter_v2.2.md)
+EmailCategory = Literal[
+    # 6.1 customer-related
+    "CUSTOMER_ORDER",
+    "CUSTOMER_INQUIRY",
+    "ORDER_STATUS",
+    "CUSTOMER_COMPLAINT",
+    "RETURN_REQUEST",
+    "REFUND_REQUEST",
+    "CANCEL_ORDER",
+    "EXCHANGE_REQUEST",
+    "DAMAGED_PRODUCT",
+    "WRONG_PRODUCT",
+    "MISSING_ITEM",
+    "PAYMENT_ISSUE",
+    "DELIVERY_ISSUE",
+    "PRODUCT_INFORMATION",
+    "WARRANTY_REQUEST",
+    "CUSTOMER_FEEDBACK",
+    "ACCOUNT_ISSUE",
+    "SUBSCRIPTION_REQUEST",
+    # 6.2 business correspondence
+    "WHOLESALE_INQUIRY",
+    "B2B_INQUIRY",
+    "SUPPLIER_EMAIL",
+    "INVOICE_REQUEST",
+    "PAYMENT_CONFIRMATION",
+    "BUSINESS_PARTNERSHIP",
+    "VENDOR_PITCH",
+    # 6.3 unwanted / non-customer
+    "SPAM",
+    "PHISHING",
+    "PROMOTION",
+    "MARKETING",
+    "COLD_OUTREACH",
+    "NEWSLETTER",
+    "SOCIAL_NOTIFICATION",
+    "JOB_APPLICATION",
+    "UNSOLICITED_ADVERTISEMENT",
+    "AFFILIATE_PITCH",
+    "SURVEY_REQUEST",
+    "INTERNAL_COMMUNICATION",
+    "OTHER",
+    # 6.4 automated / system
+    "AUTO_REPLY",
+    "OUT_OF_OFFICE",
+    "EMAIL_BOUNCE",
+    "READ_RECEIPT",
+    "OTP_NOTIFICATION",
+    "SYSTEM_NOTIFICATION",
+    "SECURITY_ALERT",
+    "DELIVERY_NOTIFICATION",
+    "AUTOMATED_ORDER_NOTIFICATION",
+    # 6.5 uncertain
+    "UNCLEAR",
+    "SUSPICIOUS",
+]
+EmailAction = Literal["PROCESS", "SKIP", "SKIP_DUPLICATE", "MANUAL_REVIEW", "QUARANTINE"]
+AuthResult = Literal["pass", "fail", "softfail", "neutral", "none", "unknown"]
+SecurityStatus = Literal["not_checked", "high_risk_extension", "needs_review"]
+MatchStatus = Literal["matched", "not_matched", "not_checked"]
+CustomerEmotion = Literal["NEUTRAL", "FRUSTRATED", "ANGRY", "DISAPPOINTED", "SATISFIED", "UNKNOWN"]
+
+
+class SenderAuthentication(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    spf: AuthResult = "unknown"
+    dkim: AuthResult = "unknown"
+    dmarc: AuthResult = "unknown"
+
+
+class CustomerVerification(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    checked: bool = False
+    registered_customer: bool | None = None
+    platform: Literal["shopify"] | None = None
+    customer_match: MatchStatus = "not_checked"
+
+
+class OrderVerification(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    required: bool = False
+    checked: bool = False
+    order_match: MatchStatus = "not_checked"
+
+
+class ConditionalAction(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    condition: Annotated[str, _clip(200)] = ""
+    requested_action: Annotated[str, _clip(200)] = ""
+    condition_status: Literal["PENDING", "MET", "NOT_MET", "UNKNOWN"] = "UNKNOWN"
+    execution_authorized: bool = False
+
+
+class EmailClassification(BaseModel):
+    """app/channels/email_classify.py output (Email_Filter_v2.2.md Section 8).
+
+    sender_authentication, has_attachment, security_status and is_duplicate are
+    computed in code before the LLM call and the LLM only echoes them back -
+    never trust an LLM-supplied value for those four fields.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+    category: EmailCategory
+    action: EmailAction
+    is_customer_related: bool = False
+    is_spam: bool = False
+    is_marketing: bool = False
+    is_automated: bool = False
+    is_duplicate: bool = False
+    sender_authentication: SenderAuthentication = Field(default_factory=SenderAuthentication)
+    customer_verification: CustomerVerification = Field(default_factory=CustomerVerification)
+    order_verification: OrderVerification = Field(default_factory=OrderVerification)
+    primary_intent: Annotated[str, _clip(120)] = ""
+    secondary_intents: list[str] = Field(default_factory=list, max_length=5)
+    customer_emotion: CustomerEmotion = "UNKNOWN"
+    intent_evidence: list[Annotated[str, _clip(200)]] = Field(default_factory=list, max_length=5)
+    conditional_actions: list[ConditionalAction] = Field(default_factory=list, max_length=20)
+    missing_information: list[str] = Field(default_factory=list, max_length=10)
+    contradictions_detected: list[str] = Field(default_factory=list, max_length=10)
+    clarification_required: bool = False
+    clarification_question: Annotated[str | None, _clip(200)] = None
+    urgency: Literal["low", "normal", "high", "unknown"] = "unknown"
+    sentiment: Literal["positive", "neutral", "negative", "unknown"] = "unknown"
+    language: Language = "en"
+    has_attachment: bool = False
+    security_status: SecurityStatus = "not_checked"
+    reply_allowed: bool = False
+    confidence: float = Field(ge=0, le=1, default=0.0)
+    evidence: list[Annotated[str, _clip(200)]] = Field(default_factory=list, max_length=8)
+    reason: Annotated[str, _clip(300)] = ""
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _percent(cls, v: Any) -> Any:
+        try:
+            n = float(v)
+        except (TypeError, ValueError):
+            return v
+        return n / 100 if 1 < n <= 100 else n
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def _lang(cls, v: Any) -> str:
+        t = str(v or "").strip().lower()
+        return t if t in ("hi", "en", "hinglish") else "en"
+
+
+class EmailClassificationSummary(BaseModel):
+    """Trimmed view of EmailClassification shown on the Conversations/Review pages."""
+
+    category: EmailCategory
+    action: EmailAction
+    reply_allowed: bool
 
 
 # ------------------------------------------------------------------ tool facts (what tools return; the ONLY source of reply facts)
@@ -1119,6 +1276,7 @@ class MessageOut(BaseModel):
     content: str
     created_at: AwareDatetime
     action_status: ActionStatus | None = None
+    email_classification: EmailClassificationSummary | None = None
 
 
 class ConversationOut(BaseModel):

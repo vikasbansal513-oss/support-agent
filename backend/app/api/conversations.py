@@ -16,6 +16,7 @@ from app.contracts.contracts import (
     ConversationOut,
     CustomerOut,
     DecisionOut,
+    EmailClassificationSummary,
     HandoffOut,
     HandoffSummary,
     HumanReplyIn,
@@ -123,8 +124,10 @@ async def get_conversation(
         messages = (
             await session.execute(
                 text(
-                    "SELECT m.id, m.direction, m.sender, m.content, m.created_at, a.status AS action_status"
+                    "SELECT m.id, m.direction, m.sender, m.content, m.created_at, a.status AS action_status,"
+                    " ie.raw_payload -> 'email_classification' AS email_classification"
                     " FROM messages m LEFT JOIN agent_actions a ON a.id = m.action_id"
+                    " LEFT JOIN inbound_events ie ON ie.id = m.inbound_event_id"
                     " WHERE m.conversation_id = :c ORDER BY m.created_at, m.id"
                 ),
                 {"c": conversation_id},
@@ -141,6 +144,11 @@ async def get_conversation(
                 content=m.content,
                 created_at=m.created_at,
                 action_status=m.action_status,
+                email_classification=(
+                    EmailClassificationSummary.model_validate(m.email_classification)
+                    if m.email_classification
+                    else None
+                ),
             )
             for m in messages
         ],
