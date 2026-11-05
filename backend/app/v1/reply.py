@@ -16,7 +16,7 @@ from app.v1.policy import PolicyV2
 
 REPLY_PROMPT = "reply.v1.md"
 REPLY_VERSION = "reply.v1"
-MAX_REPLY_CHARS = 600
+MAX_REPLY_CHARS = 900
 EXTRA_BANNED = re.compile(
     r"(discount|coupon|free of charge|kal tak|by tomorrow|within \d+ (hours|days)|exception|"
     r"waive|compensat|sorry for the delay in refund)",

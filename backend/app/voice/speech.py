@@ -5,6 +5,10 @@ Lang = Literal["hi", "en", "hinglish"]
 _MONEY = re.compile(r"Rs\.?\s?(\d[\d,]*)(?:\.(\d{1,2}))?")
 _REF = re.compile(r"#([A-Za-z0-9-]+)")
 _MARKUP = re.compile(r"[*_`~<>\[\]{}|\\]")
+# WhatsApp-style "- " bullet markers (2026-11: templates now use *bold*/"- " bullets for
+# chat readability). Only a line-leading "- " is a bullet; a hyphen inside an order ref
+# like #A-123 is untouched since it's consumed by _REF before this ever runs.
+_BULLET = re.compile(r"(?m)^[ \t]*-\s+")
 _EMOJI = re.compile(
     "[\U0001f300-\U0001faff\U00002600-\U000027bf\U0001f000-\U0001f2ff\U00002b00-\U00002bff]"
 )
@@ -46,6 +50,7 @@ def speakable(text: str, lang: str) -> str:
     """Turn a chat reply into something a text-to-speech engine reads clearly."""
     language = lang if lang in ("hi", "en", "hinglish") else "hinglish"
     out = _EMOJI.sub("", text)
+    out = _BULLET.sub("", out)
     out = _MONEY.sub(lambda m: _money(m, language), out)
     out = _REF.sub(_ref, out)
     for old, new in _SWAPS[language].items():

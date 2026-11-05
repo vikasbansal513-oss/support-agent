@@ -4,34 +4,112 @@ from app.agent import templates as v0
 
 T: dict[str, dict[str, str]] = {
     "confirm_order_cancel": {
-        "hinglish": "Order {order} ({items}) cancel karna hai? Kul amount Rs {amount} hai. {note}Cancel karne ke liye 'haan' likhein, rehne dene ke liye 'nahi'.",
-        "en": "Do you want to cancel order {order} ({items})? The total is Rs {amount}. {note}Reply 'yes' to cancel, or 'no' to keep it.",
-        "hi": "क्या आप ऑर्डर {order} ({items}) कैंसिल करना चाहते हैं? कुल रकम Rs {amount} है। {note}कैंसिल के लिए 'हाँ' लिखें, रहने देने के लिए 'नहीं'।",
+        "hinglish": (
+            "{note}Kya aap is order ko cancel karna chahte hain?\n\n"
+            "- Order: *{order}*\n"
+            "- Items: {items}\n"
+            "- Total: *Rs {amount}*\n\n"
+            "Cancel karne ke liye *haan* likhein, rehne dene ke liye *nahi*."
+        ),
+        "en": (
+            "{note}Would you like us to proceed with cancelling this order?\n\n"
+            "- Order: *{order}*\n"
+            "- Items: {items}\n"
+            "- Total: *Rs {amount}*\n\n"
+            "Reply *yes* to cancel, or *no* to keep it."
+        ),
+        "hi": (
+            "{note}क्या आप इस ऑर्डर को कैंसिल करना चाहते हैं?\n\n"
+            "- ऑर्डर: *{order}*\n"
+            "- आइटम: {items}\n"
+            "- कुल: *Rs {amount}*\n\n"
+            "कैंसिल के लिए *हाँ* लिखें, रहने देने के लिए *नहीं*।"
+        ),
     },
     "confirm_address_update": {
-        "hinglish": "Order {order} ka address ye karna hai: {address}? {note}Confirm ke liye 'haan' likhein, nahi to 'nahi'.",
-        "en": "Change the address of order {order} to: {address}? {note}Reply 'yes' to confirm, or 'no'.",
-        "hi": "क्या ऑर्डर {order} का पता यह करना है: {address}? {note}कन्फर्म के लिए 'हाँ' लिखें, नहीं तो 'नहीं'।",
+        "hinglish": (
+            "{note}Kya is order ka address badal dein?\n\n"
+            "- Order: *{order}*\n"
+            "- Naya address: {address}\n\n"
+            "Confirm ke liye *haan* likhein, nahi to *nahi*."
+        ),
+        "en": (
+            "{note}Would you like us to update this order's address?\n\n"
+            "- Order: *{order}*\n"
+            "- New address: {address}\n\n"
+            "Reply *yes* to confirm, or *no*."
+        ),
+        "hi": (
+            "{note}क्या इस ऑर्डर का पता बदल दें?\n\n"
+            "- ऑर्डर: *{order}*\n"
+            "- नया पता: {address}\n\n"
+            "कन्फर्म के लिए *हाँ* लिखें, नहीं तो *नहीं*।"
+        ),
     },
     "confirm_exchange_request": {
-        "hinglish": "Order {order} me {item} ko {variant} se exchange karna hai? {note}Confirm ke liye 'haan' likhein, nahi to 'nahi'.",
-        "en": "Exchange {item} in order {order} for {variant}? {note}Reply 'yes' to confirm, or 'no'.",
-        "hi": "क्या ऑर्डर {order} में {item} को {variant} से बदलना है? {note}कन्फर्म के लिए 'हाँ' लिखें, नहीं तो 'नहीं'।",
+        "hinglish": (
+            "{note}Kya is order me item exchange kar dein?\n\n"
+            "- Order: *{order}*\n"
+            "- Item: {item}\n"
+            "- Naya variant: *{variant}*\n\n"
+            "Confirm ke liye *haan* likhein, nahi to *nahi*."
+        ),
+        "en": (
+            "{note}Would you like us to exchange an item in this order?\n\n"
+            "- Order: *{order}*\n"
+            "- Item: {item}\n"
+            "- New variant: *{variant}*\n\n"
+            "Reply *yes* to confirm, or *no*."
+        ),
+        "hi": (
+            "{note}क्या इस ऑर्डर में आइटम बदल दें?\n\n"
+            "- ऑर्डर: *{order}*\n"
+            "- आइटम: {item}\n"
+            "- नया वेरिएंट: *{variant}*\n\n"
+            "कन्फर्म के लिए *हाँ* लिखें, नहीं तो *नहीं*।"
+        ),
     },
     "confirm_refund_create": {
-        "hinglish": "Order {order} ka Rs {amount} refund shuru karna hai? {note}Confirm ke liye 'haan' likhein, nahi to 'nahi'.",
-        "en": "Start a refund of Rs {amount} for order {order}? {note}Reply 'yes' to confirm, or 'no'.",
-        "hi": "क्या ऑर्डर {order} का Rs {amount} रिफंड शुरू करना है? {note}कन्फर्म के लिए 'हाँ' लिखें, नहीं तो 'नहीं'।",
+        "hinglish": (
+            "{note}Kya is order ka refund shuru kar dein?\n\n"
+            "- Order: *{order}*\n"
+            "- Refund amount: *Rs {amount}*\n\n"
+            "Confirm ke liye *haan* likhein, nahi to *nahi*."
+        ),
+        "en": (
+            "{note}Would you like us to start a refund for this order?\n\n"
+            "- Order: *{order}*\n"
+            "- Refund amount: *Rs {amount}*\n\n"
+            "Reply *yes* to confirm, or *no*."
+        ),
+        "hi": (
+            "{note}क्या इस ऑर्डर का रिफंड शुरू कर दें?\n\n"
+            "- ऑर्डर: *{order}*\n"
+            "- रिफंड राशि: *Rs {amount}*\n\n"
+            "कन्फर्म के लिए *हाँ* लिखें, नहीं तो *नहीं*।"
+        ),
     },
     "confirm_return_request": {
-        "hinglish": "Order {order} ke liye return request bhejna hai? {note}Confirm ke liye 'haan' likhein, nahi to 'nahi'.",
-        "en": "Submit a return request for order {order}? {note}Reply 'yes' to confirm, or 'no'.",
-        "hi": "क्या ऑर्डर {order} के लिए रिटर्न रिक्वेस्ट भेजनी है? {note}कन्फर्म के लिए 'हाँ' लिखें, नहीं तो 'नहीं'।",
+        "hinglish": (
+            "{note}Kya is order ke liye return request bhej dein?\n\n"
+            "- Order: *{order}*\n\n"
+            "Confirm ke liye *haan* likhein, nahi to *nahi*."
+        ),
+        "en": (
+            "{note}Would you like us to submit a return request for this order?\n\n"
+            "- Order: *{order}*\n\n"
+            "Reply *yes* to confirm, or *no*."
+        ),
+        "hi": (
+            "{note}क्या इस ऑर्डर के लिए रिटर्न रिक्वेस्ट भेज दें?\n\n"
+            "- ऑर्डर: *{order}*\n\n"
+            "कन्फर्म के लिए *हाँ* लिखें, नहीं तो *नहीं*।"
+        ),
     },
     "approval_note": {
-        "hinglish": "Confirm ke baad hamari team isse dekhkar approve karegi. ",
-        "en": "After you confirm, our team will review and approve it. ",
-        "hi": "कन्फर्म के बाद हमारी टीम इसे देखकर अप्रूव करेगी। ",
+        "hinglish": "Confirm ke baad hamari team isse dekhkar approve karegi.\n\n",
+        "en": "After you confirm, our team will review and approve it.\n\n",
+        "hi": "कन्फर्म के बाद हमारी टीम इसे देखकर अप्रूव करेगी।\n\n",
     },
     "no_note": {"hinglish": "", "en": "", "hi": ""},
     # Agent_Reply_TopClass_Notes.md Section 3 / KNOWN_GAPS.md #7: shown before the
@@ -41,9 +119,9 @@ T: dict[str, dict[str, str]] = {
     # the reply.v1.md empathy rule does not reach them; this is the template-path version
     # of the same fix.
     "empathy_note": {
-        "hinglish": "Isme hui dikkat ke liye maaf kijiye. ",
-        "en": "I'm sorry for the trouble. ",
-        "hi": "इसमें हुई असुविधा के लिए खेद है। ",
+        "hinglish": "Isme hui dikkat ke liye maaf kijiye.\n\n",
+        "en": "I'm sorry for the trouble.\n\n",
+        "hi": "इसमें हुई असुविधा के लिए खेद है।\n\n",
     },
     "ask_address": {
         "hinglish": "Naya address bhejein: ghar/flat, area, city, state aur 6 digit pin code.",
@@ -56,9 +134,9 @@ T: dict[str, dict[str, str]] = {
         "hi": "कृपया थोड़ा और बताइए, आप क्या करवाना चाहते हैं?",
     },
     "ask_line_item": {
-        "hinglish": "Order {order} me kaunsa item badalna hai aur kis size ya variant me?",
-        "en": "Which item in order {order} would you like to exchange, and for which size or variant?",
-        "hi": "ऑर्डर {order} में कौन सा आइटम किस साइज़ या वेरिएंट में बदलना है?",
+        "hinglish": "Order *{order}* me kaunsa item badalna hai aur kis size ya variant me?",
+        "en": "Which item in order *{order}* would you like to exchange, and for which size or variant?",
+        "hi": "ऑर्डर *{order}* में कौन सा आइटम किस साइज़ या वेरिएंट में बदलना है?",
     },
     "ask_evidence_photo": {
         "hinglish": "Isse aage le jaane ke liye product ki clear photo ya video bhejna zaroori hai. Kripya bhejein, hamari team usko dekh kar aapko confirm karegi.",
@@ -66,9 +144,9 @@ T: dict[str, dict[str, str]] = {
         "hi": "आगे बढ़ने के लिए प्रोडक्ट की साफ़ फ़ोटो या वीडियो भेजना ज़रूरी है। कृपया भेजें, हमारी टीम देखकर आपको कन्फर्म करेगी।",
     },
     "confirm_reask": {
-        "hinglish": "Kripya sirf 'haan' ya 'nahi' likhein.",
-        "en": "Please reply with just 'yes' or 'no'.",
-        "hi": "कृपया सिर्फ 'हाँ' या 'नहीं' लिखें।",
+        "hinglish": "Kripya sirf *haan* ya *nahi* likhein.",
+        "en": "Please reply with just *yes* or *no*.",
+        "hi": "कृपया सिर्फ *हाँ* या *नहीं* लिखें।",
     },
     "confirm_expired": {
         "hinglish": "Pichli request ka samay nikal gaya. Kripya dobara batayein.",
@@ -86,34 +164,34 @@ T: dict[str, dict[str, str]] = {
         "hi": "आपका कन्फर्मेशन मिल गया। हमारी टीम इसे देख रही है, अपडेट मिलते ही हम बताएँगे।",
     },
     "done_order_cancel": {
-        "hinglish": "Order {order} cancel ho gaya hai.",
-        "en": "Order {order} has been cancelled.",
-        "hi": "ऑर्डर {order} कैंसिल हो गया है।",
+        "hinglish": "✅ Order *{order}* cancel ho gaya hai.",
+        "en": "✅ Order *{order}* has been cancelled.",
+        "hi": "✅ ऑर्डर *{order}* कैंसिल हो गया है।",
     },
     "done_address_update": {
-        "hinglish": "Order {order} ka address update ho gaya hai.",
-        "en": "The address for order {order} has been updated.",
-        "hi": "ऑर्डर {order} का पता अपडेट हो गया है।",
+        "hinglish": "✅ Order *{order}* ka address update ho gaya hai.",
+        "en": "✅ The address for order *{order}* has been updated.",
+        "hi": "✅ ऑर्डर *{order}* का पता अपडेट हो गया है।",
     },
     "done_exchange_request": {
-        "hinglish": "Order {order} ke liye exchange request register ho gayi hai.",
-        "en": "The exchange request for order {order} has been registered.",
-        "hi": "ऑर्डर {order} के लिए एक्सचेंज रिक्वेस्ट दर्ज हो गई है।",
+        "hinglish": "✅ Order *{order}* ke liye exchange request register ho gayi hai.",
+        "en": "✅ The exchange request for order *{order}* has been registered.",
+        "hi": "✅ ऑर्डर *{order}* के लिए एक्सचेंज रिक्वेस्ट दर्ज हो गई है।",
     },
     "done_refund_create": {
-        "hinglish": "Order {order} ka Rs {amount} refund shuru ho gaya hai.",
-        "en": "A refund of Rs {amount} has been started for order {order}.",
-        "hi": "ऑर्डर {order} का Rs {amount} रिफंड शुरू हो गया है।",
+        "hinglish": "✅ Order *{order}* ka Rs {amount} refund shuru ho gaya hai.",
+        "en": "✅ A refund of *Rs {amount}* has been started for order *{order}*.",
+        "hi": "✅ ऑर्डर *{order}* का Rs {amount} रिफंड शुरू हो गया है।",
     },
     "done_return_request": {
-        "hinglish": "Order {order} ke liye return request register ho gayi hai.",
-        "en": "The return request for order {order} has been registered.",
-        "hi": "ऑर्डर {order} के लिए रिटर्न रिक्वेस्ट दर्ज हो गई है।",
+        "hinglish": "✅ Order *{order}* ke liye return request register ho gayi hai.",
+        "en": "✅ The return request for order *{order}* has been registered.",
+        "hi": "✅ ऑर्डर *{order}* के लिए रिटर्न रिक्वेस्ट दर्ज हो गई है।",
     },
     "handoff_reference": {
-        "hinglish": "Aapka reference number {ref} hai. Dobara contact karte waqt yeh number bataiyega.",
-        "en": "Your reference number is {ref}. Please share it if you contact us again about this.",
-        "hi": "आपका रेफ़रेंस नंबर {ref} है। दोबारा संपर्क करते समय कृपया यह नंबर बताइए।",
+        "hinglish": "Aapka reference number *{ref}* hai. Dobara contact karte waqt yeh number bataiyega.",
+        "en": "Your reference number is *{ref}*. Please share it if you contact us again about this.",
+        "hi": "आपका रेफ़रेंस नंबर *{ref}* है। दोबारा संपर्क करते समय कृपया यह नंबर बताइए।",
     },
 }
 
