@@ -5,22 +5,19 @@ from app.agent import templates as v0
 T: dict[str, dict[str, str]] = {
     "confirm_order_cancel": {
         "hinglish": (
-            "{note}Kya aap is order ko cancel karna chahte hain?\n\n"
-            "- Order: *{order}*\n"
+            "{note}Kya aap cancel order *{order}* confirm karna chahte hain?\n\n"
             "- Items: {items}\n"
             "- Total: *Rs {amount}*\n\n"
             "Cancel karne ke liye *haan* likhein, rehne dene ke liye *nahi*."
         ),
         "en": (
-            "{note}Would you like us to proceed with cancelling this order?\n\n"
-            "- Order: *{order}*\n"
+            "{note}Would you like us to cancel order *{order}*?\n\n"
             "- Items: {items}\n"
             "- Total: *Rs {amount}*\n\n"
             "Reply *yes* to cancel, or *no* to keep it."
         ),
         "hi": (
-            "{note}क्या आप इस ऑर्डर को कैंसिल करना चाहते हैं?\n\n"
-            "- ऑर्डर: *{order}*\n"
+            "{note}क्या आप ऑर्डर *{order}* कैंसिल करना चाहते हैं?\n\n"
             "- आइटम: {items}\n"
             "- कुल: *Rs {amount}*\n\n"
             "कैंसिल के लिए *हाँ* लिखें, रहने देने के लिए *नहीं*।"
@@ -144,9 +141,9 @@ T: dict[str, dict[str, str]] = {
         "hi": "आगे बढ़ने के लिए प्रोडक्ट की साफ़ फ़ोटो या वीडियो भेजना ज़रूरी है। कृपया भेजें, हमारी टीम देखकर आपको कन्फर्म करेगी।",
     },
     "confirm_reask": {
-        "hinglish": "Kripya sirf *haan* ya *nahi* likhein.",
-        "en": "Please reply with just *yes* or *no*.",
-        "hi": "कृपया सिर्फ *हाँ* या *नहीं* लिखें।",
+        "hinglish": "Kripya sirf 'haan' ya 'nahi' likhein.",
+        "en": "Please reply with just 'yes' or 'no'.",
+        "hi": "कृपया सिर्फ 'हाँ' या 'नहीं' लिखें।",
     },
     "confirm_expired": {
         "hinglish": "Pichli request ka samay nikal gaya. Kripya dobara batayein.",

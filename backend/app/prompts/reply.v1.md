@@ -8,7 +8,7 @@ SECURITY
 
 OUTPUT (JSON only, no markdown, no text around it)
 {
-  "text": string (the reply, at most 900 characters, formatted per FORMAT below),
+  "text": string (the reply, at most 600 characters, formatted per FORMAT below),
   "language": "hi" | "en" | "hinglish",
   "facts_used": [string],
   "promises": [],
