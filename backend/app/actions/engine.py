@@ -104,6 +104,7 @@ async def submit_reply(
     sender_role: str = "agent",
     decided_by: uuid.UUID | None = None,
     human: bool = False,
+    critical: bool = False,
 ) -> ActionResult:
     async with session_scope(factory, tenant_id=tenant_id) as session:
         target = await _recipient(session, conversation_id)
@@ -143,7 +144,7 @@ async def submit_reply(
                 session, conversation_id, target.channel, body, action_id, sender_role
             )
             return ActionResult(action_id, initial)
-    return await _deliver(factory, senders, tenant_id, action_id, sender_role, human)
+    return await _deliver(factory, senders, tenant_id, action_id, sender_role, human, critical)
 
 
 async def _existing(session: AsyncSession, key: str) -> ActionResult:
@@ -267,6 +268,7 @@ async def _deliver(
     action_id: uuid.UUID,
     sender_role: str = "agent",
     human: bool = False,
+    critical: bool = False,
 ) -> ActionResult:
     async with session_scope(factory, tenant_id=tenant_id) as session:
         action = (
@@ -305,7 +307,7 @@ async def _deliver(
             return ActionResult(action_id, "suppressed", reason)
     try:
         external = await _send(
-            senders, target.channel, action.recipient, action.body_text, email_ctx
+            senders, target.channel, action.recipient, action.body_text, email_ctx, critical
         )
     except (SendError, GmailAuthError, GmailUpstreamError) as exc:
         kind = getattr(exc, "kind", None) or (
@@ -341,12 +343,17 @@ async def _deliver(
 
 
 async def _send(
-    senders: Senders, channel: str, recipient: str, body: str, email_ctx: dict[str, str | None]
+    senders: Senders,
+    channel: str,
+    recipient: str,
+    body: str,
+    email_ctx: dict[str, str | None],
+    critical: bool = False,
 ) -> str:
     if channel == "voice":
         if senders.voice is None:
             raise SendError("not_configured")
-        return await senders.voice.send_text(recipient, body)
+        return await senders.voice.send_text(recipient, body, critical=critical)
     if channel == "whatsapp":
         if senders.whatsapp is None:
             raise SendError("not_configured")

@@ -99,7 +99,37 @@ T: dict[str, dict[str, str]] = {
         "en": "The return request for order {order} has been registered.",
         "hi": "ऑर्डर {order} के लिए रिटर्न रिक्वेस्ट दर्ज हो गई है।",
     },
+    "handoff_reference": {
+        "hinglish": "Aapka reference number {ref} hai. Dobara contact karte waqt yeh number bataiyega.",
+        "en": "Your reference number is {ref}. Please share it if you contact us again about this.",
+        "hi": "आपका रेफ़रेंस नंबर {ref} है। दोबारा संपर्क करते समय कृपया यह नंबर बताइए।",
+    },
 }
+
+
+# Decision Framework Section 17.2: these are the write-flow confirm/done templates that
+# read an order ref and/or a rupee amount as part of a yes/no ask or a just-completed-action
+# statement - what the framework means by "an account number, order ID... it is reading
+# out", which must not be interruptible mid-number. Plain informational templates
+# (order_status, tracking_status, ask_*, awaiting_team, ...) are deliberately NOT in this
+# set - they stay interruptible, exactly as the existing voice test
+# test_greeting_discloses_ai_and_transcript_and_cannot_be_interrupted already requires for a
+# plain order_status answer (which also contains an order number, but is an open-ended
+# answer, not a confirm/done commitment - see Section 17.2's own table).
+CRITICAL_VOICE_TEMPLATES = frozenset(
+    {
+        "confirm_order_cancel",
+        "confirm_address_update",
+        "confirm_exchange_request",
+        "confirm_refund_create",
+        "confirm_return_request",
+        "done_order_cancel",
+        "done_address_update",
+        "done_exchange_request",
+        "done_refund_create",
+        "done_return_request",
+    }
+)
 
 
 def fields(template: str) -> set[str]:

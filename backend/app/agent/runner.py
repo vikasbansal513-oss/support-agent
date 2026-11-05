@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.actions import engine
 from app.actions.senders import Senders, build_senders
+from app.agent import templates as agent_templates
 from app.agent.graph import CLASSIFY_VERSION, GRAPH_VERSION, GraphDeps, build_graph
 from app.agent.state import State
 from app.agent.tools import ToolBox
@@ -342,7 +343,7 @@ async def run_inbound(
             mode=mode,
         )
     if decision.action == "handoff":
-        await handoffs.create_handoff(
+        handoff_id = await handoffs.create_handoff(
             factory,
             mailer,
             senders,
@@ -352,6 +353,22 @@ async def run_inbound(
             decision=decision,
             mode=mode,
         )
+        if handoff_id is not None:
+            # Decision Framework Sections 3/4/8/9: the customer gets a reference number
+            # for every complaint/investigation/escalation, not just an SLA promise.
+            lang = decision.handoff.language if decision.handoff else "hinglish"
+            await engine.submit_reply(
+                factory,
+                senders,
+                tenant_id=tenant_id,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                body=agent_templates.render(
+                    "handoff_reference", lang, ref=handoffs.reference_code(handoff_id)
+                ),
+                key=f"{run_id}:handoff_ref:1",
+                mode=mode,
+            )
     async with session_scope(factory, tenant_id=tenant_id) as session:
         await session.execute(
             text("UPDATE inbound_events SET status = 'processed' WHERE id = :i"), {"i": event_id}

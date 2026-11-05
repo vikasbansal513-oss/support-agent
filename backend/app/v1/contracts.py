@@ -96,6 +96,7 @@ PlanIntent = Literal[
     "address_change",
     "cancel",
     "exchange",
+    "return",
     "refund",
     "policy_question",
     "greeting",

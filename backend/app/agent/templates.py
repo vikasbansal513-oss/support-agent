@@ -60,6 +60,11 @@ T: dict[str, dict[str, str]] = {
         "hinglish": "Ab aapko hamari taraf se message nahi aayenge. Dobara shuru karne ke liye START bhejiye.",
         "hi": "अब आपको हमारी ओर से संदेश नहीं आएँगे। दोबारा शुरू करने के लिए START भेजिए।",
     },
+    "handoff_reference": {
+        "en": "Your reference number is {ref}. Please share it if you contact us again about this.",
+        "hinglish": "Aapka reference number {ref} hai. Dobara contact karte waqt yeh number bataiyega.",
+        "hi": "आपका रेफ़रेंस नंबर {ref} है। दोबारा संपर्क करते समय कृपया यह नंबर बताइए।",
+    },
 }
 
 FULFILL = {

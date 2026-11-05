@@ -33,6 +33,7 @@ from app.llm.client import (
 )
 from app.llm.guard import wrap_untrusted
 from app.policy import fraud
+from app.policy import tracking as tracking_policy
 from app.v1 import reply as reply_layer
 from app.v1 import templates as t
 from app.v1.confirm import parse_confirmation
@@ -69,11 +70,20 @@ WHY_STUCK_V1 = {
     "LIMIT_EXCEEDED": "Amount auto limit ke upar hai.",
     "HIGH_RISK_FLAG": "Order ya customer par risk flag hai, insaan dekhe.",
     "ACTION_FAILED": "Action poora nahi ho paya ya verify nahi hua.",
+    # Decision Framework Section 3 (see app.policy.tracking):
+    "DELIVERY_STUCK": "Shipment ka courier scan kai ghante se update nahi hua, lagta hai atka hua hai.",
+    "DELIVERY_DISPUTE": "System delivered dikha raha hai, customer kehta hai usse mila nahi.",
 }
 WRITE_INTENT_TOOL: dict[str, WriteTool] = {
     "address_change": "address_update",
     "cancel": "order_cancel",
     "exchange": "exchange_request",
+    # Decision Framework Section 5 vs Section 6: a return (product coming back, no
+    # money promised yet) is a distinct intent from a refund (money moving) - the
+    # return_request tool, its gate eligibility (app.v1.gate) and its confirm/done
+    # templates (app.v1.templates) already existed; the planner just never had a
+    # "return" intent to route into it, so every return message fell into "refund".
+    "return": "return_request",
     "refund": "refund_create",
 }
 
@@ -383,6 +393,14 @@ def build_graph_v1(deps: V1Deps) -> Any:
     async def answer(
         state: State, plan: Plan, order: OrderFacts, policy: PolicyV2
     ) -> dict[str, Any]:
+        if plan.intent == "tracking" and tracking_policy.is_delivered_dispute(
+            state.get("incoming_text", "")
+        ):
+            # Decision Framework Section 3's named special case: "delivered dikha raha hai,
+            # lekin mujhe mila nahi" is a dispute, not a status question - it is never
+            # answered with the system's own "delivered" status, always a human
+            # investigation (step 5: never a refund/replacement promise before that).
+            return _flag(state, "DELIVERY_DISPUTE")
         enabled = set(policy.enabled_tools)
         results: dict[str, Any] = {"order": order.model_dump(mode="json")}
         template_id = "order_status"
@@ -392,6 +410,12 @@ def build_graph_v1(deps: V1Deps) -> Any:
             )
             steps = int(state.get("tool_steps", 0)) + 1
             if tracked.ok and tracked.tracking is not None:
+                if tracking_policy.stuck_in_transit(tracked.tracking, timeutil.utc_now()):
+                    # Section 3: "if there is no movement, raise a courier investigation
+                    # ticket" - the courier's own last scan is stale, so this is handed to
+                    # a human (with a reference number, app.handoffs.reference_code)
+                    # instead of being answered as a plain status.
+                    return _flag(state, "DELIVERY_STUCK", tool_steps=steps)
                 results["tracking"] = tracked.tracking.model_dump(mode="json")
                 template_id = "tracking_status"
             elif tracked.error_code in ("upstream_error", "auth_error"):

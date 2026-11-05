@@ -244,10 +244,10 @@ async def _open_handoff(
     run_id: uuid.UUID | None,
     decision: DecisionV1,
     mode: str,
-) -> None:
+) -> uuid.UUID | None:
     capture = CaptureVoiceSender()
     senders = await _senders(factory, voice.tenant_id, capture)
-    await handoffs.create_handoff(
+    return await handoffs.create_handoff(
         factory,
         get_mailer(),
         senders,
@@ -336,7 +336,7 @@ async def _end_with_human(
 ) -> VoiceReplyOut:
     transfer = voice.transfer_number if voice.transfer_number and _in_hours(view) else None
     ctx = await _context(factory, voice.tenant_id, call_id, conversation_id)
-    await _open_handoff(
+    handoff_id = await _open_handoff(
         factory,
         voice,
         conversation_id,
@@ -348,8 +348,15 @@ async def _end_with_human(
         line = spoken_override or speech.voice_line("transfer", lang)
         status, action = "transferred", "transfer"
     else:
+        # Decision Framework Sections 8/15: a callback (no live human on the line right
+        # now) must still end with a reference number the customer can quote back - a
+        # warm transfer does not need one since a human is taking the call over live,
+        # already briefed via _briefing() below.
         key = "callback" if _in_hours(view) else "callback_off_hours"
         line = spoken_override or speech.voice_line(key, lang)
+        if handoff_id is not None:
+            ref = speech.voice_line("reference", lang, ref=handoffs.reference_code(handoff_id))
+            line = f"{line} {ref}"
         status, action = "callback", "hangup"
     async with session_scope(factory, tenant_id=voice.tenant_id) as session:
         await _log_message(session, conversation_id, "out", line, None)
@@ -1074,20 +1081,25 @@ async def _finish_turn(
             speech.voice_line("unclear_audio", lang)
         ]
         say = " ".join(lines)
+        # Section 17.2: non-interruptible only when one of the captured lines is a
+        # write-flow confirm_*/done_* reply (app.v1.templates.CRITICAL_VOICE_TEMPLATES,
+        # tagged all the way from app.agent.runner_v1._send() through
+        # app.actions.engine.submit_reply into CaptureVoiceSender.critical) - an order
+        # ref/amount being read out as a yes-or-no ask or a just-completed-action
+        # statement. A plain informational reply (order_status, tracking_status, ask_*) -
+        # even one that also contains an order number - stays interruptible, exactly as
+        # test_greeting_discloses_ai_and_transcript_and_cannot_be_interrupted already
+        # requires for a plain order_status answer.
+        non_interruptible = any(capture.critical)
         for candidate in ("hinglish", "en", "hi"):
             if (
                 capture.lines
                 and speech.speakable(v1t.render("awaiting_team", candidate), candidate) in say
             ):
                 say = speech.voice_line("approval_pending", lang)
+                non_interruptible = False
                 break
-        # Section 17.2: only the mandatory AI-disclosure/consent turn (handled separately,
-        # above) is non-interruptible. An ordinary reply - including one that reads out an
-        # order ref or amount (order_status, tracking_status, confirm_*/done_* templates) -
-        # stays interruptible like any other turn; has_spoken_number() stays available for a
-        # more precisely-scoped use if the Decision Framework calls for one later, but
-        # applying it to every reply here broke normal barge-in on simple answers.
-        reply = _reply(say, lang)
+        reply = _reply(say, lang, barge_in=not non_interruptible)
     async with session_scope(factory, tenant_id=voice.tenant_id) as session:
         await session.execute(
             text(

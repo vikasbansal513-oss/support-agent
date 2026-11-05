@@ -215,6 +215,12 @@ async def _send(
     reply: V1Reply,
     mode: str,
 ) -> None:
+    # Decision Framework Section 17.2: on a voice call, a confirm_*/done_* reply reads an
+    # order ref/amount as a yes-or-no ask or a just-completed-action statement - this is
+    # the only point in the pipeline that still has the template_id (engine.submit_reply's
+    # DB row only keeps rendered text), so the critical flag is decided here and carried
+    # through submit_reply -> CaptureVoiceSender for voice.service._finish_turn to read.
+    # It is a no-op for WhatsApp/email, which never read this flag.
     await engine.submit_reply(
         factory,
         senders,
@@ -224,6 +230,7 @@ async def _send(
         body=reply.text,
         key=f"{run_id}:reply_customer:1",
         mode=mode,
+        critical=reply.template_id in t.CRITICAL_VOICE_TEMPLATES,
     )
 
 
@@ -245,7 +252,7 @@ async def _handoff(
     await _save(factory, tenant_id, conversation_id, row)
     if decision.reply is not None:
         await _send(factory, senders, tenant_id, conversation_id, run_id, decision.reply, mode)
-    await handoffs.create_handoff(
+    handoff_id = await handoffs.create_handoff(
         factory,
         mailer,
         senders,
@@ -255,6 +262,21 @@ async def _handoff(
         decision=decision,
         mode=mode,
     )
+    if handoff_id is not None:
+        # Decision Framework Sections 3/4/8/9: every complaint/investigation/escalation
+        # handed to a human gets the customer a reference number, not just an SLA promise.
+        lang = decision.handoff.language if decision.handoff else "hinglish"
+        await engine.submit_reply(
+            factory,
+            senders,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            body=t.render("handoff_reference", lang, ref=handoffs.reference_code(handoff_id)),
+            key=f"{run_id}:handoff_ref:1",
+            mode=mode,
+            critical=True,
+        )
 
 
 async def _plain(

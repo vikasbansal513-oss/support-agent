@@ -18,6 +18,15 @@ logger = logging.getLogger("app.handoffs")
 Factory = async_sessionmaker[AsyncSession]
 
 
+def reference_code(handoff_id: uuid.UUID) -> str:
+    """Decision Framework Sections 3/4/8/9/15: every complaint, investigation, cancellation
+    or escalation handed to a human must give the customer a reference/ticket number they
+    can quote back. Derived straight from the handoff row's own id - no new column, no
+    extra DB round trip - 8 uppercase hex characters so it reads cleanly over WhatsApp,
+    email or a voice call."""
+    return f"SA-{handoff_id.hex[:8].upper()}"
+
+
 def sla_due(policy: AnyPolicy | None, tz: str, now: Any) -> Any:
     minutes = policy.handoff_sla_minutes if policy else 30
     if policy is None:

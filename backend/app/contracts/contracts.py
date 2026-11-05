@@ -127,6 +127,13 @@ VOICE_NEW_REASONS = (
     "CONSENT_DECLINED",
     "SILENCE_NO_RESPONSE",
 )
+# Decision Framework Section 3 (app.policy.tracking + app.v1.graph's answer()), additive
+# for the same reason as VOICE_NEW_REASONS above - kept out of V1_NEW_REASONS/
+# HANDOFF_ORDER_V1 so the strict order/count test on those two is untouched.
+TRACKING_NEW_REASONS = (
+    "DELIVERY_STUCK",
+    "DELIVERY_DISPUTE",
+)
 # Handoffs from the V0 and V1 graphs (and voice, which shares the same `handoffs` table)
 # land in the same place and are read back through the same API (HandoffOut/HandoffSummary
 # below), so those response models must accept any of their reason codes, not just V0's.
@@ -149,6 +156,10 @@ ReasonCodeV1 = (
         "HUMAN_REQUESTED",
         "CONSENT_DECLINED",
         "SILENCE_NO_RESPONSE",
+    ]
+    | Literal[
+        "DELIVERY_STUCK",
+        "DELIVERY_DISPUTE",
     ]
 )
 URGENT_REASONS = frozenset(

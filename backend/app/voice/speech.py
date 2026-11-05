@@ -144,6 +144,11 @@ VOICE_T: dict[str, dict[str, str]] = {
         "en": "Sorry, we hit a technical problem. I am connecting you to our team.",
         "hi": "माफ़ कीजिए, अभी कुछ तकनीकी दिक्कत आ गई। मैं आपको हमारी टीम से जोड़ रहा हूँ।",
     },
+    "reference": {
+        "hinglish": "Aapka reference number {ref} hai.",
+        "en": "Your reference number is {ref}.",
+        "hi": "आपका रेफ़रेंस नंबर {ref} है।",
+    },
 }
 
 

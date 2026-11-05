@@ -286,6 +286,10 @@ PLAN_REJECT: list[tuple[str, dict[str, Any]]] = [
     ),
     ("address_missing", _plan(intent="address_change", tool="address_update")),
     (
+        "return_missing_order",
+        _plan(intent="return", tool="return_request", args={}),
+    ),
+    (
         "address_bad_pin",
         _plan(
             intent="address_change",
