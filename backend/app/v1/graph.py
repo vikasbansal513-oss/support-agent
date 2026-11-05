@@ -129,9 +129,9 @@ def _reply(state: State, template_id: str, **facts: object) -> dict[str, Any]:
     if state.get("first_message"):
         text = f"{_disclosure_text(state, lang)}\n\n{text}"
         used = [*used, "ai_disclosure"]
-    return V1Reply(
-        template_id=template_id, language=lang, text=text, facts_used=used
-    ).model_dump(mode="json")
+    return V1Reply(template_id=template_id, language=lang, text=text, facts_used=used).model_dump(
+        mode="json"
+    )
 
 
 def _v0_reply(state: State, template_id: str, **facts: object) -> dict[str, Any]:

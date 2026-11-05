@@ -1363,7 +1363,10 @@ class PrivacyRequestIn(Strict):
         default=None, description="only for kind=correct: which field the customer wants fixed"
     )
     correction_value: str | None = Field(
-        default=None, min_length=1, max_length=200, description="only for kind=correct: the corrected value"
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="only for kind=correct: the corrected value",
     )
 
     @model_validator(mode="after")
