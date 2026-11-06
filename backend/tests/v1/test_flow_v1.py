@@ -73,6 +73,10 @@ async def test_combined_tracking_secondary_enrichment_is_dropped_on_lookup_failu
     because only one fake LLM response (the plan) is supplied."""
     tools, _ = await setup(env)
     result, gate = facts()
+    # facts() always builds a ToolResult with a real order (never None) - this
+    # assert exists only to narrow the type for mypy (ToolResult.order is
+    # Optional on the model since a failed lookup carries no facts).
+    assert result.order is not None
     # Give the order a tracking number so the secondary-tracking branch in
     # v1/graph.py's answer() is actually entered (it's a no-op otherwise) -
     # FakeV1Tools.tracking_lookup still always returns not_found regardless.
