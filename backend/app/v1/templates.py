@@ -571,7 +571,7 @@ _GREETING = {
 # template embeds via {items_table} (see core/html_email.py for how the markers become a
 # real HTML <table>). One row per OrderFacts.lines entry for order_cancel; the other tools
 # don't have per-line facts, so they get a single summary row instead.
-_HEADERS = {
+_HEADERS: dict[str, dict[str, tuple[str, ...]]] = {
     "order_cancel": {
         "en": ("Order ID", "Item", "Qty", "Total"),
         "hinglish": ("Order ID", "Item", "Qty", "Total"),
@@ -636,7 +636,9 @@ def email_facts(
     elif tool == "address_update":
         rows.append(_table_row(order_name, str(facts.get("address") or "-")))
     elif tool == "exchange_request":
-        rows.append(_table_row(order_name, str(facts.get("item") or "-"), str(facts.get("variant") or "-")))
+        rows.append(
+            _table_row(order_name, str(facts.get("item") or "-"), str(facts.get("variant") or "-"))
+        )
     else:
         rows.append(_table_row(order_name))
     rows.append("TABLE_END")
