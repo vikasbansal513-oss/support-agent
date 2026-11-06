@@ -5,6 +5,7 @@ import type { AgentStatus, Alert, Page } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { PageSkeleton } from "./common";
 import { t } from "../i18n";
+import { prefetchRoute } from "../lib/routePrefetch";
 import { sendPerfBeacon } from "../lib/webVitals";
 import { Icon, IconSprite } from "./Icons";
 import { useApi } from "./useApi";
@@ -135,7 +136,15 @@ export function Layout() {
         <aside className="sidebar">
           <nav className="nav-list" aria-label="main">
             {links.map(([to, label]) => (
-              <NavLink key={to} to={to} end={to === "/" || to === "/admin"} className={({ isActive }) => (isActive ? "nav-item active" : "nav-item")}>
+              <NavLink
+                key={to}
+                to={to}
+                end={to === "/" || to === "/admin"}
+                className={({ isActive }) => (isActive ? "nav-item active" : "nav-item")}
+                onMouseEnter={() => prefetchRoute(to)}
+                onFocus={() => prefetchRoute(to)}
+                onTouchStart={() => prefetchRoute(to)}
+              >
                 <Icon name={ICON[to] ?? "home"} />
                 <span>{label}</span>
               </NavLink>

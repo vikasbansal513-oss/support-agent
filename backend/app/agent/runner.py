@@ -28,6 +28,7 @@ from app.llm.client import DbCallRecorder as LlmRecorder
 from app.llm.client import LlmClient
 from app.llm.provider import make_provider
 from app.llm.runtime import load_effective
+from app.policy import service as policy_service
 from app.v1.policy import AnyPolicy, PolicyV2, parse_any
 from app.v1.toolbox import LiveV1ToolBox
 
@@ -126,11 +127,7 @@ async def _load_state(
             text("SELECT mode, agent_paused FROM tenants WHERE id = :t"), {"t": tenant_id}
         )
     ).one()
-    policy_row = (
-        await session.execute(
-            text("SELECT version, content FROM policies WHERE status = 'published'")
-        )
-    ).first()
+    policy, policy_version = await policy_service.get_published_policy(session)
     conv = (
         await session.execute(
             text(
@@ -180,7 +177,6 @@ async def _load_state(
             {"c": conversation_id, "r": run_id},
         )
     ).all()
-    policy = parse_any(policy_row.content) if policy_row else None
     inside, opens = _label(policy, tz)
     phone, email = conv.phone_e164, conv.email_lower
     masked = _mask(phone, email)
@@ -217,7 +213,7 @@ async def _load_state(
         "prior_customer_refs": prior,
         "last_language": conv.language,
     }
-    return state, tenant.mode, policy_row.version if policy_row else None
+    return state, tenant.mode, policy_version
 
 
 def _mask(phone: str | None, email: str | None) -> str | None:

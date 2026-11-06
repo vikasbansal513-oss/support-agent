@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     job_lease_seconds: int = Field(default=120, ge=30, le=3600)
     job_tenant_limit: int = Field(default=2, ge=1, le=20)
     customer_flood_per_minute: int = Field(default=10, ge=2, le=200)
+    tenant_api_limit_per_minute: int = Field(default=300, ge=1, le=100000)
     app_release: str = "dev"
     service_name: str = "support-agent"
     sentry_dsn: str = ""

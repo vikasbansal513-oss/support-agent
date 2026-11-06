@@ -19,7 +19,7 @@ from app.core.db import session_scope
 from app.core.errors import AppError
 from app.core.mail import Mailer
 from app.handoffs import service as handoffs
-from app.integrations.shopify_write import get_writer
+from app.integrations.shopify_write import get_writer_for_tenant
 from app.jobs import handlers
 from app.llm.client import LlmClient
 from app.v1 import convstate, outcome
@@ -438,7 +438,12 @@ async def _confirm_yes(
         return
     if confirmed.status == "approved":
         await writes.execute(
-            factory, get_writer(), tenant_id, action.id, policy, enforce_limits=True
+            factory,
+            await get_writer_for_tenant(factory, tenant_id),
+            tenant_id,
+            action.id,
+            policy,
+            enforce_limits=True,
         )
     await outcome.notify(factory, senders, mailer, tenant_id, action.id, mode)
 

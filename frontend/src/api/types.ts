@@ -507,6 +507,7 @@ export interface ClientTrafficRow {
   integration_calls_1h: number;
   avg_integration_latency_ms: number | null;
   failed_integration_calls_1h: number;
+  rate_limit_hits_1h: number;
 }
 
 export interface Traffic {

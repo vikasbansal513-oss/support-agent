@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.auth import ratelimit
 from app.channels import normalize
 from app.core.config import get_settings
 from app.core.db import get_session_factory, session_scope
@@ -106,6 +107,9 @@ async def whatsapp_webhook(
         tenant = await resolve_token(factory, token)
         if tenant is None:
             raise AppError("E-WEB-001", status_code=404)
+        # One noisy tenant's inbound traffic is briefly held back without touching anyone
+        # else's deliveries - same per-tenant bucket used for dashboard API traffic.
+        await ratelimit.hit_tenant_api(factory, tenant.tenant_id)
         check_ip_allowlist(request_ip(request))
         raw_bytes = await request.body()
         if len(raw_bytes) > MAX_BODY_BYTES:

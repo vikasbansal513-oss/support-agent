@@ -46,6 +46,33 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 // still each get their own copy of the resolved value.
 const inflightGets = new Map<string, Promise<unknown>>();
 
+// Section 2 (Speed & Scaling): a short in-process TTL cache for completed GETs,
+// mirroring the same "in-process TTL cache, invalidate on write" pattern used
+// for the backend's policy-settings cache. Re-visiting a page you were just on
+// (switching tabs, navigating back) is extremely common in this dashboard and
+// previously re-fetched every field from scratch every time. The TTL is short
+// (GET_CACHE_TTL_MS) precisely because this is a live support dashboard, not a
+// place to risk showing stale conversation/approval state - it only helps the
+// "clicked back within a few seconds" case, not general polling.
+//
+// Invalidation is deliberately coarse: any non-GET request clears the whole
+// cache rather than trying to track which GET paths a given mutation affects.
+// Guessing that relationship wrong (e.g. missing that approving a handoff also
+// changes the dashboard's open-handoff count) would show stale data after an
+// action, which is worse than the small extra fetches a full clear costs.
+const GET_CACHE_TTL_MS = 15_000;
+const getCache = new Map<string, { data: unknown; expiresAt: number }>();
+
+function cacheGet<T>(path: string): T | undefined {
+  const entry = getCache.get(path);
+  if (!entry) return undefined;
+  if (entry.expiresAt < Date.now()) {
+    getCache.delete(path);
+    return undefined;
+  }
+  return entry.data as T;
+}
+
 export function baseUrl(): string {
   const value = import.meta.env.VITE_API_BASE_URL as string | undefined;
   return (value ?? "").replace(/\/$/, "");
@@ -64,6 +91,9 @@ export function applyLogin(out: LoginOut, realm: Realm): void {
 export function clearSession(): void {
   session.accessToken = null;
   session.csrf = null;
+  // Logging out (or a different tenant/admin logging in on the same tab)
+  // must not leave the previous session's cached GET responses readable.
+  getCache.clear();
 }
 
 export function hasSession(): boolean {
@@ -177,14 +207,25 @@ export async function request<T>(method: string, path: string, body?: unknown, r
   // two components mounting at once and asking for the same resource) are
   // collapsed into one network request instead of firing one each.
   if (method === "GET") {
+    const cached = cacheGet<T>(path);
+    if (cached !== undefined) return cached;
     const existing = inflightGets.get(path);
     if (existing) return existing as Promise<T>;
-    const promise = doRequest<T>(method, path, body, retry).finally(() => {
-      inflightGets.delete(path);
-    });
+    const promise = doRequest<T>(method, path, body, retry)
+      .then((data) => {
+        getCache.set(path, { data, expiresAt: Date.now() + GET_CACHE_TTL_MS });
+        return data;
+      })
+      .finally(() => {
+        inflightGets.delete(path);
+      });
     inflightGets.set(path, promise);
     return promise;
   }
+  // A write may change what any previously-cached GET would return, and
+  // tracking exactly which paths each mutation affects is error-prone (see
+  // the comment on getCache above), so every write simply clears the cache.
+  getCache.clear();
   return doRequest<T>(method, path, body, retry);
 }
 

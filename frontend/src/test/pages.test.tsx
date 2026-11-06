@@ -72,10 +72,10 @@ describe("login", () => {
   });
 
   it("shows the error message with error id on wrong password", async () => {
-    mockFetch(() => ({ status: 401, body: { code: "E-AUTH-001", message: "Email ya password galat hai.", error_id: "ERR-AAAAAAAAAAAA", severity: "warning" } }));
+    mockFetch(() => ({ status: 401, body: { code: "E-AUTH-001", message: "Incorrect email or password.", error_id: "ERR-AAAAAAAAAAAA", severity: "warning" } }));
     renderApp(<Login />, "/login");
     await loginFirst();
-    expect(await screen.findByText("Email ya password galat hai.")).toBeInTheDocument();
+    expect(await screen.findByText("Incorrect email or password.")).toBeInTheDocument();
     expect(screen.getByText(/ERR-AAAAAAAAAAAA/)).toBeInTheDocument();
   });
 });

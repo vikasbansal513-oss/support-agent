@@ -307,16 +307,25 @@ async def export_customer(
                     {"c": customer_id},
                 )
             ).all()
-            for conv in convs:
-                msgs = (
+            # One query for every conversation's messages instead of one query per
+            # conversation (Section 2: this export used to be N+1 - a customer with many
+            # conversations could tie up a request/DB connection for a long time).
+            conv_ids = [conv.id for conv in convs]
+            msgs_by_conv: dict[Any, list[Any]] = {conv_id: [] for conv_id in conv_ids}
+            if conv_ids:
+                all_msgs = (
                     await session.execute(
                         text(
-                            "SELECT direction, sender, content, created_at FROM messages"
-                            " WHERE conversation_id = :c ORDER BY created_at, id"
+                            "SELECT conversation_id, direction, sender, content, created_at"
+                            " FROM messages WHERE conversation_id = ANY(:ids)"
+                            " ORDER BY conversation_id, created_at, id"
                         ),
-                        {"c": conv.id},
+                        {"ids": conv_ids},
                     )
                 ).all()
+                for m in all_msgs:
+                    msgs_by_conv[m.conversation_id].append(m)
+            for conv in convs:
                 data["conversations"].append(
                     {
                         "channel": conv.channel,
@@ -329,7 +338,7 @@ async def export_customer(
                                 "content": m.content,
                                 "at": m.created_at.isoformat(),
                             }
-                            for m in msgs
+                            for m in msgs_by_conv[conv.id]
                         ],
                     }
                 )

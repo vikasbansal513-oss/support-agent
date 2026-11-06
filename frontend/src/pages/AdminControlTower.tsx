@@ -547,6 +547,7 @@ function TrafficSection() {
                         <th>{t.monitorColIntegrationCalls1h}</th>
                         <th>{t.monitorAvgLatency}</th>
                         <th>{t.monitorColFailedIntegrationCalls1h}</th>
+                        <th>{t.monitorColRateLimitHits1h}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -557,6 +558,7 @@ function TrafficSection() {
                           <td>{row.integration_calls_1h}</td>
                           <td>{row.avg_integration_latency_ms === null ? "-" : fmtMs(row.avg_integration_latency_ms)}</td>
                           <td>{row.failed_integration_calls_1h}</td>
+                          <td>{row.rate_limit_hits_1h}</td>
                         </tr>
                       ))}
                     </tbody>

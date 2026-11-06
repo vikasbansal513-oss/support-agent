@@ -232,6 +232,60 @@ async def scan_and_upsert(session: AsyncSession) -> None:
                 {"d": dedupe},
             )
 
+    # Section 2.3: a tenant that keeps tripping its own per-tenant API/webhook rate limit
+    # (app.auth.ratelimit.hit_tenant_api audits each breach as "ratelimit.tenant_api_exceeded")
+    # is worth a human look - either genuinely outgrowing the default limit, or a runaway
+    # integration hammering the API. One or two breaches in a burst is normal; this only
+    # fires once a tenant racks up repeated breaches inside a short window.
+    rate_limit_hit_rows = (
+        await session.execute(
+            text(
+                "SELECT a.tenant_id, t.name, count(*) AS n FROM audit_log a"
+                " JOIN tenants t ON t.id = a.tenant_id"
+                " WHERE a.action = 'ratelimit.tenant_api_exceeded'"
+                " AND a.occurred_at >= now() - interval '10 minutes'"
+                " GROUP BY a.tenant_id, t.name"
+            )
+        )
+    ).all()
+    rate_limit_hit_threshold = await _threshold(session, "tenant_rate_limit_hits_warn", 20)
+    rate_limited_tenants = {row.tenant_id for row in rate_limit_hit_rows}
+    for row in rate_limit_hit_rows:
+        dedupe = f"tenant_rate_limited_repeatedly:{row.tenant_id}"
+        if row.n >= rate_limit_hit_threshold:
+            await _upsert(
+                session,
+                Condition(
+                    kind="tenant_rate_limited_repeatedly",
+                    severity="warning",
+                    message=f"{row.name} apni per-tenant API rate limit {row.n} baar cross kar"
+                    f" gaya (last 10 min, threshold {int(rate_limit_hit_threshold)}). Limit"
+                    " badhani ho ya koi integration loop check karna ho.",
+                    dedupe_key=dedupe,
+                    tenant_id=str(row.tenant_id),
+                ),
+            )
+        else:
+            await session.execute(
+                text(
+                    "UPDATE alerts SET status = 'resolved', resolved_at = now(), updated_at = now()"
+                    " WHERE status = 'open' AND kind = 'tenant_rate_limited_repeatedly'"
+                    " AND dedupe_key = :d"
+                ),
+                {"d": dedupe},
+            )
+    if rate_limit_hit_rows:
+        await session.execute(
+            text(
+                "UPDATE alerts SET status = 'resolved', resolved_at = now(), updated_at = now()"
+                " WHERE status = 'open' AND kind = 'tenant_rate_limited_repeatedly'"
+                " AND tenant_id <> ALL(:ids)"
+            ),
+            {"ids": list(rate_limited_tenants)},
+        )
+    else:
+        await _resolve_missing(session, "tenant_rate_limited_repeatedly", None)
+
     db_conn_row = (
         await session.execute(
             text(

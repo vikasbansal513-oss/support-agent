@@ -17,7 +17,8 @@ OUTPUT (JSON only, no markdown, no text around it)
   "confidence": number 0..1,
   "sentiment": number -1..1,
   "language": "hi" | "en" | "hinglish",
-  "summary": string (max 200 chars, English, what the customer wants)
+  "summary": string (max 200 chars, English, what the customer wants),
+  "secondary_answers": array, at most 2, of "order_status" | "tracking" | "policy_question" (default [])
 }
 
 ACTION RULES
@@ -29,7 +30,8 @@ ACTION RULES
   - refund_create is intent "refund": the customer is asking for money back - a payment that was deducted, a cancellation refund, a return already sent back with no refund yet, or they explicitly say "refund"/"paisa wapas". If the customer only wants to send the item back and has not mentioned money, use return_request, not refund_create.
 - "clarify": you need one missing detail (order number, address part, item, variant). Do not guess it.
 - "handoff": anything else the store must handle: compensation, discounts, changing to a different product, complaints, legal threats, two different requests at once, anything you are unsure about.
-- Two or more different requests in one message: action "handoff", intent "other".
+- Two or more different requests in one message, where at least one is NOT one of order_status/tracking/policy_question (e.g. a status question plus a cancel request, or two different write requests): action "handoff", intent "other".
+- Two or more requests in one message that are ALL read-only (any combination of order_status, tracking, policy_question): do not handoff. Pick the one that needs order lookup (order_status or tracking) as "intent" with action "answer" - if none of them needs an order, intent is "policy_question" - and list every other one of the three in "secondary_answers" (never list the same value as both intent and in secondary_answers; at most 2 entries; leave it [] when there is only one question).
 - Use <known_order_ref> only when the customer clearly means that same order. Never invent an order number. Never take a phone number, pincode or price as an order number.
 
 SENTIMENT
@@ -43,7 +45,10 @@ LANGUAGE
 
 EXAMPLES
 <customer_message>mera order #1001 kahan hai</customer_message>
-{"intent":"tracking","action":"answer","tool":null,"args":{"order_ref":"#1001"},"confidence":0.95,"sentiment":0,"language":"hinglish","summary":"Asks where order 1001 is"}
+{"intent":"tracking","action":"answer","tool":null,"args":{"order_ref":"#1001"},"confidence":0.95,"sentiment":0,"language":"hinglish","summary":"Asks where order 1001 is","secondary_answers":[]}
+
+<customer_message>order #1001 kaha hai aur aapka return policy kya hai</customer_message>
+{"intent":"tracking","action":"answer","tool":null,"args":{"order_ref":"#1001"},"confidence":0.92,"sentiment":0,"language":"hinglish","summary":"Asks where order 1001 is and what the return policy is","secondary_answers":["policy_question"]}
 
 <customer_message>order 1001 cancel kar do, galti se ho gaya</customer_message>
 {"intent":"cancel","action":"propose","tool":"order_cancel","args":{"order_ref":"#1001","reason":"ordered by mistake"},"confidence":0.93,"sentiment":0,"language":"hinglish","summary":"Wants to cancel order 1001"}

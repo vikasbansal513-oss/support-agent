@@ -23,11 +23,12 @@ from app.core.mail import get_mailer
 from app.core.masking import redact_for_llm
 from app.handoffs import service as handoffs
 from app.jobs import handlers, queue
+from app.policy import service as policy_service
 from app.privacy import service as privacy
 from app.v1 import templates as v1t
 from app.v1.confirm import parse_confirmation
 from app.v1.contracts import ConvUpdate, DecisionV1, HandoffSummaryV1
-from app.v1.policy import PolicyV2, parse_any
+from app.v1.policy import PolicyV2
 from app.voice import speech
 from app.voice.contracts import VoiceEventIn, VoiceReplyOut
 from app.voice.sender import CaptureVoiceSender
@@ -88,13 +89,10 @@ async def _tenant_view(session: AsyncSession) -> TenantView:
             )
         )
     ).one()
-    policy_row = (
-        await session.execute(text("SELECT content FROM policies WHERE status = 'published'"))
-    ).first()
     zone = (
         await session.execute(text("SELECT timezone FROM tenant_settings"))
     ).scalar_one_or_none()
-    parsed = parse_any(policy_row.content) if policy_row else None
+    parsed, _ = await policy_service.get_published_policy(session)
     return TenantView(
         name=str(tenant.name),
         status=str(tenant.status),

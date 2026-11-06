@@ -14,11 +14,12 @@ from app.core.audit import AuditEvent, record
 from app.core.config import get_settings
 from app.core.db import session_scope
 from app.core.mail import get_mailer
-from app.integrations.shopify_write import ShopifyWriter, get_writer
+from app.integrations.shopify_write import ShopifyWriter, get_writer_for_tenant
 from app.jobs.handlers import Handler, JobContext
+from app.policy import service as policy_service
 from app.privacy import service as privacy
 from app.v1 import outcome
-from app.v1.policy import PolicyV2, parse_any
+from app.v1.policy import PolicyV2
 
 logger = logging.getLogger("app.jobs.ops")
 
@@ -193,7 +194,7 @@ async def write_upkeep(ctx: JobContext) -> dict[str, Any]:
             .scalars()
             .all()
         )
-    writer = get_writer()
+    writer = await get_writer_for_tenant(ctx.factory, ctx.job.tenant_id)
     stuck = await _finish_stuck(ctx, writer)
     reconciled = 0
     for action_id in ids:
@@ -217,13 +218,10 @@ async def _finish_stuck(ctx: JobContext, writer: ShopifyWriter) -> int:
             .scalars()
             .all()
         )
-        row = (
-            await session.execute(text("SELECT content FROM policies WHERE status = 'published'"))
-        ).first()
+        policy, _ = await policy_service.get_published_policy(session)
         mode = (
             await session.execute(text("SELECT mode FROM tenants WHERE id = :t"), {"t": tenant_id})
         ).scalar_one()
-    policy = parse_any(row.content) if row else None
     if not ids or not isinstance(policy, PolicyV2):
         return 0
     senders = await build_senders(ctx.factory, tenant_id, ctx.transport)

@@ -16,7 +16,13 @@ from app.v1.policy import PolicyV2
 
 REPLY_PROMPT = "reply.v1.md"
 REPLY_VERSION = "reply.v1"
-MAX_REPLY_CHARS = 600
+# Section 5 Phase 1: a combined answer (order_status + a secondary
+# policy_question/tracking fact, see v1/graph.py's answer()/plan.secondary_answers)
+# naturally runs a bit longer than a single-fact reply - two short fact blocks plus
+# their intro line. 600 was sized for one fact group; 750 gives a combined reply
+# room without loosening anything else validate_reply_v1 checks (banned phrases,
+# known-facts-only numbers/refs, language match are all unchanged).
+MAX_REPLY_CHARS = 750
 EXTRA_BANNED = re.compile(
     r"(discount|coupon|free of charge|kal tak|by tomorrow|within \d+ (hours|days)|exception|"
     r"waive|compensat|sorry for the delay in refund)",

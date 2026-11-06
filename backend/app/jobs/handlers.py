@@ -21,8 +21,9 @@ from app.integrations import service as integrations
 from app.integrations.gmail import GmailAuthError, GmailClient, GmailUpstreamError, HttpGmailClient
 from app.integrations.http import DbCallRecorder, ExternalHttp
 from app.jobs import queue
+from app.policy import service as policy_service
 from app.privacy import service as privacy
-from app.v1.policy import PolicyV2, parse_any
+from app.v1.policy import PolicyV2
 
 logger = logging.getLogger("app.jobs.handlers")
 Factory = async_sessionmaker[AsyncSession]
@@ -93,10 +94,7 @@ async def _own_address(session: AsyncSession) -> str | None:
 
 
 async def _published_policy(session: AsyncSession) -> PolicyV2 | None:
-    row = (
-        await session.execute(text("SELECT content FROM policies WHERE status = 'published'"))
-    ).first()
-    parsed = parse_any(row.content) if row else None
+    parsed, _ = await policy_service.get_published_policy(session)
     return parsed if isinstance(parsed, PolicyV2) else None
 
 

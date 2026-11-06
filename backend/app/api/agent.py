@@ -7,6 +7,7 @@ from app.auth.service import Principal
 from app.contracts.contracts import AgentStatusOut
 from app.core.audit import AuditEvent, record
 from app.core.db import get_session_factory, session_scope
+from app.policy import service as policy_service
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 Factory = async_sessionmaker[AsyncSession]
@@ -18,9 +19,7 @@ async def _status(session: AsyncSession) -> AgentStatusOut:
             text("SELECT mode, agent_paused, status FROM tenants WHERE id = app_current_tenant()")
         )
     ).one()
-    version = (
-        await session.execute(text("SELECT version FROM policies WHERE status = 'published'"))
-    ).scalar_one_or_none()
+    _, version = await policy_service.get_published_policy(session)
     errors = (
         (
             await session.execute(

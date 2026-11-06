@@ -8,7 +8,7 @@ import { useApi } from "../components/useApi";
 import { rupeesToPaise, formatPaise, formatIst } from "../format";
 import { t } from "../i18n";
 
-const DAYS = ["Som", "Mang", "Budh", "Guru", "Shukra", "Shani", "Ravi"];
+const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 export function parseList(value: string): string[] {
   return value
@@ -103,12 +103,16 @@ function Editor({ policy, onSaved }: { policy: Policy; onSaved: () => void }) {
           <div className="policy-fields">
             <Field label={t.finalSaleTags} value={tags} onChange={setTags} />
             <Field label={t.handoffKeywords} value={keywords} onChange={setKeywords} />
-            {c.schema_version !== 2 && <Field label="Auto refund limit (₹, khali = band)" value={refundLimit} onChange={setRefundLimit} />}
+            {c.schema_version !== 2 && <Field label="Auto refund limit (₹, blank = off)" value={refundLimit} onChange={setRefundLimit} />}
           </div>
           <div className="disclosure-grid">
-            <Field label={t.disclosureHi} value={c.ai_disclosure.hi} onChange={(v) => setC({ ...c, ai_disclosure: { ...c.ai_disclosure, hi: v } })} />
+            {/* Customer-facing replies (WhatsApp/email) are English-only (pick_language() always
+                resolves to "en"), so only the English disclosure is shown here. The Hindi/hinglish
+                values in c.ai_disclosure are left untouched in state (not editable here) rather than
+                removed from the schema, since app/voice/service.py still renders handoff/call-summary
+                templates in the caller's own language for voice calls - deleting them from the model
+                would break that channel. See DECISIONS.md "Section 3" / Hindi-cleanup entry. */}
             <Field label={t.disclosureEn} value={c.ai_disclosure.en} onChange={(v) => setC({ ...c, ai_disclosure: { ...c.ai_disclosure, en: v } })} />
-            <Field label={t.disclosureHinglish} value={c.ai_disclosure.hinglish} onChange={(v) => setC({ ...c, ai_disclosure: { ...c.ai_disclosure, hinglish: v } })} />
           </div>
           {c.schema_version === 2 && (
             <label className="field">

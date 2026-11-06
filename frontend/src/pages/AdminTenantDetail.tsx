@@ -229,7 +229,7 @@ export function AdminTenantDetail() {
       await api.put(`/admin/tenants/${id}/quota`, {
         monthly_call_limit: limit,
         warn_percent: warn,
-        reason: "Admin ne quota update kiya",
+        reason: "Admin updated quota",
       });
       reloadQuota();
       toast.info(t.saved);

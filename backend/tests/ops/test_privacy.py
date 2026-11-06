@@ -174,3 +174,166 @@ async def test_public_notices_draft_banner(env: AgentEnv) -> None:
 
 async def test_privacy_requires_owner(env: AgentEnv) -> None:
     assert (await env.client.get("/privacy/requests")).status_code in (401, 403)
+
+
+async def test_correction_request_create_lists_structured_fields(env: AgentEnv) -> None:
+    created = await env.client.post(
+        "/privacy/requests",
+        json={
+            "subject_ref": PHONE,
+            "kind": "correct",
+            "correction_field": "phone",
+            "correction_value": "9911223344",
+        },
+        headers=env.wa.headers,
+    )
+    assert created.status_code == 201
+    body = created.json()
+    assert body["status"] == "open"
+    assert body["correction_field"] == "phone"
+    assert body["correction_value"] == "9911223344"
+    listed = await env.client.get("/privacy/requests", headers=env.wa.headers)
+    row = listed.json()[0]
+    assert row["correction_field"] == "phone" and row["correction_value"] == "9911223344"
+
+
+async def test_correct_request_without_fields_rejected(env: AgentEnv) -> None:
+    missing_value = await env.client.post(
+        "/privacy/requests",
+        json={"subject_ref": PHONE, "kind": "correct", "correction_field": "phone"},
+        headers=env.wa.headers,
+    )
+    assert missing_value.status_code == 422
+    export_with_fields = await env.client.post(
+        "/privacy/requests",
+        json={
+            "subject_ref": PHONE,
+            "kind": "export",
+            "correction_field": "phone",
+            "correction_value": "9911223344",
+        },
+        headers=env.wa.headers,
+    )
+    assert export_with_fields.status_code == 422
+
+
+async def test_correction_approve_updates_customer_and_audit(env: AgentEnv) -> None:
+    await seed(env)
+    created = await env.client.post(
+        "/privacy/requests",
+        json={
+            "subject_ref": PHONE,
+            "kind": "correct",
+            "correction_field": "phone",
+            "correction_value": "9911223344",
+        },
+        headers=env.wa.headers,
+    )
+    request_id = created.json()["id"]
+    approved = await env.client.post(
+        f"/privacy/requests/{request_id}/approve", headers=env.wa.headers
+    )
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "done"
+    customer = await env.q("SELECT phone_e164 FROM customers")
+    assert customer[0].phone_e164 == "+919911223344"
+    audit = await env.q("SELECT 1 FROM audit_log WHERE action = 'privacy.correction_approved'")
+    assert audit
+    repeat = await env.client.post(
+        f"/privacy/requests/{request_id}/approve", headers=env.wa.headers
+    )
+    assert repeat.status_code == 409 and error_code(repeat) == "E-PRV-002"
+
+
+async def test_correction_reject_leaves_customer_unchanged(env: AgentEnv) -> None:
+    await seed(env)
+    created = await env.client.post(
+        "/privacy/requests",
+        json={
+            "subject_ref": PHONE,
+            "kind": "correct",
+            "correction_field": "email",
+            "correction_value": "new-email@example.com",
+        },
+        headers=env.wa.headers,
+    )
+    request_id = created.json()["id"]
+    too_short = await env.client.post(
+        f"/privacy/requests/{request_id}/reject", json={"reason": "no"}, headers=env.wa.headers
+    )
+    assert too_short.status_code == 422
+    rejected = await env.client.post(
+        f"/privacy/requests/{request_id}/reject",
+        json={"reason": "customer identity not verified"},
+        headers=env.wa.headers,
+    )
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "rejected"
+    customer = await env.q("SELECT phone_e164, email_lower FROM customers")
+    assert customer[0].phone_e164 == PHONE and customer[0].email_lower is None
+    audit = await env.q("SELECT 1 FROM audit_log WHERE action = 'privacy.correction_rejected'")
+    assert audit
+
+
+async def test_correction_field_value_mismatch_422(env: AgentEnv) -> None:
+    await seed(env)
+    created = await env.client.post(
+        "/privacy/requests",
+        json={
+            "subject_ref": PHONE,
+            "kind": "correct",
+            "correction_field": "phone",
+            "correction_value": "someone@example.com",
+        },
+        headers=env.wa.headers,
+    )
+    request_id = created.json()["id"]
+    approved = await env.client.post(
+        f"/privacy/requests/{request_id}/approve", headers=env.wa.headers
+    )
+    assert approved.status_code == 422 and error_code(approved) == "E-PRV-004"
+
+
+async def test_correction_unknown_customer_404(env: AgentEnv) -> None:
+    created = await env.client.post(
+        "/privacy/requests",
+        json={
+            "subject_ref": "+919800000000",
+            "kind": "correct",
+            "correction_field": "phone",
+            "correction_value": "9911223344",
+        },
+        headers=env.wa.headers,
+    )
+    request_id = created.json()["id"]
+    approved = await env.client.post(
+        f"/privacy/requests/{request_id}/approve", headers=env.wa.headers
+    )
+    assert approved.status_code == 404 and error_code(approved) == "E-PRV-003"
+
+
+async def test_correction_endpoints_reject_non_correction_kind(env: AgentEnv) -> None:
+    created = await env.client.post(
+        "/privacy/requests", json={"subject_ref": PHONE, "kind": "export"}, headers=env.wa.headers
+    )
+    request_id = created.json()["id"]
+    approved = await env.client.post(
+        f"/privacy/requests/{request_id}/approve", headers=env.wa.headers
+    )
+    assert approved.status_code == 409 and error_code(approved) == "E-PRV-002"
+
+
+async def test_correction_decide_requires_owner(env: AgentEnv) -> None:
+    created = await env.client.post(
+        "/privacy/requests",
+        json={
+            "subject_ref": PHONE,
+            "kind": "correct",
+            "correction_field": "phone",
+            "correction_value": "9911223344",
+        },
+        headers=env.wa.headers,
+    )
+    request_id = created.json()["id"]
+    unauthed = await env.client.post(f"/privacy/requests/{request_id}/approve")
+    assert unauthed.status_code in (401, 403)

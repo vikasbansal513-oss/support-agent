@@ -1038,6 +1038,7 @@ class ClientTrafficRowOut(BaseModel):
     integration_calls_1h: int
     avg_integration_latency_ms: float | None
     failed_integration_calls_1h: int
+    rate_limit_hits_1h: int
 
 
 class TrafficOut(BaseModel):

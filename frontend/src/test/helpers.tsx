@@ -26,7 +26,7 @@ export function mockFetch(handler: Handler): Call[] {
         headers: new Headers(init?.headers),
       };
       calls.push(call);
-      const result = handler(call) ?? { status: 404, body: { code: "E-NF-001", message: "Nahi mila.", error_id: "ERR-000000000000" } };
+      const result = handler(call) ?? { status: 404, body: { code: "E-NF-001", message: "Not found.", error_id: "ERR-000000000000" } };
       return new Response(result.status === 204 ? null : JSON.stringify(result.body ?? {}), {
         status: result.status ?? 200,
         headers: { "Content-Type": "application/json" },

@@ -104,6 +104,16 @@ PlanIntent = Literal[
     "unclear",
 ]
 PlanAction = Literal["answer", "propose", "clarify", "handoff"]
+# Section 5 Phase 1: a message that asks several READ-ONLY things at once
+# ("order kaha hai + return policy kya hai") no longer has to pick one and
+# handoff the rest - the planner names the one it treats as primary via
+# `intent` as always, and lists any other read-only questions here so
+# v1/graph.py can gather facts for all of them and answer in one reply.
+# Deliberately a subset of PlanIntent: a write intent (cancel/refund/...) or
+# "other"/"unclear"/"greeting" alongside another ask is still a real handoff
+# case (two different kinds of request, one of them needing a human
+# decision), not a combined answer.
+SecondaryIntent = Literal["order_status", "tracking", "policy_question"]
 Promise = Literal[
     "refund_initiated",
     "order_cancelled",
@@ -171,6 +181,21 @@ class Plan(BaseModel):
     sentiment: float = Field(default=0.0, ge=-1, le=1)
     language: Language = "hinglish"
     summary: Annotated[str, _clip(400)] = ""
+    secondary_answers: list[SecondaryIntent] = Field(default_factory=list, max_length=2)
+
+    @field_validator("secondary_answers", mode="after")
+    @classmethod
+    def _secondary_answers_sane(cls, value: list[Any], info: Any) -> list[Any]:
+        # Never let a secondary entry duplicate the primary intent (nothing to
+        # add), and de-dupe defensively - the LLM is untrusted input even when
+        # it's producing our own schema, so code never assumes it followed the
+        # "no duplicates, no repeating the primary" instruction in the prompt.
+        primary = info.data.get("intent")
+        seen: list[Any] = []
+        for item in value:
+            if item != primary and item not in seen:
+                seen.append(item)
+        return seen
 
     @field_validator("confidence", mode="before")
     @classmethod

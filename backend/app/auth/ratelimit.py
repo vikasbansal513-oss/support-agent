@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import text
@@ -5,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.tokens import sha256_hex
 from app.core import timeutil
+from app.core.audit import AuditEvent, record
+from app.core.config import get_settings
 from app.core.db import session_scope
 from app.core.errors import AppError
 
@@ -45,3 +48,42 @@ async def hit(factory: async_sessionmaker[AsyncSession], kind: str, subject: str
         ).scalar_one()
     if hits > limit:
         raise AppError("E-AUTH-006", detail=f"rate limit {kind}")
+
+
+async def hit_tenant_api(factory: async_sessionmaker[AsyncSession], tenant_id: uuid.UUID) -> None:
+    """General per-tenant traffic limit (dashboard API calls after login, WhatsApp webhook
+    deliveries). Reuses the same rate_limits table and bucket/window mechanics as hit()
+    above, but the limit is a tunable setting rather than a LIMITS entry, since this is a
+    noisy-neighbour guard (one tenant's own bucket) rather than a security control, and the
+    Work Log calls for the same flat default for every tenant today with plan-based limits
+    possibly replacing it later. A tenant that goes over is told to wait (E-AUTH-006, 429);
+    no other tenant's bucket is touched, so nobody else is affected."""
+    limit = get_settings().tenant_api_limit_per_minute
+    window_seconds = 60
+    now = int(timeutil.utc_now().timestamp())
+    window_start = now - (now % window_seconds)
+    async with session_scope(factory, super_admin=True) as session:
+        hits = (
+            await session.execute(
+                _HIT,
+                {
+                    "bucket": bucket_name("tenant_api", str(tenant_id)),
+                    "window": datetime.fromtimestamp(window_start, UTC),
+                },
+            )
+        ).scalar_one()
+        if hits > limit:
+            # Audited (not just rejected) so Admin Control Tower can alert on a tenant
+            # that keeps hitting its own limit, not just this one rejected request.
+            await record(
+                session,
+                AuditEvent(
+                    action="ratelimit.tenant_api_exceeded",
+                    entity_type="tenant",
+                    entity_id=str(tenant_id),
+                    reason=f"hits={hits} limit={limit}",
+                ),
+                tenant_id=tenant_id,
+            )
+    if hits > limit:
+        raise AppError("E-AUTH-006", detail="tenant api rate limit")

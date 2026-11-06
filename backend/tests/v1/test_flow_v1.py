@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 from datetime import timedelta
 
@@ -21,6 +22,72 @@ async def test_status_question_answers_from_facts_without_any_action(env: AgentE
     assert await actions(env) == []
     runs = await env.q("SELECT graph_version, plan FROM agent_runs")
     assert runs[0].graph_version == "v1.0" and runs[0].plan["intent"] == "order_status"
+
+
+async def test_combined_order_status_and_policy_question_merges_facts_into_one_reply(
+    env: AgentEnv,
+) -> None:
+    """Section 5 Phase 1: "order kaha hai + return policy kya hai" in one message
+    now answers both in one reply instead of handing off the policy half. The
+    planner names order_status as primary (it needs the order lookup) and lists
+    policy_question in secondary_answers; v1/graph.py's answer() must then merge
+    policy facts alongside the order facts it already gathers, and pass both to
+    the reply composer in one LLM call - this is exercised directly against the
+    real compose_reply/reply_layer.compose path (not the template fallback), by
+    supplying a second fake LLM response for the reply-composer call."""
+    await setup(env)
+    reply_json = json.dumps(
+        {
+            "text": (
+                "Order:\n- Order: *#1001*\n- Status: *unfulfilled*\n\n"
+                "Return policy:\n- Return window: *10 days*"
+            ),
+            "language": "hinglish",
+            "facts_used": ["order_name", "status", "return_window_days"],
+            "promises": [],
+            "needs_human": False,
+        }
+    )
+    env.provider.responses = [
+        plan("order_status", "answer", None, secondary_answers=["policy_question"]),
+        reply_json,
+    ]
+    await say(env, "order #1001 kaha hai aur return policy kya hai", "m1")
+    assert "#1001" in last_reply(env) and "10 days" in last_reply(env)
+    # Both the primary order fact and the secondary policy fact were actually
+    # offered to the reply composer in the same call - not, say, two separate
+    # LLM calls or a reply built from only one of the two groups.
+    reply_call_user = env.provider.calls[-1][1]
+    assert '"order_name"' in reply_call_user and '"return_window_days"' in reply_call_user
+    calls = await env.q("SELECT purpose FROM llm_calls ORDER BY created_at")
+    assert [c.purpose for c in calls] == ["plan", "reply"]
+
+
+async def test_combined_tracking_secondary_enrichment_is_dropped_on_lookup_failure(
+    env: AgentEnv,
+) -> None:
+    """A secondary tracking lookup failing (FakeV1Tools.tracking_lookup always
+    returns not_found - see tests/v1/flow.py) must not turn a perfectly good
+    order_status answer into a handoff: the enrichment is silently dropped and
+    the primary answer still goes out, falling back to the template reply here
+    because only one fake LLM response (the plan) is supplied."""
+    tools, _ = await setup(env)
+    result, gate = facts()
+    # Give the order a tracking number so the secondary-tracking branch in
+    # v1/graph.py's answer() is actually entered (it's a no-op otherwise) -
+    # FakeV1Tools.tracking_lookup still always returns not_found regardless.
+    with_tracking = result.order.model_copy(
+        update={"tracking_numbers": ["AWB123456789"], "courier": "Delhivery"}
+    )
+    tools.orders["#1001"] = (result.model_copy(update={"order": with_tracking}), gate)
+    await say(
+        env,
+        "order #1001 kaha hai aur tracking bhi bata do",
+        "m2",
+        plan("order_status", "answer", None, secondary_answers=["tracking"]),
+    )
+    assert "#1001" in last_reply(env)
+    assert await actions(env) == []
 
 
 async def test_auto_cancel_needs_customer_confirm_then_executes_once(env: AgentEnv) -> None:

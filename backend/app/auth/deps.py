@@ -3,7 +3,7 @@ from collections.abc import AsyncIterator
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.auth import service
+from app.auth import ratelimit, service
 from app.auth.service import Principal
 from app.auth.tokens import Realm, decode_access_token
 from app.core.config import get_settings
@@ -54,7 +54,12 @@ async def current_principal(
     factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),  # noqa: B008
 ) -> Principal:
     claims = decode_access_token(_bearer(request))
-    return await service.load_principal(factory, claims)
+    principal = await service.load_principal(factory, claims)
+    # Per-tenant traffic ceiling on every authenticated dashboard request: a noisy tenant
+    # only throttles itself (its own bucket in rate_limits), never anyone else's.
+    if principal.tenant_id is not None:
+        await ratelimit.hit_tenant_api(factory, principal.tenant_id)
+    return principal
 
 
 async def require_user(principal: Principal = Depends(current_principal)) -> Principal:  # noqa: B008

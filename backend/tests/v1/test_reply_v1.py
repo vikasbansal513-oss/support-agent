@@ -56,7 +56,9 @@ def test_clean_reply_passes() -> None:
         ("Aapka refund ho jayega, order #1001.", "banned_phrase"),
         ("Order #1001 par TOOL_FAILED aaya.", "internal_words"),
         ("Order #1001 ka AWB 12345678901 hai.", "unknown_number"),
-        ("x" * 700, "too_long"),
+        # MAX_REPLY_CHARS is 750 (raised for Section 5's combined replies - see
+        # app/v1/reply.py), so the "too_long" probe needs to clear that too.
+        ("x" * 800, "too_long"),
     ],
 )
 def test_rejects_unsafe_text(text: str, problem: str) -> None:

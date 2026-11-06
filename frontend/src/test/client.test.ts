@@ -20,7 +20,7 @@ describe("api client", () => {
   });
 
   it("parses the error body into ApiError with error_id", async () => {
-    mockFetch(() => ({ status: 409, body: { code: "E-ACT-001", message: "Pehle hi faisla ho chuka hai.", error_id: "ERR-ABCDEF123456", severity: "warning" } }));
+    mockFetch(() => ({ status: 409, body: { code: "E-ACT-001", message: "A decision has already been made on this action.", error_id: "ERR-ABCDEF123456", severity: "warning" } }));
     const error = await api.get("/actions").catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ApiError);
     expect((error as ApiError).code).toBe("E-ACT-001");

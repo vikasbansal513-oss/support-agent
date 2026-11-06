@@ -37,6 +37,41 @@ def test_plan_propose_needs_tool_and_order_ref() -> None:
         )
 
 
+def test_plan_secondary_answers_defaults_empty_and_drops_duplicates_of_primary() -> None:
+    # Section 5 Phase 1: no secondary_answers at all is the common case and must
+    # keep working exactly as before (default []).
+    plan = Plan.model_validate({"intent": "order_status", "action": "answer", "confidence": 0.9})
+    assert plan.secondary_answers == []
+
+    # The LLM is untrusted even producing our own schema: a secondary entry that
+    # repeats the primary intent, or that repeats itself, must not survive -
+    # there is nothing to "add" by answering the same thing twice.
+    plan = Plan.model_validate(
+        {
+            "intent": "tracking",
+            "action": "answer",
+            "confidence": 0.9,
+            "secondary_answers": ["tracking", "policy_question", "policy_question"],
+        }
+    )
+    assert plan.secondary_answers == ["policy_question"]
+
+
+def test_plan_secondary_answers_rejects_write_intents() -> None:
+    # Only the three read-only kinds are valid here - a write intent sneaking
+    # into secondary_answers would mean v1/graph.py silently skipping a real
+    # action, so this must fail validation, not be dropped quietly.
+    with pytest.raises(ValidationError):
+        Plan.model_validate(
+            {
+                "intent": "order_status",
+                "action": "answer",
+                "confidence": 0.9,
+                "secondary_answers": ["cancel"],
+            }
+        )
+
+
 def test_plan_tool_only_with_propose() -> None:
     with pytest.raises(ValidationError):
         Plan.model_validate(

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import time
 import uuid
 from typing import Any
 
@@ -22,6 +23,47 @@ from app.v1.policy import (
 )
 
 _COLS = "id, version, status, content, content_hash, created_at, published_at, regression_run_id"
+
+# In-process cache for the one published policy every tenant has. Every write-gate check,
+# reply-language lookup and handoff on the per-message hot path used to re-run the same
+# "SELECT ... FROM policies WHERE status = 'published'" and re-validate it through
+# parse_any() on every single call; with many tenants and messages/minute that is pure
+# avoidable DB load and Pydantic-validation CPU for a row that changes maybe a few times a
+# day. Cached per tenant for a short TTL (Work Log Section 2: "30-60s TTL, invalidate on
+# save") and invalidated immediately by publish() below, so a tenant's own change is never
+# stale for longer than one in-flight request.
+_POLICY_CACHE_TTL_SECONDS = 45.0
+_policy_cache: dict[uuid.UUID | None, tuple[float, AnyPolicy | None, int | None]] = {}
+
+
+def invalidate_published_policy_cache(tenant_id: uuid.UUID | None = None) -> None:
+    """Drop the cached published policy for one tenant (or, with no argument, every
+    tenant - used by tests and anything that bulk-resets policies)."""
+    if tenant_id is None:
+        _policy_cache.clear()
+    else:
+        _policy_cache.pop(tenant_id, None)
+
+
+async def get_published_policy(session: AsyncSession) -> tuple[AnyPolicy | None, int | None]:
+    """Cached (content, version) of the tenant's published policy - the one row every
+    write-gate/reply/handoff call needs. `session` must already be tenant-scoped (RLS);
+    the cache key comes from app_current_tenant(), a free session-local lookup, so no
+    call site needs to change its signature to pass tenant_id through explicitly."""
+    tenant_id = (await session.execute(text("SELECT app_current_tenant()"))).scalar_one()
+    now = time.monotonic()
+    cached = _policy_cache.get(tenant_id)
+    if cached is not None and cached[0] > now:
+        return cached[1], cached[2]
+    row = (
+        await session.execute(
+            text("SELECT version, content FROM policies WHERE status = 'published'")
+        )
+    ).first()
+    parsed = parse_any(row.content) if row is not None else None
+    version = row.version if row is not None else None
+    _policy_cache[tenant_id] = (now + _POLICY_CACHE_TTL_SECONDS, parsed, version)
+    return parsed, version
 
 
 def content_hash(policy: AnyPolicy) -> str:
@@ -246,4 +288,5 @@ async def publish(
             actor_role=principal.role,
         ),
     )
+    invalidate_published_policy_cache(principal.tenant_id)
     return _out(published)

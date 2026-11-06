@@ -419,11 +419,37 @@ def build_graph_v1(deps: V1Deps) -> Any:
                 template_id = "tracking_status"
             elif tracked.error_code in ("upstream_error", "auth_error"):
                 return _flag(state, "TOOL_FAILED", tool_steps=steps)
+        elif (
+            plan.intent == "order_status"
+            and "tracking" in plan.secondary_answers
+            and "tracking_lookup" in enabled
+            and order.tracking_numbers
+        ):
+            # Section 5 Phase 1: customer asked both "order kaha hai" and "tracking
+            # kya hai" together. Unlike the primary-tracking branch above, a failed
+            # or stuck-in-transit lookup here is NOT grounds to flag/handoff the
+            # whole reply - the order_status half is still a perfectly good answer
+            # on its own, so a secondary enrichment that doesn't cleanly succeed is
+            # just silently dropped rather than escalated.
+            secondary_steps = int(state.get("tool_steps", 0)) + 1
+            tracked_secondary: ToolResult = await deps.tools.tracking_lookup(
+                order.tracking_numbers[0], order.courier
+            )
+            if tracked_secondary.ok and tracked_secondary.tracking is not None:
+                results["tracking"] = tracked_secondary.tracking.model_dump(mode="json")
+                state = {**state, "tool_steps": secondary_steps}
         merged: State = {**state, "tool_results": results, "reply": {"template_id": template_id}}
         fallback = build_reply(merged)
         facts: dict[str, Any] = {"order": reply_layer.order_facts(results["order"], _lang(state))}
         if "tracking" in results:
             facts["tracking"] = reply_layer.tracking_facts(results["tracking"])
+        if "policy_question" in plan.secondary_answers:
+            # The customer's other read-only question in the same message. Order
+            # facts need the identity/order-gate verification that already ran
+            # for this primary intent; policy facts need none of that, so this
+            # combination is always safe to add regardless of which of
+            # order_status/tracking is primary.
+            facts["policy"] = reply_layer.policy_facts(policy)
         composed = await compose_reply(state, policy, facts)
         update: dict[str, Any] = {"tool_results": results, **composed["meta"]}
         if composed["reply"] is not None:
@@ -440,6 +466,19 @@ def build_graph_v1(deps: V1Deps) -> Any:
         return update
 
     async def policy_answer(state: State, policy: PolicyV2) -> dict[str, Any]:
+        # Section 5 Phase 1 scope: when policy_question is the PRIMARY intent,
+        # identity() skips order lookup entirely (see identity()'s early return
+        # for policy_question above) - there is no verified order in state to
+        # safely attach if the customer also asked an order_status/tracking
+        # question in the same message. Making that combination work would mean
+        # identity() running the order-gate lookup (with its full not-found /
+        # customer-mismatch / attempts-limit handling) even for a policy-primary
+        # message, which is a real change to the identity-verification gate, not
+        # just an extra fact to merge in - left for a later phase. The prompt
+        # (plan.v1.md) is written to prefer order_status/tracking as the primary
+        # intent whenever one is present, specifically so this combination is
+        # rare; if the planner still emits it, plan.secondary_answers is simply
+        # not read here and the policy question still gets answered on its own.
         composed = await compose_reply(state, policy, {"policy": reply_layer.policy_facts(policy)})
         if composed["reply"] is not None:
             return {**composed["meta"], "v1_reply": composed["reply"]}

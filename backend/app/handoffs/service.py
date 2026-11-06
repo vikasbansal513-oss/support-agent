@@ -11,8 +11,9 @@ from app.contracts.contracts import DecisionOut
 from app.core import timeutil
 from app.core.db import session_scope
 from app.core.mail import Mailer, send_safely
+from app.policy import service as policy_service
 from app.v1.contracts import DecisionV1
-from app.v1.policy import AnyPolicy, parse_any
+from app.v1.policy import AnyPolicy
 
 logger = logging.getLogger("app.handoffs")
 Factory = async_sessionmaker[AsyncSession]
@@ -53,9 +54,6 @@ async def create_handoff(
     shadow = mode == "shadow"
     now = timeutil.utc_now()
     async with session_scope(factory, tenant_id=tenant_id) as session:
-        policy_row = (
-            await session.execute(text("SELECT content FROM policies WHERE status = 'published'"))
-        ).first()
         settings = (
             await session.execute(
                 text(
@@ -64,7 +62,7 @@ async def create_handoff(
                 )
             )
         ).first()
-        policy = parse_any(policy_row.content) if policy_row else None
+        policy, _ = await policy_service.get_published_policy(session)
         tz = settings.timezone if settings else "Asia/Kolkata"
         due = sla_due(policy, tz, now)
         row = (

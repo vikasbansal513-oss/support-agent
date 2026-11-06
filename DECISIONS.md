@@ -366,3 +366,47 @@ User ne khud apne GitHub Actions `backend` workflow par `pytest -q -n 2 --dist l
 **Verify kiya:** `ast.parse` + `ruff check` + `ruff format --check` teeno badli files (`contracts.py`, `runner.py`, `runner_v1.py`) par clean (contracts.py ke 9 pre-existing unrelated warnings line-number se confirm karke chhode gaye, mere edit se door hain). Poore test suite me grep karke dekha - koi exact-string equality assertion (jo mera combined-text todega) nahi mili, sirf count-based (`len(...) ==`) assertions mili jo is fix ke baad sahi count dengi.
 
 **VERIFY (abhi tak nahi hua):** asal pytest run - yeh fix sirf trace-based hai, run-verified nahi; user ke agle GitHub Actions run se hi pakka pata chalega ki sab 9 (ya jitne bhi isi wajah se fail hue the) ab pass ho rahe hain.
+
+## P36 — Section 5 Phase 1: multi-intent READ-only answering, and why policy-primary + order-secondary is deliberately not supported yet
+
+**Problem (Section 5):** jab customer ek hi message me do-teen READ-ONLY sawaal poochta tha ("order kaha hai aur return policy kya hai"), planner ko do alag requests dikhti thi aur rule tha "2+ requests = handoff, intent other" — customer ko poora jawab kabhi ek baar me nahi milta tha, human ko sab kuchh dubara explain karna padta tha.
+
+**Design — kaunsa combo safe hai, kaunsa nahi:**
+`answer()` me order_status/tracking primary hone par policy facts merge karna 100% safe hai, kyunki policy facts ko kisi identity/order-verification ki zaroorat nahi — `_policy2(state)` state me already available hai, order-identity se bilkul independent. Isliye `secondary_answers` me `"policy_question"` ko hamesha merge kiya.
+
+Dusri taraf, secondary "tracking" (jab primary order_status ho) ek genuine extra tool-call hai (courier API) jo fail bhi ho sakta hai, stuck-in-transit bhi nikal sakta hai. Primary tracking-intent path me yeh dono cases hard-flag/handoff karte hain (Decision Framework Section 3 ka rule). Lekin secondary ke liye wahi strictness lagana galat hai — order_status ka jawab already poora/sahi hai, sirf ek "bonus" fact jod rahe hain. Isliye secondary-tracking lookup fail/stuck ho to **silently drop** kiya, flag/handoff nahi — primary answer phir bhi customer ko jaata hai.
+
+**Jaan-bujhkar scope se bahar: primary=policy_question + secondary=order_status/tracking.** Root cause: `identity()` (jo order-lookup + customer-match verify karta hai) policy_question intent ke liye **bilkul skip** ho jaata hai (`if plan.intent == "policy_question": return {}`), kyunki policy answer ko order ki zaroorat hi nahi hoti. Agar primary policy_question ho aur customer ne saath me order_status bhi poocha ho, order facts available hi nahi hain is point tak — unhe banane ke liye `identity()` ko conditionally order-gate chalana padta, jiske apne not-found/customer-mismatch/attempts-limit edge cases hain. Yeh identity-verification gate hai — security-sensitive (customer apna order dekh sakta hai ya nahi, yahi decide karta hai) — aur "test mat karo abhi" instruction ke saath isko blind modify karna galat risk hota. Isliye:
+- `plan.v1.md` ka naya rule planner ko khud guide karta hai: jab order/tracking aur policy dono mil jayein, order/tracking ko primary banao (policy ko hamesha secondary rakho) — taaki yeh unsupported combo ideally kabhi na bane.
+- Agar LLM phir bhi policy_question ko primary bana de (edge case, ya customer ne sirf policy + kuch aur poocha), `policy_answer()` simply `plan.secondary_answers` padhta hi nahi — crash nahi hota, policy ka jawab phir bhi sahi jaata hai, bas secondary ask drop ho jaata hai (koi worse behavior nahi jo pehle (handoff) se bhi behtar hai, bas poora combined answer nahi).
+
+**`MAX_REPLY_CHARS` 600→750:** combined 2-topic reply me do chhote "fact blocks" + intro line, ~600 kaafi tight tha. `validate_reply_v1`'s fact-matching check generic hai (`json.dumps(facts)` pe flatten karke numbers/refs check karta hai) — isliye koi badlav nahi chahiye tha wahan, sirf length cap thoda khola.
+
+**Verify kiya (static-only, standing instruction ke mutabik — pytest is session me nahi chalaya):**
+- `tests/v1/test_contracts_v1.py`, `tests/v1/test_flow_v1.py`, `tests/v1/test_reply_v1.py` me naye/updated tests likhe (existing `plan()`/`say()`/FakeProvider harness ka pattern follow karke) jo combined-facts merge, duplicate/write-intent validator, aur secondary-tracking-fail-silently-dropped ko cover karte hain — code likh ke haath se trace kiya ki expected flow match karta hai, run nahi kiya.
+- `plan.v1.md`/`reply.v1.md` prompt text manually re-read kiya consistency ke liye (naya field schema me, naya rule ACTION RULES me, naya example dono files me).
+
+**VERIFY (abhi tak nahi hua):** asal pytest run (naye 4 tests + `test_reply_v1.py` ka updated `"x"*800` threshold); real LLM se plan.v1.md ka naya secondary_answers rule kitna reliably follow hota hai (confidence/prompt-adherence sirf asli model se pata chalega); policy-primary+order-secondary combo future phase me chahiye ho to `identity()` ko conditionally order-gate chalane ka structural change karna padega — abhi explicitly deferred.
+
+## P37 — Hindi/Hinglish cleanup, scoped to dashboard UI only (user's explicit choice)
+
+User diya ek docx ("4 Images Detailed Explanation.docx") jisme ek purani discussion ke 4 screenshots explain the gaye the: Hindi/Hinglish customer-facing text hatao, Hindi-understanding capability (keywords/confirm/fraud/tests) rakho, listed test files delete na karo, aur `templates.py` badalne se pehle WhatsApp/email vs voice usage alag-alag verify karo (dono channels ek saath change karne se ek tootega).
+
+**Audit se pata chala — bahut kuch already done tha:**
+- Weekday labels (`Policy.tsx` `DAYS` array) already English the (`Mon`..`Sun`), koi Hindi din-naam nahi.
+- WhatsApp/email reply language already P22 se English-only hai (`app/agent/validate.py::pick_language()` customer ki language ignore karke hamesha "en" return karta hai) — ye poore graph (V0 aur V1 dono) ke through jaata hai.
+- Table 1 ke saare listed test/spec files (`test_multiturn_eval.py`, `test_pipeline.py`, `test_voice_consent.py`, `spec/agent/keywords.py`, `spec/agent/templates.py`, `spec/agent/test_keywords_templates.py`, `spec/evals/cases.py`, `spec/evals/dataset.jsonl`) sab present hain — koi touch nahi kiya, diff karke confirm kiya ki `spec/` ke versions `backend/app/` se genuinely alag (119-358 line diff) hain, "duplicate samajh kar delete" wala risk real tha, sahi warning thi.
+
+**Gap sirf dashboard disclosure UI tha** — `frontend/src/pages/Policy.tsx` abhi bhi 3 editable fields dikhata tha (`disclosureHi`/`disclosureEn`/`disclosureHinglish`), `i18n.ts` me unke Hindi/Hinglish labels the.
+
+**Risk jo user ko explicitly poocha gaya (docx ki apni warning ka exact case):** `backend/app/voice/service.py` ka call-summary WhatsApp message (line ~642, `v1t.render(done, lang, ...)`) seedha `call.language` (hi/hinglish ho sakta hai) use karta hai, pick_language() se nahi guzarta — matlab `v1/templates.py`'s hi/hinglish template text aur `Disclosure` schema (`contracts.py`) ke hi/hinglish fields voice channel ke liye abhi bhi genuinely load-bearing hain. Poora schema se hi/hinglish hata dena is call-summary feature ko tod deta (aur shayad live spoken replies bhi, jo `call.language` se hi render hoti hain).
+
+User ko 3 options diye: (a) sirf dashboard UI chhupao, backend/templates safe rakho, (b) poora schema English-only karo (voice bhi fix karna padega isi kaam me), (c) sirf status report do, kuch mat karo. **User ne (a) chuna.**
+
+**Fix (sirf frontend, 2 files):**
+1. `Policy.tsx` — `disclosure-grid` se Hindi aur Hinglish `Field` rows hata diye, sirf English field bacha. `c.ai_disclosure.hi`/`.hinglish` state me as-is rehte hain (koi onChange handler nahi hai ab unke liye, isliye kabhi mutate nahi hote) — save karne par wahi values backend ko jaate hain jo load hue the (default ya brand ka pehle se saved value), kabhi blank/invalid nahi hote (`Disclosure.hi`/`.hinglish` ki `min_length=5` validation kabhi fail nahi hogi isse).
+2. `i18n.ts` — `disclosureHi`/`disclosureHinglish` keys hataye (grep se confirm kiya sirf `Policy.tsx` hi inhe use karta tha). `replyLanguage`/`replyLanguageHi`/`replyLanguageHinglish` (brand ka apna reply-language dropdown — V1 policy ka alag, pehle se decided feature, `Agent_Reply_TopClass_Notes.md` Section 3b) jaan-boojh kar NAHI chheda, docx ke scope se bahar tha.
+
+**NAHI kiya (jaan-boojh kar, risk control ke liye):** `backend/app/contracts/contracts.py`'s `Disclosure` model, `app/v1/policy.py`, `app/policy/regression.py` (3-variant disclosure check), `app/agent/templates.py`, `app/v1/templates.py` — in sabme hi/hinglish fields/text as-is hain, kyunki voice calling abhi bhi inhe real-use karta hai (upar dekha). Agar future me poora schema English-only karna ho, pehle voice ka call-summary path aur confirm/done templates ka voice-specific usage migrate/verify karna padega — alag part, is baar deliberately deferred (user ka apna choice).
+
+**Verify kiya:** `npx tsc --noEmit` clean, `npx vitest run` 37/37 pass, `npm run build` clean — teeno fix ke baad re-run kiye. Koi backend file change nahi hui is part me, isliye pytest/ruff backend par chalane ki zaroorat nahi thi. **VERIFY (baaki):** asli dashboard par Policy page khol kar visual confirm karna (English-only disclosure field dikhna chahiye, baaki sab waisa hi).

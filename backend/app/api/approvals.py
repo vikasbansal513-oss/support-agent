@@ -17,10 +17,11 @@ from app.core.config import get_settings
 from app.core.db import get_session_factory, session_scope
 from app.core.errors import AppError
 from app.core.mail import get_mailer
-from app.integrations.shopify_write import get_writer
+from app.integrations.shopify_write import get_writer_for_tenant
+from app.policy import service as policy_service
 from app.v1 import outcome
 from app.v1.contracts import WRITE_TOOLS
-from app.v1.policy import PolicyV2, parse_any
+from app.v1.policy import PolicyV2
 from app.v1.regate import facts_for, regate
 
 router = APIRouter(tags=["approvals"])
@@ -139,10 +140,7 @@ def _tenant(principal: Principal) -> uuid.UUID:
 
 async def _policy(factory: Factory, tenant_id: uuid.UUID) -> PolicyV2:
     async with session_scope(factory, tenant_id=tenant_id) as session:
-        row = (
-            await session.execute(text("SELECT content FROM policies WHERE status = 'published'"))
-        ).first()
-    policy = parse_any(row.content) if row else None
+        policy, _ = await policy_service.get_published_policy(session)
     if not isinstance(policy, PolicyV2):
         raise AppError("E-ACT-005")
     return policy
@@ -217,7 +215,7 @@ async def approve_action(
     tenant_id = _tenant(principal)
     user_id = principal.user_id
     policy = await _policy(factory, tenant_id)
-    writer = get_writer()
+    writer = await get_writer_for_tenant(factory, tenant_id)
 
     async def regate_fresh(action: writes.ActionRow) -> Any:
         facts = await facts_for(factory, tenant_id, action.conversation_id, writer)
@@ -250,7 +248,9 @@ async def reconcile_action(
     factory: Factory = Depends(get_session_factory),  # noqa: B008
 ) -> OutcomeOut:
     tenant_id = _tenant(principal)
-    result = await writes.reconcile(factory, get_writer(), tenant_id, action_id)
+    result = await writes.reconcile(
+        factory, await get_writer_for_tenant(factory, tenant_id), tenant_id, action_id
+    )
     if result.detail == "RECONCILED":
         await _tell_customer(factory, tenant_id, action_id)
     return OutcomeOut(action_id=result.action_id, status=result.status, detail=result.detail)

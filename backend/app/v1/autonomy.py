@@ -10,7 +10,7 @@ from app.core.db import session_scope
 from app.core.errors import AppError
 from app.policy import service as policy_service
 from app.v1.contracts import WRITE_TOOLS
-from app.v1.policy import PolicyV2, parse_any
+from app.v1.policy import PolicyV2
 
 Factory = async_sessionmaker[AsyncSession]
 SetLevel = Literal["off", "approval", "auto"]
@@ -36,12 +36,7 @@ async def set_level(
         mode = (
             await session.execute(text("SELECT mode FROM tenants WHERE id = :t"), {"t": tenant_id})
         ).scalar_one_or_none()
-        row = (
-            await session.execute(
-                text("SELECT content FROM policies WHERE status = 'published' LIMIT 1")
-            )
-        ).first()
-        current = parse_any(row.content) if row else None
+        current, _ = await policy_service.get_published_policy(session)
         if mode is None or not isinstance(current, PolicyV2):
             raise AppError("E-ADM-003")
         if level == "auto" and mode != "auto":

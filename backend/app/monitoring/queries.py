@@ -437,7 +437,10 @@ async def traffic(session: AsyncSession) -> TrafficOut:
                 "   AND e.created_at >= now() - interval '1 hour') AS avg_latency_ms,"
                 " (SELECT count(*) FROM external_calls e WHERE e.tenant_id = t.id"
                 "   AND e.created_at >= now() - interval '1 hour'"
-                "   AND (e.http_status >= 400 OR e.error_class IS NOT NULL)) AS failed_calls_1h"
+                "   AND (e.http_status >= 400 OR e.error_class IS NOT NULL)) AS failed_calls_1h,"
+                " (SELECT count(*) FROM audit_log a WHERE a.tenant_id = t.id"
+                "   AND a.action = 'ratelimit.tenant_api_exceeded'"
+                "   AND a.occurred_at >= now() - interval '1 hour') AS rate_limit_hits_1h"
                 " FROM tenants t WHERE t.status = 'active'"
                 " ORDER BY agent_runs_24h DESC LIMIT 20"
             )
@@ -469,6 +472,7 @@ async def traffic(session: AsyncSession) -> TrafficOut:
                     round(float(r.avg_latency_ms), 1) if r.avg_latency_ms is not None else None
                 ),
                 failed_integration_calls_1h=int(r.failed_calls_1h),
+                rate_limit_hits_1h=int(r.rate_limit_hits_1h),
             )
             for r in by_client_rows
         ],

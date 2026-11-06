@@ -23,7 +23,7 @@ export function Dashboard() {
   const toggle = (paused: boolean) =>
     useSubmit(async () => {
       await api.post<AgentStatus>(paused ? "/agent/pause" : "/agent/resume", {
-        reason: paused ? "Dashboard se roka gaya" : "Dashboard se chalu kiya gaya",
+        reason: paused ? "Paused from dashboard" : "Resumed from dashboard",
       });
       reloadStatus();
       reloadStats();

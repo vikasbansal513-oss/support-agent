@@ -17,7 +17,7 @@ from app.core.errors import AppError
 from app.core.flags import is_globally_paused
 from app.integrations.gmail import GmailAuthError, GmailUpstreamError
 from app.integrations.gupshup import SendError
-from app.v1.policy import parse_any
+from app.policy import service as policy_service
 
 logger = logging.getLogger("app.actions")
 Factory = async_sessionmaker[AsyncSession]
@@ -229,11 +229,8 @@ async def guard_reasons(
         or now - target.last_inbound_at > timedelta(hours=WINDOW_HOURS)
     ):
         return "WINDOW_CLOSED"
-    policy_row = (
-        await session.execute(text("SELECT content FROM policies WHERE status = 'published'"))
-    ).first()
-    if policy_row is not None and not human:
-        policy = parse_any(policy_row.content)
+    policy, _ = await policy_service.get_published_policy(session)
+    if policy is not None and not human:
         cust, brand = await _day_counts(session, conversation_id, now)
         if cust > policy.customer_daily_msg_cap or brand > policy.brand_daily_msg_cap:
             return "CAP_REACHED"

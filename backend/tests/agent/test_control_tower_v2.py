@@ -334,6 +334,129 @@ async def test_alert_provider_api_failure_rate_severity_by_magnitude(
     assert row.service == "gupshup"
 
 
+async def test_alert_tenant_rate_limited_repeatedly_dedupe_and_autoresolve(
+    owner_factory: Factory,
+) -> None:
+    """Section 2.3/2's Admin Control Tower monitoring: app.auth.ratelimit.hit_tenant_api
+    audits each per-tenant rate-limit breach as 'ratelimit.tenant_api_exceeded'
+    (app.auth.ratelimit); this exercises the alerts.py side of that end-to-end by
+    inserting the same audit rows a real breach would produce."""
+    tid = await tenant(owner_factory)
+
+    async def breach(n: int) -> None:
+        async with session_scope(owner_factory, tenant_id=tid, super_admin=True) as session:
+            for _ in range(n):
+                await session.execute(
+                    text(
+                        "INSERT INTO audit_log (tenant_id, action, entity_type, entity_id)"
+                        " VALUES (:t, 'ratelimit.tenant_api_exceeded', 'tenant', :eid)"
+                    ),
+                    {"t": tid, "eid": str(tid)},
+                )
+
+    await breach(5)  # below the default threshold of 20 - no alert yet
+    async with session_scope(owner_factory, super_admin=True) as session:
+        await core_alerts.scan_and_upsert(session)
+        below = (
+            await session.execute(
+                text(
+                    "SELECT count(*) FROM alerts"
+                    " WHERE kind = 'tenant_rate_limited_repeatedly' AND tenant_id = :t"
+                    " AND status = 'open'"
+                ),
+                {"t": tid},
+            )
+        ).scalar_one()
+    assert below == 0
+
+    await breach(20)  # 25 total in the window - over the default threshold of 20
+    async with session_scope(owner_factory, super_admin=True) as session:
+        await core_alerts.scan_and_upsert(session)
+        row = (
+            await session.execute(
+                text(
+                    "SELECT severity, status FROM alerts"
+                    " WHERE kind = 'tenant_rate_limited_repeatedly' AND tenant_id = :t"
+                ),
+                {"t": tid},
+            )
+        ).one()
+    assert row.severity == "warning" and row.status == "open"
+
+    # Scanning again must not create a second row for the same breach (dedupe_key).
+    async with session_scope(owner_factory, super_admin=True) as session:
+        await core_alerts.scan_and_upsert(session)
+        again = (
+            await session.execute(
+                text(
+                    "SELECT count(*) FROM alerts"
+                    " WHERE kind = 'tenant_rate_limited_repeatedly' AND tenant_id = :t"
+                ),
+                {"t": tid},
+            )
+        ).scalar_one()
+    assert again == 1
+
+    # Once the breaches that produced the alert are no longer within the scan
+    # window, the alert auto-resolves. audit_log is append-only (a DB trigger
+    # blocks UPDATE/DELETE outright, even for a Postgres superuser), so the real
+    # "aging out" can't be simulated by backdating those rows. Instead, exercise
+    # the resolve branch directly: a tenant with an open alert but no breach rows
+    # currently inside the scan window must have that alert resolved on the next
+    # scan - this is exactly the state a real alert reaches once its breaches age
+    # past 10 minutes with no fresh ones replacing them.
+    stale_tid = await tenant(owner_factory)
+    async with session_scope(owner_factory, super_admin=True) as session:
+        await session.execute(
+            text(
+                "INSERT INTO alerts (tenant_id, kind, severity, message, dedupe_key, status)"
+                " VALUES (:t, 'tenant_rate_limited_repeatedly', 'warning', 'test seed',"
+                " :d, 'open')"
+            ),
+            {"t": stale_tid, "d": f"tenant_rate_limited_repeatedly:{stale_tid}"},
+        )
+    async with session_scope(owner_factory, super_admin=True) as session:
+        await core_alerts.scan_and_upsert(session)
+        stale_status = (
+            await session.execute(
+                text(
+                    "SELECT status FROM alerts"
+                    " WHERE kind = 'tenant_rate_limited_repeatedly' AND tenant_id = :t"
+                ),
+                {"t": stale_tid},
+            )
+        ).scalar_one()
+    assert stale_status == "resolved"
+
+
+async def test_traffic_by_client_reports_rate_limit_hits_isolated_per_tenant(
+    owner_factory: Factory,
+) -> None:
+    tid_a = await tenant(owner_factory)
+    tid_b = await tenant(owner_factory)
+    async with session_scope(owner_factory, super_admin=True) as session:
+        await session.execute(
+            text("UPDATE tenants SET status = 'active' WHERE id IN (:a, :b)"),
+            {"a": tid_a, "b": tid_b},
+        )
+    await _make_run(owner_factory, tid_a, seq=1, template_id="order_status")
+    await _make_run(owner_factory, tid_b, seq=1, template_id="order_status")
+    async with session_scope(owner_factory, tenant_id=tid_a, super_admin=True) as session:
+        for _ in range(3):
+            await session.execute(
+                text(
+                    "INSERT INTO audit_log (tenant_id, action, entity_type, entity_id)"
+                    " VALUES (:t, 'ratelimit.tenant_api_exceeded', 'tenant', :eid)"
+                ),
+                {"t": tid_a, "eid": str(tid_a)},
+            )
+    async with session_scope(owner_factory, super_admin=True) as session:
+        tr = await queries.traffic(session)
+    by_tenant = {row.tenant_id: row.rate_limit_hits_1h for row in tr.by_client}
+    assert by_tenant[tid_a] == 3
+    assert by_tenant[tid_b] == 0
+
+
 async def test_admin_agent_performance_and_client_endpoints_require_admin_and_work(
     client: httpx.AsyncClient,
     runtime_factory: Factory,
