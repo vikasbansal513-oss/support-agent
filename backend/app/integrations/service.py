@@ -1,4 +1,5 @@
 import json
+import logging
 import secrets
 import uuid
 from datetime import timedelta
@@ -24,7 +25,7 @@ from app.core.audit import AuditEvent, record
 from app.core.config import get_settings
 from app.core.crypto import Crypto
 from app.core.db import session_scope
-from app.core.errors import AppError
+from app.core.errors import AppError, new_error_id
 from app.core.masking import secret_hint
 from app.integrations.courier import (
     CourierClient,
@@ -36,6 +37,8 @@ from app.integrations.gmail import GmailUpstreamError, HttpGmailClient
 from app.integrations.http import DbCallRecorder, ExternalHttp
 from app.integrations.shopify import ShopifyClient
 from app.jobs import queue
+
+logger = logging.getLogger("app.integrations.service")
 
 # Couriers jinki asli tracking API verify/connect ho chuki hai (apni client class hai).
 VERIFIED_COURIER_KINDS: tuple[IntegrationKind, ...] = ("shiprocket", "delhivery")
@@ -372,37 +375,63 @@ async def check_now_gmail(factory: Factory, principal: Principal) -> GmailCheckN
         return GmailCheckNowOut(queued=True, job_id=None)
     from app.worker import drain_queue
 
-    done = await drain_queue(factory, job_id, "inline:gmail_check_now")
+    # Inline drain is best-effort: the job is already safely queued (committed above), so
+    # ANY failure here - including a Neon connection drop mid-operation - must fall back to
+    # "queued" instead of surfacing a 500 to the owner. drain_queue()'s own DB calls already
+    # retry transient connection errors internally (see queue.claim_by_id); this catch is
+    # the last line of defense once those retries are exhausted. The scheduled worker tick
+    # remains the real fallback either way - draining only ever speeds things up.
+    try:
+        done = await drain_queue(factory, job_id, "inline:gmail_check_now")
+    except Exception:
+        error_id = new_error_id()
+        logger.exception(
+            "inline gmail drain failed, leaving job for the worker",
+            extra={"error_id": error_id},
+        )
+        return GmailCheckNowOut(queued=True, job_id=job_id, already_running=False)
     # fetch_gmail sirf mail store karta hai aur har mail ke liye alag "process_inbound" job
     # enqueue karta hai (agent ka asli kaam). Unhe bhi yahin turant chalao, warna wo agle
     # hourly tick tak queued pade rehte hain aur dashboard me kuch dikhta nahi. Cap isliye ki
     # HTTP request lamba na ho; bacha hua kaam scheduled tick utha lega.
-    async with session_scope(factory, tenant_id=tenant_id, user_id=principal.user_id) as session:
-        pending = (
-            (
-                await session.execute(
-                    text(
-                        "SELECT id FROM jobs WHERE kind = 'process_inbound' AND status = 'queued'"
-                        " ORDER BY created_at LIMIT 10"
+    try:
+        async with session_scope(
+            factory, tenant_id=tenant_id, user_id=principal.user_id
+        ) as session:
+            pending = (
+                (
+                    await session.execute(
+                        text(
+                            "SELECT id FROM jobs WHERE kind = 'process_inbound' AND"
+                            " status = 'queued' ORDER BY created_at LIMIT 10"
+                        )
                     )
                 )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
-    if pending:
-        # API service ka process real agent pipeline by default install nahi karta (sirf
-        # worker.py ka main() karta hai). Bina runner ke process_inbound sirf mail ingest
-        # karke job "done" kar deta hai, agent reply (Review me dikhne wala) banta hi nahi.
-        # Webhooks/whatsapp.py ka _drain_now yahi pattern use karta hai; installed ho to
-        # override nahi karte.
-        from app.agent import runner as agent_runner
-        from app.jobs import handlers as job_handlers
+        if pending:
+            # API service ka process real agent pipeline by default install nahi karta
+            # (sirf worker.py ka main() karta hai). Bina runner ke process_inbound sirf
+            # mail ingest karke job "done" kar deta hai, agent reply (Review me dikhne
+            # wala) banta hi nahi. Webhooks/whatsapp.py ka _drain_now yahi pattern use
+            # karta hai; installed ho to override nahi karte.
+            from app.agent import runner as agent_runner
+            from app.jobs import handlers as job_handlers
 
-        if not job_handlers.inbound_runner_installed():
-            agent_runner.install()
-    for pending_id in pending:
-        await drain_queue(factory, pending_id, "inline:gmail_check_now")
+            if not job_handlers.inbound_runner_installed():
+                agent_runner.install()
+        for pending_id in pending:
+            await drain_queue(factory, pending_id, "inline:gmail_check_now")
+    except Exception:
+        # fetch_gmail job itself already finished/committed by this point (drain_queue
+        # above succeeded) - only the best-effort immediate processing of the resulting
+        # mails failed. They stay 'queued' and the next scheduled tick picks them up.
+        error_id = new_error_id()
+        logger.exception(
+            "inline process_inbound drain failed, leaving jobs for the worker",
+            extra={"error_id": error_id},
+        )
     return GmailCheckNowOut(queued=True, job_id=job_id, already_running=not done)
 
 

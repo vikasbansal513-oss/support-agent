@@ -191,12 +191,48 @@ async def run_worker(
     me = worker or worker_id()
     deadline = time.monotonic() + max_seconds
     stats = {"done": 0, "retry": 0, "needs_review": 0, "reaped": 0}
-    await heartbeat(factory)
-    await schedule_periodic(factory)
-    await scan_alerts(factory)
-    stats["reaped"] = len(await queue.reap_expired(factory))
+    try:
+        await heartbeat(factory)
+    except Exception:
+        error_id = new_error_id()
+        logger.exception("initial heartbeat failed, continuing", extra={"error_id": error_id})
+    # Each of these already retries transient DB connection errors internally
+    # (queue.claim/reap_expired go through with_connection_retry); this tick-level catch
+    # is only for when those retries are exhausted (e.g. Neon stays unreachable for the
+    # whole retry window) - log (same error_id convention as run_job()) and skip this
+    # tick's bookkeeping rather than letting one bad connection kill the whole Cloud Run
+    # Job run before it claims a single job.
+    try:
+        await schedule_periodic(factory)
+    except Exception:
+        error_id = new_error_id()
+        logger.exception(
+            "schedule_periodic failed this tick, continuing", extra={"error_id": error_id}
+        )
+    await scan_alerts(factory)  # already has its own try/except, see function docstring
+    try:
+        stats["reaped"] = len(await queue.reap_expired(factory))
+    except Exception:
+        error_id = new_error_id()
+        logger.exception("reap_expired failed this tick, continuing", extra={"error_id": error_id})
     while time.monotonic() < deadline:
-        job = await queue.claim(factory, me, settings.job_lease_seconds, settings.job_tenant_limit)
+        try:
+            job = await queue.claim(
+                factory, me, settings.job_lease_seconds, settings.job_tenant_limit
+            )
+        except Exception:
+            # Connection retries inside queue.claim() were already exhausted. Don't spin
+            # tight on a DB that's still down - back off for one idle_sleep, same as the
+            # "no job found" path, and let the next scheduled worker run try again fresh.
+            error_id = new_error_id()
+            logger.exception(
+                "queue.claim failed this tick after retries, backing off",
+                extra={"error_id": error_id},
+            )
+            if exit_when_idle or time.monotonic() + idle_sleep >= deadline:
+                break
+            await asyncio.sleep(idle_sleep)
+            continue
         if job is None:
             if exit_when_idle or time.monotonic() + idle_sleep >= deadline:
                 break
@@ -204,7 +240,11 @@ async def run_worker(
             continue
         outcome = await run_job(factory, job, me, transport)
         stats[outcome] += 1
-        await heartbeat(factory)
+        try:
+            await heartbeat(factory)
+        except Exception:
+            error_id = new_error_id()
+            logger.exception("heartbeat failed this tick, continuing", extra={"error_id": error_id})
     return stats
 
 

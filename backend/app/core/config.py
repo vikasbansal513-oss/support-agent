@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     encryption_key: str = ""
     db_pool_size: int = Field(default=5, ge=1, le=50)
     db_disable_statement_cache: bool = True
+    # Neon serverless Postgres suspends its compute after idle periods; a pooled
+    # connection older than this is proactively recycled instead of relying only on
+    # pool_pre_ping (which only catches staleness at checkout, not mid-operation).
+    db_pool_recycle_seconds: int = Field(default=300, ge=30, le=3600)
 
     jwt_secret: str = ""
     admin_jwt_secret: str = ""

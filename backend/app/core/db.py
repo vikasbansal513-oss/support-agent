@@ -1,9 +1,12 @@
-from collections.abc import AsyncIterator
+import asyncio
+import logging
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -14,6 +17,8 @@ from sqlalchemy.pool import NullPool
 
 from app.core import tenancy
 from app.core.config import get_settings
+
+logger = logging.getLogger("app.core.db")
 
 GLOBAL_TABLE_ALLOWLIST = (
     "users",
@@ -48,6 +53,7 @@ def make_engine(
     disable_statement_cache: bool = True,
     null_pool: bool = False,
     pool_size: int = 5,
+    pool_recycle: int = 300,
 ) -> AsyncEngine:
     parsed = make_url(url)
     if parsed.drivername in ("postgresql", "postgres"):
@@ -63,6 +69,11 @@ def make_engine(
         pool_size=pool_size,
         max_overflow=0,
         pool_pre_ping=True,
+        # Neon's compute auto-suspends on idle; pre_ping catches a dead connection at
+        # checkout, but a pooled connection that survives long enough to be reused across
+        # a Neon suspend/resume cycle is recycled proactively here too, same intent, two
+        # layers (checkout-time ping + age-based recycle).
+        pool_recycle=pool_recycle,
         connect_args=connect_args,
     )
 
@@ -75,9 +86,64 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
             settings.database_url,
             disable_statement_cache=settings.db_disable_statement_cache,
             pool_size=settings.db_pool_size,
+            pool_recycle=settings.db_pool_recycle_seconds,
         )
         _factory = async_sessionmaker(_engine, expire_on_commit=False)
     return _factory
+
+
+def _is_disconnect_error(exc: Exception) -> bool:
+    """True only for a connection-level failure (dropped/reset/closed mid-operation) -
+    never for an ordinary query error (bad SQL, constraint violation, etc), which must
+    propagate normally and never be retried."""
+    if isinstance(exc, DBAPIError) and exc.connection_invalidated:
+        return True
+    message = str(exc).lower()
+    return any(
+        s in message
+        for s in (
+            "connection was closed",
+            "connection reset",
+            "connection refused",
+            "connection closed",
+            "server closed the connection",
+            "could not connect",
+            "errno 104",
+        )
+    )
+
+
+async def with_connection_retry[T](
+    fn: Callable[[], Awaitable[T]],
+    *,
+    attempts: int = 3,
+    base_delay_seconds: float = 0.2,
+) -> T:
+    """Retry `fn` up to `attempts` times when it fails with a transient DB connection
+    error (e.g. Neon compute suspend/resume dropping a pooled connection mid-operation).
+
+    Only safe to use around a callable whose ENTIRE body is one atomic, idempotent
+    database operation (a single guarded UPDATE/SELECT ... RETURNING that either claims
+    something or finds nothing left to do) - a clean retry on a fresh connection then
+    either succeeds or is a no-op. Never wrap a sequence of dependent writes with this:
+    if a connection drops mid-sequence, the transaction has already rolled back and the
+    outcome of a blind retry of just part of it would be uncertain.
+
+    A non-connection error (bad SQL, constraint violation, business logic exception) is
+    never retried - it is re-raised immediately on the first attempt.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return await fn()
+        except (OperationalError, DBAPIError) as exc:
+            if not _is_disconnect_error(exc) or attempt == attempts:
+                raise
+            logger.warning(
+                "transient db connection error, retrying",
+                extra={"attempt": attempt, "max_attempts": attempts},
+            )
+            await asyncio.sleep(base_delay_seconds * (2 ** (attempt - 1)))
+    raise RuntimeError("with_connection_retry: unreachable (attempts must be >= 1)")
 
 
 async def dispose_engine() -> None:

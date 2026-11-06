@@ -410,3 +410,86 @@ User ko 3 options diye: (a) sirf dashboard UI chhupao, backend/templates safe ra
 **NAHI kiya (jaan-boojh kar, risk control ke liye):** `backend/app/contracts/contracts.py`'s `Disclosure` model, `app/v1/policy.py`, `app/policy/regression.py` (3-variant disclosure check), `app/agent/templates.py`, `app/v1/templates.py` — in sabme hi/hinglish fields/text as-is hain, kyunki voice calling abhi bhi inhe real-use karta hai (upar dekha). Agar future me poora schema English-only karna ho, pehle voice ka call-summary path aur confirm/done templates ka voice-specific usage migrate/verify karna padega — alag part, is baar deliberately deferred (user ka apna choice).
 
 **Verify kiya:** `npx tsc --noEmit` clean, `npx vitest run` 37/37 pass, `npm run build` clean — teeno fix ke baad re-run kiye. Koi backend file change nahi hui is part me, isliye pytest/ruff backend par chalane ki zaroorat nahi thi. **VERIFY (baaki):** asli dashboard par Policy page khol kar visual confirm karna (English-only disclosure field dikhna chahiye, baaki sab waisa hi).
+
+## P41 — Neon DBAPIError reliability fix (Gmail Check Now 500 + connection-drop handling)
+
+User ne production error diya: `DBAPIError (sqlalchemy.dialects.postgresql.asyncpg.Error)` /
+`connection was closed in the middle of operation`, `ConnectionResetError: [Errno 104]`,
+at `app/jobs/queue.py:124` (`claim_by_id()`), path: `app/api/integrations.py::gmail_check_now
+-> check_now_gmail -> app/worker.py::drain_queue -> queue.claim_by_id -> session.execute`.
+Linked to Neon compute start/suspend cycles.
+
+User explicitly asked to verify severity before fixing anything — read the real code first
+instead of assuming the standard "add pool_pre_ping" fix was needed.
+
+**Found: `app/core/db.py::make_engine()` already has `pool_pre_ping=True`.** Half of the
+textbook fix was already in place — not a missing piece. Also confirmed job-claiming SQL
+(`_CLAIM` / `_CLAIM_BY_ID`, both `FOR UPDATE ... SKIP LOCKED` / status-guarded single atomic
+UPDATE...RETURNING) is already safe against duplicate claims by concurrent workers, and
+`session_scope()`'s `session.begin()` try/finally already handles rollback/cleanup on
+exception. None of this needed to change.
+
+**Real gap:** nothing in the `check_now_gmail -> drain_queue -> claim_by_id` chain catches a
+connection-level exception. `app/webhooks/whatsapp.py::_drain_now()` already wraps its
+`drain_queue()` call in try/except with a fallback comment ("best-effort... normal
+job-queue retry/worker path still covers it") — `check_now_gmail()` has the *same* fallback
+comment but never actually implements the try/except, so the comment's claim was false for
+connection-level failures: any Neon hiccup during the inline drain reached FastAPI's generic
+exception handler and became a plain 500 to the owner on the "Check Now" button, even though
+the job itself was never lost (atomic UPDATE never commits on a dropped connection).
+
+**Fix (5 files, extending what already existed rather than rebuilding it):**
+1. `app/core/config.py` — new `db_pool_recycle_seconds` setting (default 300).
+2. `app/core/db.py` — `make_engine()` gets a `pool_recycle` param (wired from the new
+   setting) alongside the existing `pool_pre_ping=True`; new `with_connection_retry(fn)`
+   helper, used only around single-atomic-statement callables, retries only on a genuine
+   connection-level error (`DBAPIError.connection_invalidated` or a connection-reset
+   message) with bounded exponential backoff (default 3 attempts) — never retries an
+   ordinary query/business error, and never retries a multi-step write sequence.
+3. `app/jobs/queue.py` — `claim`, `claim_by_id`, `extend_lease`, `finish`, `fail` each wrap
+   their existing single atomic UPDATE...RETURNING body with `with_connection_retry()`. No
+   change to the SQL itself or its locking semantics.
+4. `app/integrations/service.py::check_now_gmail()` — both `drain_queue()` call sites now
+   use the same try/except + fallback pattern `_drain_now()` already used, returning
+   `GmailCheckNowOut(queued=True, ...)` on failure instead of letting the exception reach
+   the API layer. Makes the pre-existing comment's claim actually true.
+5. `app/worker.py::run_worker()` — tick-level try/except around `heartbeat`,
+   `schedule_periodic`, `reap_expired`, and the per-iteration `queue.claim()` (connection
+   retries inside these already exhausted by the time this catches anything) — logs and
+   backs off for one `idle_sleep` instead of letting one Neon outage kill the whole Cloud
+   Run Job tick before it claims a single job. `scan_alerts()` already had its own
+   try/except (unchanged, same pattern followed for the new ones).
+
+**Why retries can't create duplicate jobs/emails:** a retried `claim`/`claim_by_id` is a
+fresh atomic UPDATE guarded by `status IN ('queued','deferred')` — if the first attempt's
+connection died before commit, nothing changed in the DB, so the retry either claims the
+same still-queued row or (if a worker tick already grabbed it meanwhile) correctly claims
+nothing. On top of that, `fetch_gmail` itself is already duplicate-safe independent of this
+fix — pre-existing `inbound_events` dedup on `(tenant_id, channel, external_id)` (see
+`check_now_gmail()`'s own comment) means even a genuine double-run of the fetch job cannot
+create two copies of the same email.
+
+**NOT done (scope discipline):** no change to `_CLAIM`/`_CLAIM_BY_ID` SQL, no change to
+`session_scope()`'s transaction handling, no new dependency (no `tenacity` — a small local
+helper in `app/core/db.py` instead, since `pyproject.toml` didn't already have one — it is
+only transitively pinned in `constraints.txt`, confirmed by reading `pyproject.toml`'s
+`dependencies` list directly, not guessed), no change to job `max_attempts`/backoff-on-
+failure semantics (`backoff_seconds()` in `queue.py` is a different, pre-existing concern —
+job-level retry after a handler failure, not connection-level retry — left untouched).
+
+**Self-correction (same session, caught by re-reading my own task prompt against the diff):**
+the task explicitly required every new catch to log an `error_id`, "same convention as
+`app/worker.py::run_job()`'s `logger.error(..., extra={"error_id": ...})`". The first pass
+used bare `logger.exception(...)` with no `error_id` in all 6 new catches (4 in
+`run_worker()`, 2 in `check_now_gmail()`) — functionally fine (nothing was swallowed
+silently) but it broke the stated convention, so a connection-drop here wouldn't carry the
+same traceable `error_id` that every other error path in this codebase does. Fixed: all 6
+now call `new_error_id()` and pass it via `extra={"error_id": error_id}`, matching
+`run_job()` exactly. Ruff check + format clean after the fix.
+
+Ruff check + ruff format clean (5 changed files), `ast.parse` clean. Pytest/mypy NOT run
+this session (user's explicit "koi test mat karna" instruction this time, stronger than the
+usual no-DB-test standing rule — user asked for the zip directly). **VERIFY:** not tested
+against a real Neon suspend/resume cycle; `pool_recycle=300s` and retry
+attempts(3)/backoff(0.2s base) are reasonable defaults, not tuned from real Neon timing or
+load-tested; real pytest/mypy run still pending, same as every "no test this session" part.

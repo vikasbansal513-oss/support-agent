@@ -8,7 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core import timeutil
-from app.core.db import session_scope
+from app.core.db import session_scope, with_connection_retry
 from app.core.masking import redact_text
 
 Factory = async_sessionmaker[AsyncSession]
@@ -86,19 +86,23 @@ async def claim(
     kinds: list[str] | None = None,
 ) -> Job | None:
     now = timeutil.utc_now()
-    async with session_scope(factory, super_admin=True) as session:
-        row = (
-            await session.execute(
-                _CLAIM,
-                {
-                    "now": now,
-                    "kinds": kinds,
-                    "tenant_limit": tenant_limit,
-                    "worker": worker,
-                    "lease": now + timedelta(seconds=lease_seconds),
-                },
-            )
-        ).first()
+
+    async def _attempt() -> Any:
+        async with session_scope(factory, super_admin=True) as session:
+            return (
+                await session.execute(
+                    _CLAIM,
+                    {
+                        "now": now,
+                        "kinds": kinds,
+                        "tenant_limit": tenant_limit,
+                        "worker": worker,
+                        "lease": now + timedelta(seconds=lease_seconds),
+                    },
+                )
+            ).first()
+
+    row = await with_connection_retry(_attempt)
     if row is None:
         return None
     return Job(row.id, row.tenant_id, row.kind, dict(row.payload), row.attempts, row.max_attempts)
@@ -117,20 +121,29 @@ async def claim_by_id(
 ) -> Job | None:
     """Claim one specific job (by id) right after enqueueing it, for inline/same-request
     processing. Returns None if it is already claimed (e.g. a worker tick got it first) or not
-    due yet; the normal worker loop remains the fallback in that case."""
+    due yet; the normal worker loop remains the fallback in that case.
+
+    Retries on a transient DB connection drop (e.g. Neon compute suspend/resume): the
+    UPDATE is a single atomic, idempotent statement guarded by `status IN
+    ('queued','deferred')`, so a clean retry either claims it fresh or correctly finds
+    nothing left to claim - never a duplicate claim."""
     now = timeutil.utc_now()
-    async with session_scope(factory, super_admin=True) as session:
-        row = (
-            await session.execute(
-                _CLAIM_BY_ID,
-                {
-                    "id": job_id,
-                    "worker": worker,
-                    "lease": now + timedelta(seconds=lease_seconds),
-                    "now": now,
-                },
-            )
-        ).first()
+
+    async def _attempt() -> Any:
+        async with session_scope(factory, super_admin=True) as session:
+            return (
+                await session.execute(
+                    _CLAIM_BY_ID,
+                    {
+                        "id": job_id,
+                        "worker": worker,
+                        "lease": now + timedelta(seconds=lease_seconds),
+                        "now": now,
+                    },
+                )
+            ).first()
+
+    row = await with_connection_retry(_attempt)
     if row is None:
         return None
     return Job(row.id, row.tenant_id, row.kind, dict(row.payload), row.attempts, row.max_attempts)
@@ -140,21 +153,25 @@ async def extend_lease(
     factory: Factory, job_id: uuid.UUID, worker: str, lease_seconds: int
 ) -> bool:
     now = timeutil.utc_now()
-    async with session_scope(factory, super_admin=True) as session:
-        result = (
-            await session.execute(
-                text(
-                    "UPDATE jobs SET lease_expires_at = :lease, updated_at = :now WHERE id = :i"
-                    " AND lease_owner = :w AND status = 'processing' RETURNING 1"
-                ),
-                {
-                    "lease": now + timedelta(seconds=lease_seconds),
-                    "now": now,
-                    "i": job_id,
-                    "w": worker,
-                },
-            )
-        ).first()
+
+    async def _attempt() -> Any:
+        async with session_scope(factory, super_admin=True) as session:
+            return (
+                await session.execute(
+                    text(
+                        "UPDATE jobs SET lease_expires_at = :lease, updated_at = :now WHERE id = :i"
+                        " AND lease_owner = :w AND status = 'processing' RETURNING 1"
+                    ),
+                    {
+                        "lease": now + timedelta(seconds=lease_seconds),
+                        "now": now,
+                        "i": job_id,
+                        "w": worker,
+                    },
+                )
+            ).first()
+
+    result = await with_connection_retry(_attempt)
     return result is not None
 
 
@@ -162,18 +179,22 @@ async def finish(
     factory: Factory, job_id: uuid.UUID, worker: str, result: dict[str, Any] | None = None
 ) -> bool:
     now = timeutil.utc_now()
-    async with session_scope(factory, super_admin=True) as session:
-        row = (
-            await session.execute(
-                text(
-                    "UPDATE jobs SET status = 'done', finished_at = :now, updated_at = :now,"
-                    " lease_owner = NULL, lease_expires_at = NULL, result = CAST(:r AS jsonb),"
-                    " duration_ms = GREATEST(0, (EXTRACT(EPOCH FROM (:now - started_at)) * 1000)::bigint)"
-                    " WHERE id = :i AND lease_owner = :w AND status = 'processing' RETURNING 1"
-                ),
-                {"now": now, "r": json.dumps(result or {}), "i": job_id, "w": worker},
-            )
-        ).first()
+
+    async def _attempt() -> Any:
+        async with session_scope(factory, super_admin=True) as session:
+            return (
+                await session.execute(
+                    text(
+                        "UPDATE jobs SET status = 'done', finished_at = :now, updated_at = :now,"
+                        " lease_owner = NULL, lease_expires_at = NULL, result = CAST(:r AS jsonb),"
+                        " duration_ms = GREATEST(0, (EXTRACT(EPOCH FROM (:now - started_at)) * 1000)::bigint)"
+                        " WHERE id = :i AND lease_owner = :w AND status = 'processing' RETURNING 1"
+                    ),
+                    {"now": now, "r": json.dumps(result or {}), "i": job_id, "w": worker},
+                )
+            ).first()
+
+    row = await with_connection_retry(_attempt)
     return row is not None
 
 
@@ -196,28 +217,33 @@ async def fail(
     exhausted = (not retryable) or job.attempts >= job.max_attempts
     status = "needs_review" if exhausted else "queued"
     after = now + timedelta(seconds=backoff_seconds(job.attempts))
-    async with session_scope(factory, super_admin=True) as session:
-        row = (
-            await session.execute(
-                text(
-                    "UPDATE jobs SET status = :s, run_after = :after, lease_owner = NULL,"
-                    " lease_expires_at = NULL, error_code = :c, error_message = :m, error_id = :e,"
-                    " updated_at = :now, finished_at = CASE WHEN CAST(:s AS text) = 'needs_review'"
-                    " THEN CAST(:now AS timestamptz) ELSE NULL END WHERE id = :i AND lease_owner = :w AND status = 'processing'"
-                    " RETURNING 1"
-                ),
-                {
-                    "s": status,
-                    "after": after,
-                    "c": error_code,
-                    "m": redact_text(error_message)[:500],
-                    "e": error_id,
-                    "now": now,
-                    "i": job.id,
-                    "w": worker,
-                },
-            )
-        ).first()
+
+    async def _attempt() -> Any:
+        async with session_scope(factory, super_admin=True) as session:
+            return (
+                await session.execute(
+                    text(
+                        "UPDATE jobs SET status = :s, run_after = :after, lease_owner = NULL,"
+                        " lease_expires_at = NULL, error_code = :c, error_message = :m,"
+                        " error_id = :e, updated_at = :now, finished_at = CASE WHEN CAST(:s AS"
+                        " text) = 'needs_review' THEN CAST(:now AS timestamptz) ELSE NULL END"
+                        " WHERE id = :i AND lease_owner = :w AND status = 'processing'"
+                        " RETURNING 1"
+                    ),
+                    {
+                        "s": status,
+                        "after": after,
+                        "c": error_code,
+                        "m": redact_text(error_message)[:500],
+                        "e": error_id,
+                        "now": now,
+                        "i": job.id,
+                        "w": worker,
+                    },
+                )
+            ).first()
+
+    row = await with_connection_retry(_attempt)
     recorded = row is not None
     if recorded and exhausted:
         await notify_needs_review(factory, job.tenant_id, job.kind, error_id)
