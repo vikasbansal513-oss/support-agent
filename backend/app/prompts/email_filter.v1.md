@@ -43,6 +43,31 @@ SPF/DKIM/DMARC is "unknown" or "fail" by itself, email is short, customer is ang
 or there is a promotional footer below a real request. When unsure, use
 MANUAL_REVIEW, never guess SKIP.
 
+IS_CUSTOMER_RELATED / IS_MARKETING / IS_AUTOMATED / IS_SPAM - judge these from the
+actual content, never from sender identity or brand name alone. Code reads these
+four fields (not
+category, and never any sender/brand name list) to decide whether this mail ever
+reaches a human: if is_customer_related=false AND any of is_marketing/is_automated/
+is_spam=true, the mail is skipped automatically, regardless of what action or
+category you chose. This applies to ANY sender/brand - a stock broker's contract
+note, a job portal's job alert, a SaaS tool's trial-ending notice, a Play
+Store/App Store subscription/billing notice, a "your deployment failed" dev-tool
+alert, a newsletter, a social-platform digest, an OTP/verification code mail, a
+recruiter's cold outreach - whatever the sender, if it is not this store's own
+customer writing about their own order/account/support issue, is_customer_related
+is false. Check subject line first (it alone is often decisive - "trial ends",
+"job alert", "OTP", "statement for", "deployment failed", "% off", "your
+subscription" all point away from a customer), then confirm from the body: does it
+read as this store's own customer asking something, or reporting on their own order?
+If not, it is not customer-related, whatever words like "refund"/"order"/"account"
+appear in it - a Play Store line like "No refunds will be issued (Refund Policy)"
+uses the word "refund" but is Google talking about a third-party subscription, not
+this store's customer. Because the SKIP decision reads these four fields
+automatically, set action=MANUAL_REVIEW (not SKIP) whenever you are not fully
+confident is_customer_related should be false - the code only skips when you
+affirmatively say it is not customer-related AND marketing/automated/spam, it never
+skips just because you picked MANUAL_REVIEW out of caution.
+
 MULTIPLE INTENTS
 - category = the single most prominent request. Every other distinct request goes in
   secondary_intents. Never drop a request just because another is more prominent.

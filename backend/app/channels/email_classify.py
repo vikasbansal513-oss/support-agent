@@ -9,6 +9,11 @@ Three fields are always computed in code and the LLM only echoes them back
 (Section 3, 4, 5 of the spec): sender_authentication, has_attachment /
 security_status, and is_duplicate (always False here - a true duplicate
 message-id never reaches this function at all, see Section 5).
+
+A fourth thing is forced in code, not computed: `action` is pushed to SKIP
+whenever the LLM's own is_customer_related/is_marketing/is_automated/is_spam
+fields agree the mail is not about this brand's customers, even if the LLM
+picked action=MANUAL_REVIEW out of caution. See `_should_force_skip()`.
 """
 
 from __future__ import annotations
@@ -60,6 +65,28 @@ _VALID_AUTH = {"pass", "fail", "softfail", "neutral", "none"}
 
 _HIGH_RISK_EXT = frozenset({".exe", ".scr", ".bat", ".cmd", ".js", ".vbs", ".jar", ".msi", ".ps1"})
 _NEEDS_REVIEW_EXT = frozenset({".docm", ".xlsm", ".pptm", ".zip", ".rar"})
+
+
+def _should_force_skip(result: EmailClassification) -> bool:
+    """Category-name-agnostic safety net (user requirement: "koi bhi website ka naam
+    ho, use skip kare" - never a per-sender/per-brand list). The LLM already returns
+    is_customer_related/is_marketing/is_automated/is_spam for every email (Section 6
+    of the spec); this was being computed but never actually used to drive `action`,
+    so an ad/newsletter/job-alert/stock-broker-statement/SaaS-tool/OTP mail that the
+    LLM wasn't 100% sure how to *categorize* (e.g. category=UNCLEAR) still fell back
+    to MANUAL_REVIEW and reached a human, even when it was clearly not about this
+    brand's customers.
+
+    Force SKIP only when the LLM itself says the mail is not customer-related AND at
+    least one of marketing/automated/spam is true - i.e. two independent signals from
+    the LLM's own reading of the email agree it is noise. A genuine customer message
+    (is_customer_related=true) is never touched here, whatever else is true about it.
+    """
+    if result.is_customer_related:
+        return False
+    if result.category in ("PHISHING", "SUSPICIOUS", "SECURITY_ALERT", "OTHER"):
+        return False
+    return bool(result.is_marketing or result.is_automated or result.is_spam)
 
 
 def parse_sender_authentication(headers: dict[str, str]) -> SenderAuthentication:
@@ -150,6 +177,10 @@ async def classify_email(
     forced_action = result.action
     if security_status == "high_risk_extension":
         forced_action = "QUARANTINE"
+    elif forced_action not in ("SKIP", "SKIP_DUPLICATE", "QUARANTINE") and _should_force_skip(
+        result
+    ):
+        forced_action = "SKIP"
     result = result.model_copy(
         update={
             "sender_authentication": auth,
