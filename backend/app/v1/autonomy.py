@@ -33,13 +33,11 @@ async def set_level(
     if tool not in WRITE_TOOLS:
         raise AppError("E-NF-001")
     async with session_scope(factory, tenant_id=tenant_id, user_id=actor.user_id) as session:
-        mode = (
-            await session.execute(text("SELECT mode FROM tenants WHERE id = :t"), {"t": tenant_id})
+        tenant_exists = (
+            await session.execute(text("SELECT 1 FROM tenants WHERE id = :t"), {"t": tenant_id})
         ).scalar_one_or_none()
         current, _ = await policy_service.get_published_policy(session)
-        if mode is None or not isinstance(current, PolicyV2):
-            raise AppError("E-ADM-003")
-        if level == "auto" and mode != "auto":
+        if tenant_exists is None or not isinstance(current, PolicyV2):
             raise AppError("E-ADM-003")
         if current.autonomy.level(tool) == level:
             return current

@@ -71,9 +71,9 @@ async def set_own_autonomy(
 ) -> AutonomyOut:
     """Let a brand owner raise/lower their own write-tool autonomy (off/approval/auto).
 
-    `auto` still requires the tenant to already be graduated to `mode="auto"` by a
-    platform admin (set_level enforces E-ADM-003) and, here, an explicit `confirmed`
-    flag so a stray click can't silently switch a tool to unattended writes.
+    The owner alone decides each tool's level; an explicit `confirmed` flag is still
+    required for `auto` so a stray click can't silently switch a tool to unattended
+    writes.
 
     Registered before `/{policy_id}` below: FastAPI matches routes in declaration order,
     and `/{policy_id}` would otherwise swallow this path and fail UUID parsing on "autonomy".

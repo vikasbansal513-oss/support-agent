@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { api } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import type { Level, Limits, PolicyContent, Policy, Regression, WriteTool } from "../api/types";
-import { Async, Field, Screen } from "../components/common";
+import type { DashboardStats, Level, Limits, Mode, PolicyContent, Policy, Regression, WriteTool } from "../api/types";
+import { Async, Field, ReasonDialog, Screen } from "../components/common";
 import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
@@ -296,10 +296,77 @@ function Upgrade({ policy, latest, onDone }: { policy: Policy; latest: number; o
   );
 }
 
+function ModeEditor({ initialMode, isOwner, onDone }: { initialMode: Mode; isOwner: boolean; onDone: () => void }) {
+  const toast = useToast();
+  const [mode, setMode] = useState<Mode>(initialMode);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const save = async (reason: string) => {
+    setBusy(true);
+    try {
+      await api.put("/settings/mode", { mode, reason });
+      toast.info(t.autonomyDone);
+      setConfirming(false);
+      onDone();
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card autonomy-permissions">
+      <h2 className="card-title">{t.modeLabel}</h2>
+      <p>{t.modeHelp}</p>
+      {isOwner ? (
+        <>
+          <div className="segmented" role="group" aria-hidden="true">
+            {(["shadow", "draft", "auto"] as Mode[]).map((m) => (
+              <button key={m} type="button" className={mode === m ? "chosen" : ""} onClick={() => setMode(m)}>
+                {t[`mode_${m}` as Key]}
+              </button>
+            ))}
+          </div>
+          <select
+            aria-label={t.modeLabel}
+            className="sr-only"
+            value={mode}
+            onChange={(event) => setMode(event.target.value as Mode)}
+          >
+            {(["shadow", "draft", "auto"] as Mode[]).map((m) => (
+              <option key={m} value={m}>
+                {t[`mode_${m}` as Key]}
+              </option>
+            ))}
+          </select>
+          <div className="row" style={{ marginTop: 12 }}>
+            <button type="button" disabled={busy || mode === initialMode} onClick={() => setConfirming(true)}>
+              {t.save}
+            </button>
+          </div>
+        </>
+      ) : (
+        <p>{t[`mode_${initialMode}` as Key]}</p>
+      )}
+      {confirming && (
+        <ReasonDialog title={t.modeLabel} onConfirm={(reason) => void save(reason)} onCancel={() => setConfirming(false)} />
+      )}
+    </div>
+  );
+}
+
 export function AutonomySettings() {
+  const { user } = useAuth();
+  const isOwner = user?.role === "owner";
   const [list, reload] = useApi(() => api.get<Policy[]>("/policies"));
+  const [stats, reloadStats] = useApi(() => api.get<DashboardStats>("/dashboard/stats"));
   return (
     <Screen title={t.autonomyTitle}>
+      <Async value={stats} reload={reloadStats}>
+        {(s) => <ModeEditor key={s.mode} initialMode={s.mode} isOwner={isOwner} onDone={reloadStats} />}
+      </Async>
       <Async value={list} reload={reload}>
         {(policies) => {
           const published = policies.find((p) => p.status === "published");

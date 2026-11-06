@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.auth.deps import require_admin
 from app.auth.service import Principal
 from app.contracts.contracts import (
-    ModeIn,
     Page,
     QuotaIn,
     QuotaOut,
@@ -418,35 +417,6 @@ async def set_usage_limit(
                 entity_id=str(tenant_id),
                 old_value={"usage_override_limit": before.usage_override_limit},
                 new_value={"usage_override_limit": body.usage_override_limit},
-                reason=body.reason,
-                actor_user_id=admin.user_id,
-                actor_role="super_admin",
-            ),
-            tenant_id=tenant_id,
-        )
-        return _out(await _get(session, tenant_id))
-
-
-@router.put("/{tenant_id}/mode")
-async def set_mode(
-    tenant_id: uuid.UUID,
-    body: ModeIn,
-    admin: Principal = Depends(require_admin),  # noqa: B008
-    factory: Factory = Depends(get_session_factory),  # noqa: B008
-) -> TenantOut:
-    async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
-        before = await _get(session, tenant_id, lock=True)
-        await session.execute(
-            text("UPDATE tenants SET mode = :m WHERE id = :i"), {"m": body.mode, "i": tenant_id}
-        )
-        await record(
-            session,
-            AuditEvent(
-                action="admin.mode_changed",
-                entity_type="tenant",
-                entity_id=str(tenant_id),
-                old_value={"mode": before.mode},
-                new_value={"mode": body.mode},
                 reason=body.reason,
                 actor_user_id=admin.user_id,
                 actor_role="super_admin",

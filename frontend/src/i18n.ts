@@ -51,6 +51,8 @@ export const t = {
   mode_shadow: "Shadow (watching only)",
   mode_draft: "Draft (you approve)",
   mode_auto: "Auto",
+  modeOwnerControlled: "The brand owner sets this from their own Autonomy settings page.",
+  modeHelp: "Shadow: the agent only watches, nothing is sent. Draft: it writes a reply, you send it. Auto: it replies to the customer directly.",
   paused: "Agent paused",
   agentOnline: "Agent Online",
   systemOnline: "System Online",

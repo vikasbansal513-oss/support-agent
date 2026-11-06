@@ -124,7 +124,7 @@ async def _load_state(
 ) -> tuple[State, str, int | None]:
     tenant = (
         await session.execute(
-            text("SELECT mode, agent_paused FROM tenants WHERE id = :t"), {"t": tenant_id}
+            text("SELECT mode, agent_paused, name FROM tenants WHERE id = :t"), {"t": tenant_id}
         )
     ).one()
     policy, policy_version = await policy_service.get_published_policy(session)
@@ -190,6 +190,7 @@ async def _load_state(
         "conversation_id": str(conversation_id),
         "customer_id": str(conv.customer_id),
         "channel": conv.channel,
+        "tenant_name": tenant.name,
         "incoming_text": inbound.text,
         "media_type": inbound.media_type,
         "history": [{"sender": h.sender, "content": h.content} for h in reversed(history_rows)],

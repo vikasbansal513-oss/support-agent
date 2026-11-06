@@ -545,6 +545,7 @@ class AgentState(TypedDict, total=False):
     conversation_id: str
     customer_id: str
     channel: str
+    tenant_name: str
     incoming_text: str
     media_type: str | None
     history: list[dict[str, str]]
@@ -1464,7 +1465,6 @@ ENDPOINTS: list[Endpoint] = [
     E("POST", "/admin/tenants/{id}/approve", "admin", "ReasonIn", "TenantOut"),
     E("POST", "/admin/tenants/{id}/pause", "admin", "ReasonIn", "TenantOut"),
     E("POST", "/admin/tenants/{id}/resume", "admin", "ReasonIn", "TenantOut"),
-    E("PUT", "/admin/tenants/{id}/mode", "admin", "ModeIn", "TenantOut"),
     E("PUT", "/admin/tenants/{id}/usage-limit", "admin", "UsageLimitIn", "TenantOut"),
     E("POST", "/admin/global-pause", "admin", "ReasonIn", "StatusOut"),
     E("POST", "/admin/global-resume", "admin", "ReasonIn", "StatusOut"),
@@ -1477,6 +1477,7 @@ ENDPOINTS: list[Endpoint] = [
     E("POST", "/integrations/{kind}/test", "owner", None, "ProbeResultOut"),
     E("GET", "/settings/notifications", "user", None, "NotificationSettings"),
     E("PUT", "/settings/notifications", "owner", "NotificationSettings", "NotificationSettings"),
+    E("PUT", "/settings/mode", "owner", "ModeIn", "ModeOut"),
     E("GET", "/agent/status", "user", None, "AgentStatusOut"),
     E("POST", "/agent/pause", "owner", "ReasonIn", "AgentStatusOut"),
     E("POST", "/agent/resume", "owner", "ReasonIn", "AgentStatusOut"),

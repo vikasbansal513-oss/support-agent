@@ -26,22 +26,30 @@ WHY = {
 }
 
 
-async def _language(session: AsyncSession, conversation_id: uuid.UUID) -> str:
+async def _context(session: AsyncSession, conversation_id: uuid.UUID) -> tuple[str, str, str]:
+    """(language, channel, brand) for rendering the outcome message on this conversation."""
     row = (
         await session.execute(
-            text("SELECT language FROM conversations WHERE id = :c"), {"c": conversation_id}
+            text("SELECT language, channel FROM conversations WHERE id = :c"),
+            {"c": conversation_id},
         )
+    ).first()
+    brand_row = (
+        await session.execute(text("SELECT name FROM tenants WHERE id = app_current_tenant()"))
     ).first()
     parsed, _ = await policy_service.get_published_policy(session)
     reply_language = parsed.reply_language if isinstance(parsed, PolicyV2) else "en"
-    return pick_language(row.language if row and row.language else "hinglish", reply_language)
+    lang = pick_language(row.language if row and row.language else "hinglish", reply_language)
+    channel = row.channel if row else "whatsapp"
+    brand = (brand_row.name if brand_row and brand_row.name else "") or "Support"
+    return lang, channel, brand
 
 
-def done_text(action: writes.ActionRow, lang: str) -> str:
-    facts: dict[str, object] = {"order": action.order_ref}
+def done_text(action: writes.ActionRow, lang: str, channel: str, brand: str) -> str:
+    facts: dict[str, object] = {"order": action.order_ref, "brand": brand}
     if action.tool == "refund_create":
         facts["amount"] = t.rs(action.amount_paise)
-    return t.render(f"done_{action.tool}", lang, **facts)
+    return t.render(f"done_{action.tool}", lang, channel=channel, **facts)
 
 
 def handoff_for(action: writes.ActionRow, reason: str, lang: str) -> DecisionV1:
@@ -74,10 +82,10 @@ async def notify(
         action = await writes.get_action(session, action_id)
         if action is None:
             return "missing"
-        lang = await _language(session, action.conversation_id)
+        lang, channel, brand = await _context(session, action.conversation_id)
     key = f"act-result:{action.id}:{action.status}"
     if action.status == "confirmed":
-        body = done_text(action, lang)
+        body = done_text(action, lang, channel, brand)
     elif action.status == "pending_approval":
         body = t.render("awaiting_team", lang)
     elif action.status in HANDOFF_FOR:

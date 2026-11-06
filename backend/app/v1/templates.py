@@ -193,6 +193,176 @@ T: dict[str, dict[str, str]] = {
 }
 
 
+# WhatsApp-only restyle of the 10 confirm_*/done_* write-flow templates: emoji anchors,
+# short lines, a closing signature - the look WhatsApp customers expect, matching
+# WhatsApp's own *bold* syntax. Selected in render() only when channel == "whatsapp"
+# and only for the ids below; every other id, and every other channel (voice, email,
+# anything else), keeps using T untouched above - voice TTS in particular must not
+# gain emoji or a sign-off line it would end up reading aloud oddly. Deliberately not
+# used as the email body either: email gets its own HTML rendering (see
+# core/html_email.py) built from the plain T text, not from this WhatsApp copy.
+WA_T: dict[str, dict[str, str]] = {
+    "confirm_order_cancel": {
+        "hinglish": (
+            "{note}Aapne order *{order}* cancel karne ko kaha hai.\n\n"
+            "📦 {items}\n"
+            "💰 Total: *Rs {amount}*\n\n"
+            "Reply karein:\n"
+            "✅ *HAAN* – Order cancel karein\n"
+            "❌ *NAHI* – Order rakhein\n\n"
+            "Confirm hote hi update kar denge.\n\n"
+            "— {brand} Support"
+        ),
+        "en": (
+            "{note}We've received your request to cancel order *{order}*.\n\n"
+            "📦 {items}\n"
+            "💰 Total: *Rs {amount}*\n\n"
+            "Please reply:\n"
+            "✅ *YES* – Cancel order\n"
+            "❌ *NO* – Keep order\n\n"
+            "We'll update you right after confirmation.\n\n"
+            "— {brand} Support"
+        ),
+        "hi": (
+            "{note}आपने ऑर्डर *{order}* कैंसिल करने के लिए कहा है।\n\n"
+            "📦 {items}\n"
+            "💰 कुल: *Rs {amount}*\n\n"
+            "कृपया रिप्लाई करें:\n"
+            "✅ *हाँ* – ऑर्डर कैंसिल करें\n"
+            "❌ *नहीं* – ऑर्डर रखें\n\n"
+            "कन्फर्म होते ही अपडेट कर देंगे।\n\n"
+            "— {brand} Support"
+        ),
+    },
+    "confirm_address_update": {
+        "hinglish": (
+            "{note}Order *{order}* ka delivery address update karna hai?\n\n"
+            "🏠 Naya address: {address}\n\n"
+            "Reply karein:\n"
+            "✅ *HAAN* – Address update karein\n"
+            "❌ *NAHI* – Rehne dein\n\n"
+            "— {brand} Support"
+        ),
+        "en": (
+            "{note}Update the delivery address for order *{order}*?\n\n"
+            "🏠 New address: {address}\n\n"
+            "Please reply:\n"
+            "✅ *YES* – Update address\n"
+            "❌ *NO* – Leave it as is\n\n"
+            "— {brand} Support"
+        ),
+        "hi": (
+            "{note}ऑर्डर *{order}* का डिलीवरी पता अपडेट करें?\n\n"
+            "🏠 नया पता: {address}\n\n"
+            "कृपया रिप्लाई करें:\n"
+            "✅ *हाँ* – पता अपडेट करें\n"
+            "❌ *नहीं* – रहने दें\n\n"
+            "— {brand} Support"
+        ),
+    },
+    "confirm_exchange_request": {
+        "hinglish": (
+            "{note}Order *{order}* me item exchange karna hai?\n\n"
+            "🔄 {item} → *{variant}*\n\n"
+            "Reply karein:\n"
+            "✅ *HAAN* – Exchange shuru karein\n"
+            "❌ *NAHI* – Rehne dein\n\n"
+            "— {brand} Support"
+        ),
+        "en": (
+            "{note}Exchange an item in order *{order}*?\n\n"
+            "🔄 {item} → *{variant}*\n\n"
+            "Please reply:\n"
+            "✅ *YES* – Start the exchange\n"
+            "❌ *NO* – Leave it as is\n\n"
+            "— {brand} Support"
+        ),
+        "hi": (
+            "{note}ऑर्डर *{order}* में आइटम बदलें?\n\n"
+            "🔄 {item} → *{variant}*\n\n"
+            "कृपया रिप्लाई करें:\n"
+            "✅ *हाँ* – एक्सचेंज शुरू करें\n"
+            "❌ *नहीं* – रहने दें\n\n"
+            "— {brand} Support"
+        ),
+    },
+    "confirm_refund_create": {
+        "hinglish": (
+            "{note}Order *{order}* ka refund shuru karein?\n\n"
+            "💰 Refund amount: *Rs {amount}*\n\n"
+            "Reply karein:\n"
+            "✅ *HAAN* – Refund shuru karein\n"
+            "❌ *NAHI* – Rehne dein\n\n"
+            "— {brand} Support"
+        ),
+        "en": (
+            "{note}Start a refund for order *{order}*?\n\n"
+            "💰 Refund amount: *Rs {amount}*\n\n"
+            "Please reply:\n"
+            "✅ *YES* – Start the refund\n"
+            "❌ *NO* – Leave it as is\n\n"
+            "— {brand} Support"
+        ),
+        "hi": (
+            "{note}ऑर्डर *{order}* का रिफंड शुरू करें?\n\n"
+            "💰 रिफंड राशि: *Rs {amount}*\n\n"
+            "कृपया रिप्लाई करें:\n"
+            "✅ *हाँ* – रिफंड शुरू करें\n"
+            "❌ *नहीं* – रहने दें\n\n"
+            "— {brand} Support"
+        ),
+    },
+    "confirm_return_request": {
+        "hinglish": (
+            "{note}Order *{order}* ke liye return request bhejein?\n\n"
+            "Reply karein:\n"
+            "✅ *HAAN* – Return request bhejein\n"
+            "❌ *NAHI* – Rehne dein\n\n"
+            "— {brand} Support"
+        ),
+        "en": (
+            "{note}Submit a return request for order *{order}*?\n\n"
+            "Please reply:\n"
+            "✅ *YES* – Submit the return\n"
+            "❌ *NO* – Leave it as is\n\n"
+            "— {brand} Support"
+        ),
+        "hi": (
+            "{note}ऑर्डर *{order}* के लिए रिटर्न रिक्वेस्ट भेजें?\n\n"
+            "कृपया रिप्लाई करें:\n"
+            "✅ *हाँ* – रिटर्न रिक्वेस्ट भेजें\n"
+            "❌ *नहीं* – रहने दें\n\n"
+            "— {brand} Support"
+        ),
+    },
+    "done_order_cancel": {
+        "hinglish": "✅ Order *{order}* cancel ho gaya hai.\n\n— {brand} Support",
+        "en": "✅ Order *{order}* has been cancelled.\n\n— {brand} Support",
+        "hi": "✅ ऑर्डर *{order}* कैंसिल हो गया है।\n\n— {brand} Support",
+    },
+    "done_address_update": {
+        "hinglish": "✅ Order *{order}* ka address update ho gaya hai.\n\n— {brand} Support",
+        "en": "✅ The address for order *{order}* has been updated.\n\n— {brand} Support",
+        "hi": "✅ ऑर्डर *{order}* का पता अपडेट हो गया है।\n\n— {brand} Support",
+    },
+    "done_exchange_request": {
+        "hinglish": "✅ Order *{order}* ke liye exchange request register ho gayi hai.\n\n— {brand} Support",
+        "en": "✅ The exchange request for order *{order}* has been registered.\n\n— {brand} Support",
+        "hi": "✅ ऑर्डर *{order}* के लिए एक्सचेंज रिक्वेस्ट दर्ज हो गई है।\n\n— {brand} Support",
+    },
+    "done_refund_create": {
+        "hinglish": "✅ Order *{order}* ka Rs {amount} refund shuru ho gaya hai.\n\n— {brand} Support",
+        "en": "✅ A refund of *Rs {amount}* has been started for order *{order}*.\n\n— {brand} Support",
+        "hi": "✅ ऑर्डर *{order}* का Rs {amount} रिफंड शुरू हो गया है।\n\n— {brand} Support",
+    },
+    "done_return_request": {
+        "hinglish": "✅ Order *{order}* ke liye return request register ho gayi hai.\n\n— {brand} Support",
+        "en": "✅ The return request for order *{order}* has been registered.\n\n— {brand} Support",
+        "hi": "✅ ऑर्डर *{order}* के लिए रिटर्न रिक्वेस्ट दर्ज हो गई है।\n\n— {brand} Support",
+    },
+}
+
+
 # Decision Framework Section 17.2: these are the write-flow confirm/done templates that
 # read an order ref and/or a rupee amount as part of a yes/no ask or a just-completed-action
 # statement - what the framework means by "an account number, order ID... it is reading
@@ -222,9 +392,10 @@ def fields(template: str) -> set[str]:
     return {name for _, name, _, _ in Formatter().parse(template) if name}
 
 
-def render(template_id: str, language: str, **facts: object) -> str:
+def render(template_id: str, language: str, channel: str | None = None, **facts: object) -> str:
     lang = language if language in ("en", "hi", "hinglish") else "hinglish"
-    template = T[template_id][lang]
+    source = WA_T if channel == "whatsapp" and template_id in WA_T else T
+    template = source[template_id][lang]
     missing = fields(template) - set(facts)
     if missing:
         raise KeyError(f"template {template_id}/{lang} missing facts: {sorted(missing)}")

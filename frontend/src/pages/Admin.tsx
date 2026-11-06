@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import type { AuditLogRow, WriteTool, Health, Level, GlobalState, Job, LlmProvider, LlmSettings, LlmTestResult, LlmUsageRow, Mode, Overview, Page, Tenant } from "../api/types";
+import type { AuditLogRow, Health, GlobalState, Job, LlmProvider, LlmSettings, LlmTestResult, LlmUsageRow, Overview, Page, Tenant } from "../api/types";
 import { Async, Chip, Empty, Field, ReasonDialog, Screen, StatCard } from "../components/common";
 import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
@@ -9,7 +9,7 @@ import { useApi } from "../components/useApi";
 import { formatIst } from "../format";
 import { t, type Key } from "../i18n";
 
-type Pending = { tenant: Tenant; kind: "approve" | "pause" | "resume" | "mode" | "limit" | "autonomy"; mode?: Mode; limit?: number | null; tool?: WriteTool; level?: Level };
+type Pending = { tenant: Tenant; kind: "approve" | "pause" | "resume" | "limit"; limit?: number | null };
 
 export function AdminOverview() {
   const [overview, reload] = useApi(() => api.get<Overview>("/admin/overview"));
@@ -126,15 +126,12 @@ export function AdminTenants() {
   );
   const [pending, setPending] = useState<Pending | null>(null);
   const [limitText, setLimitText] = useState<Record<string, string>>({});
-  const [auto, setAuto] = useState<{ tool: WriteTool; level: Level }>({ tool: "address_update", level: "auto" });
 
   const confirm = async (reason: string) => {
     if (!pending) return;
     const { tenant, kind } = pending;
     try {
-      if (kind === "mode") await api.put(`/admin/tenants/${tenant.id}/mode`, { mode: pending.mode, reason });
-      else if (kind === "autonomy") await api.put(`/admin/tenants/${tenant.id}/autonomy`, { tool: pending.tool, level: pending.level, reason });
-      else if (kind === "limit") await api.put(`/admin/tenants/${tenant.id}/usage-limit`, { usage_override_limit: pending.limit ?? null, reason });
+      if (kind === "limit") await api.put(`/admin/tenants/${tenant.id}/usage-limit`, { usage_override_limit: pending.limit ?? null, reason });
       else await api.post(`/admin/tenants/${tenant.id}/${kind}`, { reason });
       setPending(null);
       reload();
@@ -196,17 +193,7 @@ export function AdminTenants() {
                         {tenant.agent_paused && <Chip tone="urgent">{t.paused}</Chip>}
                       </td>
                       <td>
-                        <select
-                          aria-label={`${t.setMode} ${tenant.name}`}
-                          value={tenant.mode}
-                          onChange={(event) => setPending({ tenant, kind: "mode", mode: event.target.value as Mode })}
-                        >
-                          {(["shadow", "draft", "auto"] as Mode[]).map((m) => (
-                            <option key={m} value={m}>
-                              {t[`mode_${m}` as Key]}
-                            </option>
-                          ))}
-                        </select>
+                        <Chip tone={tenant.mode === "auto" ? "ok" : undefined}>{t[`mode_${tenant.mode}` as Key]}</Chip>
                       </td>
                       <td>
                         <input
@@ -229,23 +216,6 @@ export function AdminTenants() {
                       </td>
                       <td>
                         <div className="row">
-                          <select aria-label={`${t.adminAutonomy} tool ${tenant.name}`} value={auto.tool} onChange={(event) => setAuto({ ...auto, tool: event.target.value as WriteTool })}>
-                            {(["address_update", "order_cancel", "exchange_request", "return_request", "refund_create"] as WriteTool[]).map((tool) => (
-                              <option key={tool} value={tool}>
-                                {t[`tool_${tool}` as Key]}
-                              </option>
-                            ))}
-                          </select>
-                          <select aria-label={`${t.adminAutonomy} level ${tenant.name}`} value={auto.level} onChange={(event) => setAuto({ ...auto, level: event.target.value as Level })}>
-                            {(["off", "approval", "auto"] as Level[]).map((level) => (
-                              <option key={level} value={level}>
-                                {t[`level_${level}` as Key]}
-                              </option>
-                            ))}
-                          </select>
-                          <button type="button" className="secondary" onClick={() => setPending({ tenant, kind: "autonomy", tool: auto.tool, level: auto.level })}>
-                            {t.adminAutonomy}
-                          </button>
                           {tenant.status === "pending_approval" && (
                             <button type="button" onClick={() => setPending({ tenant, kind: "approve" })}>
                               {t.approveTenant}

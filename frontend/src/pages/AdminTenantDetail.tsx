@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
-import type { Mode, Quota, Tenant, TenantStats, VoiceSettings } from "../api/types";
+import type { Quota, Tenant, TenantStats, VoiceSettings } from "../api/types";
 import { Async, Chip, Field, ReasonDialog, Screen, StatCard } from "../components/common";
 import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
@@ -134,17 +134,15 @@ type Tab = "overview" | "quota" | "voice" | "advanced";
 
 function AdvancedTab({ tenant, reloadTenant }: { tenant: Tenant; reloadTenant: () => void }) {
   const toast = useToast();
-  const [mode, setMode] = useState<Mode>(tenant.mode);
   const [limitText, setLimitText] = useState(tenant.usage_override_limit === null ? "" : String(tenant.usage_override_limit));
-  const [confirming, setConfirming] = useState<null | { kind: "mode" | "limit" | "pause" | "resume" }>(null);
+  const [confirming, setConfirming] = useState<null | { kind: "limit" | "pause" | "resume" }>(null);
   const [busy, setBusy] = useState(false);
 
   const run = async (reason: string) => {
     if (!confirming) return;
     setBusy(true);
     try {
-      if (confirming.kind === "mode") await api.put(`/admin/tenants/${tenant.id}/mode`, { mode, reason });
-      else if (confirming.kind === "limit")
+      if (confirming.kind === "limit")
         await api.put(`/admin/tenants/${tenant.id}/usage-limit`, { usage_override_limit: limitText.trim() === "" ? null : Number(limitText), reason });
       else await api.post(`/admin/tenants/${tenant.id}/${confirming.kind}`, { reason });
       setConfirming(null);
@@ -161,20 +159,11 @@ function AdvancedTab({ tenant, reloadTenant }: { tenant: Tenant; reloadTenant: (
     <>
       <section className="card pad">
         <h2 className="card-title">{t.advancedModeTitle}</h2>
-        <label className="field">
-          <span>{t.modeLabel}</span>
-          <select aria-label={t.modeLabel} value={mode} onChange={(event) => setMode(event.target.value as Mode)}>
-            {(["shadow", "draft", "auto"] as Mode[]).map((m) => (
-              <option key={m} value={m}>
-                {t[`mode_${m}` as Key]}
-              </option>
-            ))}
-          </select>
-        </label>
+        <p>
+          {t.modeLabel}: {t[`mode_${tenant.mode}` as Key]}
+        </p>
+        <p className="help">{t.modeOwnerControlled}</p>
         <div className="row">
-          <button type="button" disabled={busy || mode === tenant.mode} onClick={() => setConfirming({ kind: "mode" })}>
-            {t.save}
-          </button>
           {tenant.status === "active" && (
             <button type="button" className="secondary" disabled={busy} onClick={() => setConfirming({ kind: "pause" })}>
               <Icon name="pause" className="sm" /> {t.pauseTenant}

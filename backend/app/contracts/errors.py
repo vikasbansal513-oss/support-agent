@@ -44,7 +44,7 @@ ERRORS: dict[str, tuple[int, str, str]] = {
     "E-ADM-003": (
         409,
         "warning",
-        "For the auto level, tenant mode must be auto and a V2 policy must be published.",
+        "A V2 policy must be published for this tenant.",
     ),
     "E-LIM-001": (402, "warning", "This month's conversation limit has been reached."),
     "E-PRV-001": (409, "warning", "A privacy request is already open for this customer."),

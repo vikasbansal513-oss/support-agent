@@ -1,15 +1,26 @@
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.deps import require_owner, require_user
 from app.auth.service import Principal
-from app.contracts.contracts import NotificationSettings
+from app.contracts.contracts import Mode, NotificationSettings
 from app.core.audit import AuditEvent, record
 from app.core.db import get_session_factory, session_scope
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 Factory = async_sessionmaker[AsyncSession]
+
+
+class ModeIn(BaseModel):
+    mode: Mode
+    reason: str = Field(min_length=5, max_length=300)
+
+
+class ModeOut(BaseModel):
+    mode: Mode
+
 
 _GET = text(
     "SELECT notify_email_enabled, notify_email, notify_whatsapp_enabled, alert_phone,"
@@ -75,3 +86,38 @@ async def put_notifications(
             ),
         )
     return body
+
+
+@router.put("/mode")
+async def put_mode(
+    body: ModeIn,
+    principal: Principal = Depends(require_owner),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> ModeOut:
+    """Let a brand owner pick their own reply mode (shadow/draft/auto) - no admin step."""
+    async with session_scope(
+        factory, tenant_id=principal.tenant_id, user_id=principal.user_id
+    ) as s:
+        before = (
+            await s.execute(
+                text("SELECT mode FROM tenants WHERE id = :t"), {"t": principal.tenant_id}
+            )
+        ).scalar_one()
+        await s.execute(
+            text("UPDATE tenants SET mode = :m WHERE id = :t"),
+            {"m": body.mode, "t": principal.tenant_id},
+        )
+        await record(
+            s,
+            AuditEvent(
+                action="settings.mode_changed",
+                entity_type="tenant",
+                entity_id=str(principal.tenant_id),
+                old_value={"mode": before},
+                new_value={"mode": body.mode},
+                reason=body.reason,
+                actor_user_id=principal.user_id,
+                actor_role=principal.role,
+            ),
+        )
+    return ModeOut(mode=body.mode)

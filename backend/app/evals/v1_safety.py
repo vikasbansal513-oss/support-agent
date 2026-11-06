@@ -231,6 +231,15 @@ UNCLEAR_CASES = [
     "haan?",
     "kya main haan bolu",
 ]
+# "cancel" names the action itself when the pending write is order_cancel, so
+# "yes ... cancel" must resolve to yes there even though "cancel" alone (no
+# tool context, or no "yes") is a refusal - see parse_confirmation's docstring.
+ORDER_CANCEL_YES_CASES = [
+    "Yes, please cancel.",
+    "yes please cancel",
+    "haan cancel kar do",
+    "yes cancel",
+]
 
 
 def run_confirm_cases() -> tuple[int, list[str]]:
@@ -244,7 +253,17 @@ def run_confirm_cases() -> tuple[int, list[str]]:
     for text in UNCLEAR_CASES:
         if parse_confirmation(text) != "unclear":
             failed.append(f"unclear:{text}")
-    return len(YES_CASES) + len(NO_CASES) + len(UNCLEAR_CASES), failed
+    for text in ORDER_CANCEL_YES_CASES:
+        if parse_confirmation(text, tool="order_cancel") != "yes":
+            failed.append(f"order_cancel_yes:{text}")
+        if parse_confirmation(text) != "unclear":
+            # without knowing the pending tool, "cancel" alongside "yes" stays
+            # unclear - context is what resolves it, not the phrase alone.
+            failed.append(f"order_cancel_yes_needs_context:{text}")
+    return (
+        len(YES_CASES) + len(NO_CASES) + len(UNCLEAR_CASES) + 2 * len(ORDER_CANCEL_YES_CASES),
+        failed,
+    )
 
 
 def _plan(**over: Any) -> dict[str, Any]:

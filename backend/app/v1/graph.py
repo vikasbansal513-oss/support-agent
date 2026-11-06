@@ -124,7 +124,7 @@ def _conv(state: State) -> dict[str, Any]:
 
 def _reply(state: State, template_id: str, **facts: object) -> dict[str, Any]:
     lang = _lang(state)
-    text = t.render(template_id, lang, **facts)
+    text = t.render(template_id, lang, channel=state.get("channel"), **facts)
     used = sorted(facts)
     if state.get("first_message"):
         text = f"{_disclosure_text(state, lang)}\n\n{text}"
@@ -237,7 +237,7 @@ def build_graph_v1(deps: V1Deps) -> Any:
         if not pending or pending.get("expired") or pending.get("status") != "awaiting_customer":
             conv.update(awaiting="none", unclear_count=0, clear_pending=True)
             return {"conv": conv, "v1_reply": _reply(state, "confirm_expired")}
-        answer = parse_confirmation(state.get("incoming_text", ""))
+        answer = parse_confirmation(state.get("incoming_text", ""), tool=pending.get("tool"))
         if answer == "unclear":
             conv["unclear_count"] = int(conv.get("unclear_count", 0)) + 1
             if conv["unclear_count"] >= 2:
@@ -634,7 +634,11 @@ def build_graph_v1(deps: V1Deps) -> Any:
             # described delay/problem, not anger that already went to a human.
             note = t.render("empathy_note", lang) + note
         items = ", ".join(f"{ln.title} x{ln.quantity}" for ln in order.lines)[:120] or "-"
-        facts: dict[str, object] = {"order": order.order_name, "note": note}
+        facts: dict[str, object] = {
+            "order": order.order_name,
+            "note": note,
+            "brand": state.get("tenant_name") or "Support",
+        }
         if tool == "order_cancel":
             facts.update(items=items, amount=t.rs(decision.amount_paise))
         elif tool == "refund_create":

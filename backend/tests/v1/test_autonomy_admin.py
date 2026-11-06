@@ -46,7 +46,9 @@ async def test_admin_puts_one_tool_on_auto_and_it_is_audited(env: AgentEnv) -> N
     assert [a.reason for a in audit] == ["pilot ke baad approve"]
 
 
-async def test_owner_cannot_do_it_and_tenant_must_be_in_auto_mode(env: AgentEnv) -> None:
+async def test_owner_cannot_call_the_admin_route(env: AgentEnv) -> None:
+    # The admin route itself still exists (platform support use), but a brand
+    # owner must use their own `/policies/autonomy` route, not this one.
     await setup(env, "approval", mode="draft")
     denied = await env.client.put(
         f"/admin/tenants/{env.wa.tenant_id}/autonomy",
@@ -54,14 +56,6 @@ async def test_owner_cannot_do_it_and_tenant_must_be_in_auto_mode(env: AgentEnv)
         headers=env.wa.headers,
     )
     assert denied.status_code == 403
-    admin = await admin_headers(env)
-    blocked = await env.client.put(
-        f"/admin/tenants/{env.wa.tenant_id}/autonomy",
-        json={"tool": "order_cancel", "level": "auto", "reason": "mode draft hai abhi"},
-        headers=admin,
-    )
-    assert blocked.status_code == 409 and error_code(blocked) == "E-ADM-003"
-    assert (await levels(env))["order_cancel"] == "approval"
 
 
 async def test_turning_the_last_auto_tool_down_clears_the_marker(env: AgentEnv) -> None:

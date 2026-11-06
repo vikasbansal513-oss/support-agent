@@ -82,7 +82,9 @@ async def test_staff_role_cannot_set_autonomy(env: AgentEnv) -> None:
     assert (await levels(env))["order_cancel"] == "approval"
 
 
-async def test_owner_blocked_when_tenant_mode_not_auto(env: AgentEnv) -> None:
+async def test_owner_can_turn_on_auto_regardless_of_tenant_mode(env: AgentEnv) -> None:
+    # No admin step required: the owner decides off/approval/auto for their own
+    # tenant on their own, whatever the tenant's overall (shadow/draft/auto) mode is.
     await setup(env, "approval", mode="draft")
     out = await env.client.put(
         "/policies/autonomy",
@@ -94,5 +96,5 @@ async def test_owner_blocked_when_tenant_mode_not_auto(env: AgentEnv) -> None:
         },
         headers=env.wa.headers,
     )
-    assert out.status_code == 409 and error_code(out) == "E-ADM-003"
-    assert (await levels(env))["order_cancel"] == "approval"
+    assert out.status_code == 200 and out.json()["levels"]["order_cancel"] == "auto"
+    assert (await levels(env))["order_cancel"] == "auto"

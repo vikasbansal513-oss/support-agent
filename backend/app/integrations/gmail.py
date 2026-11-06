@@ -47,6 +47,7 @@ class EmailSender(Protocol):
         body: str,
         thread_id: str | None,
         in_reply_to: str | None,
+        html: str | None = None,
     ) -> str: ...
 
 
@@ -132,6 +133,7 @@ class HttpGmailClient:
         body: str,
         thread_id: str | None,
         in_reply_to: str | None,
+        html: str | None = None,
     ) -> str:
         message = EmailMessage()
         message["From"] = sender
@@ -141,6 +143,8 @@ class HttpGmailClient:
             message["In-Reply-To"] = in_reply_to
             message["References"] = in_reply_to
         message.set_content(body)
+        if html:
+            message.add_alternative(html, subtype="html")
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
         payload: dict[str, Any] = {"raw": raw}
         if thread_id:

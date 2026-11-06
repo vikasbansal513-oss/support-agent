@@ -183,20 +183,26 @@ async def test_usage_endpoint(env: AgentEnv) -> None:
     assert usage["limit_reached"] is False
 
 
-async def test_admin_mode_change_has_no_review_gate(env: AgentEnv) -> None:
-    _, verified, _ = await _admin_login_with_mfa(env.client, env.factory)
-    admin = bearer(verified)
-    url = f"/admin/tenants/{env.wa.tenant_id}/mode"
-    ok = await env.client.put(url, json={"mode": "draft", "reason": "pilot start"}, headers=admin)
+async def test_owner_changes_own_mode_with_no_admin_step(env: AgentEnv) -> None:
+    # The brand owner sets their own reply mode (shadow/draft/auto) directly;
+    # there is no admin gate or admin route for this any more.
+    url = "/settings/mode"
+    ok = await env.client.put(
+        url, json={"mode": "draft", "reason": "pilot start"}, headers=env.wa.headers
+    )
     assert ok.status_code == 200 and ok.json()["mode"] == "draft"
     back = await env.client.put(
-        url, json={"mode": "shadow", "reason": "rollback test"}, headers=admin
+        url, json={"mode": "shadow", "reason": "rollback test"}, headers=env.wa.headers
     )
     assert back.json()["mode"] == "shadow"
-    brand = await env.client.put(
-        url, json={"mode": "auto", "reason": "no way"}, headers=env.wa.headers
+    _, verified, _ = await _admin_login_with_mfa(env.client, env.factory)
+    admin = bearer(verified)
+    gone = await env.client.put(
+        f"/admin/tenants/{env.wa.tenant_id}/mode",
+        json={"mode": "auto", "reason": "route removed"},
+        headers=admin,
     )
-    assert brand.status_code in (401, 403)
+    assert gone.status_code == 404
 
 
 async def test_agent_role_endpoints_need_login(client: httpx.AsyncClient) -> None:

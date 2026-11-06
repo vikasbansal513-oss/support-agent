@@ -15,6 +15,7 @@ from app.core.config import get_settings
 from app.core.db import session_scope
 from app.core.errors import AppError
 from app.core.flags import is_globally_paused
+from app.core.html_email import plain_to_email_html
 from app.integrations.gmail import GmailAuthError, GmailUpstreamError
 from app.integrations.gupshup import SendError
 from app.policy import service as policy_service
@@ -251,10 +252,14 @@ async def _email_context(
     ).first()
     normalized = (row.raw_payload or {}).get("normalized", {}) if row else {}
     headers = {k.lower(): v for k, v in (normalized.get("email_headers") or {}).items()}
+    brand_row = (
+        await session.execute(text("SELECT name FROM tenants WHERE id = app_current_tenant()"))
+    ).first()
     return {
         "thread_id": normalized.get("email_thread_id"),
         "subject": normalized.get("email_subject") or "Aapka sawaal",
         "in_reply_to": headers.get("message-id"),
+        "brand_name": brand_row.name if brand_row and brand_row.name else None,
     }
 
 
@@ -364,6 +369,7 @@ async def _send(
         body=body,
         thread_id=email_ctx.get("thread_id"),
         in_reply_to=email_ctx.get("in_reply_to"),
+        html=plain_to_email_html(body, brand=email_ctx.get("brand_name")),
     )
 
 
