@@ -451,7 +451,12 @@ async def test_traffic_by_client_reports_rate_limit_hits_isolated_per_tenant(
                 {"t": tid_a, "eid": str(tid_a)},
             )
     async with session_scope(owner_factory, super_admin=True) as session:
-        tr = await queries.traffic(session)
+        # Scope explicitly to tid_a/tid_b: the real traffic() view caps
+        # by_client at the top-20 busiest tenants (by agent_runs_24h), and the
+        # test database is shared for the whole pytest session, so an
+        # unscoped call could rank these two tenants below 20 others created
+        # by unrelated tests and silently drop them from the result.
+        tr = await queries.traffic(session, tenant_ids=[tid_a, tid_b])
     by_tenant = {row.tenant_id: row.rate_limit_hits_1h for row in tr.by_client}
     assert by_tenant[tid_a] == 3
     assert by_tenant[tid_b] == 0

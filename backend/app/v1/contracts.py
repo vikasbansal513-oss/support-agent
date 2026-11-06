@@ -181,7 +181,7 @@ class Plan(BaseModel):
     sentiment: float = Field(default=0.0, ge=-1, le=1)
     language: Language = "hinglish"
     summary: Annotated[str, _clip(400)] = ""
-    secondary_answers: list[SecondaryIntent] = Field(default_factory=list, max_length=2)
+    secondary_answers: list[SecondaryIntent] = Field(default_factory=list)
 
     @field_validator("secondary_answers", mode="after")
     @classmethod
@@ -190,11 +190,20 @@ class Plan(BaseModel):
         # add), and de-dupe defensively - the LLM is untrusted input even when
         # it's producing our own schema, so code never assumes it followed the
         # "no duplicates, no repeating the primary" instruction in the prompt.
+        # The max-2 cap is enforced here, AFTER de-dupe, rather than via
+        # Field(max_length=2): that built-in constraint runs before this
+        # "after" validator and would reject a raw 3-item list that only
+        # *looks* too long because of duplicates the LLM sent (e.g. the same
+        # secondary intent twice) - exactly the case this validator exists to
+        # clean up. Only a list that is still too long once genuinely distinct
+        # should fail.
         primary = info.data.get("intent")
         seen: list[Any] = []
         for item in value:
             if item != primary and item not in seen:
                 seen.append(item)
+        if len(seen) > 2:
+            raise ValueError("secondary_answers: at most 2 distinct entries allowed")
         return seen
 
     @field_validator("confidence", mode="before")

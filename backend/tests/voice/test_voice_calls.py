@@ -3,7 +3,14 @@ from typing import Any
 from tests.agent.helpers import AgentEnv
 from tests.v1.flow import ADDRESS, plan, setup
 from tests.v1.test_multiturn_eval import delivered_facts
-from tests.voice.helpers import CALLED, CALLER, TRANSFER, Voice, _no_anomaly_stop, configure  # noqa: F401
+from tests.voice.helpers import (  # noqa: F401
+    CALLED,
+    CALLER,
+    TRANSFER,
+    Voice,
+    _no_anomaly_stop,
+    configure,
+)
 
 
 async def reasons(env: AgentEnv) -> list[str]:

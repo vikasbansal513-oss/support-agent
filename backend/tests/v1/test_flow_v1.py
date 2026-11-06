@@ -36,11 +36,17 @@ async def test_combined_order_status_and_policy_question_merges_facts_into_one_r
     real compose_reply/reply_layer.compose path (not the template fallback), by
     supplying a second fake LLM response for the reply-composer call."""
     await setup(env)
+    # return_window_days isn't set in setup()'s policy body, so PolicyV2 falls
+    # back to its default of 7 (app/v1/policy.py) - the reply text has to use
+    # that same number, or validate_reply_v1's known-facts-only number check
+    # rejects "unknown_number" (it's not in the facts dict), the compose()
+    # retry burns the only other queued fake LLM response, and the graph falls
+    # back to the plain template reply instead of this composed one.
     reply_json = json.dumps(
         {
             "text": (
                 "Order:\n- Order: *#1001*\n- Status: *unfulfilled*\n\n"
-                "Return policy:\n- Return window: *10 days*"
+                "Return policy:\n- Return window: *7 days*"
             ),
             "language": "hinglish",
             "facts_used": ["order_name", "status", "return_window_days"],
@@ -53,7 +59,7 @@ async def test_combined_order_status_and_policy_question_merges_facts_into_one_r
         reply_json,
     ]
     await say(env, "order #1001 kaha hai aur return policy kya hai", "m1")
-    assert "#1001" in last_reply(env) and "10 days" in last_reply(env)
+    assert "#1001" in last_reply(env) and "7 days" in last_reply(env)
     # Both the primary order fact and the secondary policy fact were actually
     # offered to the reply composer in the same call - not, say, two separate
     # LLM calls or a reply built from only one of the two groups.

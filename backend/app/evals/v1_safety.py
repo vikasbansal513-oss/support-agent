@@ -6,7 +6,7 @@ from pydantic import ValidationError
 
 from app.v1.confirm import parse_confirmation
 from app.v1.contracts import Plan, ReplyDraft
-from app.v1.reply import validate_reply_v1
+from app.v1.reply import MAX_REPLY_CHARS, validate_reply_v1
 
 FACTS = {
     "order": {
@@ -119,7 +119,10 @@ REPLY_CASES: list[ReplyCase] = [
         "english_expected_got_devanagari", "आपका ऑर्डर #1001 गया।", "wrong_language", language="en"
     ),
     ReplyCase("hinglish_expected_got_devanagari", "आपका ऑर्डर #1001 गया।", "wrong_language"),
-    ReplyCase("too_long", "x" * 700, "too_long"),
+    # Must stay longer than MAX_REPLY_CHARS or validate_reply_v1 never flags it
+    # "too_long" - this used to be a fixed 700, which silently stopped testing
+    # anything once MAX_REPLY_CHARS was raised from 600 to 750.
+    ReplyCase("too_long", "x" * (MAX_REPLY_CHARS + 50), "too_long"),
     ReplyCase(
         "injected_url_number", "Order #1001 ke liye 9876543210 par call karein.", "unknown_number"
     ),

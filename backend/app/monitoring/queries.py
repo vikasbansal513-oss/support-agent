@@ -381,7 +381,7 @@ def _process_rss_mb() -> float:
     return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)
 
 
-async def traffic(session: AsyncSession) -> TrafficOut:
+async def traffic(session: AsyncSession, tenant_ids: list[uuid.UUID] | None = None) -> TrafficOut:
     tenants_row = (
         await session.execute(
             text(
@@ -425,6 +425,20 @@ async def traffic(session: AsyncSession) -> TrafficOut:
             )
         )
     ).one()
+    # When scoped to specific tenants, filter to exactly those (as individual
+    # named params - simpler and safer than binding a Postgres array through
+    # asyncpg) and skip the LIMIT, so none of the asked-about tenants can be
+    # silently dropped by the ranking/cap that's fine for the real, unscoped
+    # top-20-busiest-clients dashboard view but wrong for a targeted lookup.
+    tenant_filter_sql = ""
+    tenant_filter_params: dict[str, str] = {}
+    if tenant_ids:
+        placeholders = []
+        for i, t in enumerate(tenant_ids):
+            key = f"tid{i}"
+            placeholders.append(f"CAST(:{key} AS uuid)")
+            tenant_filter_params[key] = str(t)
+        tenant_filter_sql = f" AND t.id IN ({', '.join(placeholders)})"
     by_client_rows = (
         await session.execute(
             text(
@@ -442,8 +456,11 @@ async def traffic(session: AsyncSession) -> TrafficOut:
                 "   AND a.action = 'ratelimit.tenant_api_exceeded'"
                 "   AND a.occurred_at >= now() - interval '1 hour') AS rate_limit_hits_1h"
                 " FROM tenants t WHERE t.status = 'active'"
-                " ORDER BY agent_runs_24h DESC LIMIT 20"
-            )
+                + tenant_filter_sql
+                + " ORDER BY agent_runs_24h DESC"
+                + ("" if tenant_ids else " LIMIT 20")
+            ),
+            tenant_filter_params,
         )
     ).all()
     return TrafficOut(
