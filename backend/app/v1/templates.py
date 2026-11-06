@@ -1,6 +1,7 @@
 from string import Formatter
 
 from app.agent import templates as v0
+from app.contracts.contracts import OrderFacts
 
 T: dict[str, dict[str, str]] = {
     "confirm_order_cancel": {
@@ -363,6 +364,155 @@ WA_T: dict[str, dict[str, str]] = {
 }
 
 
+# Email-only restyle of the 5 confirm_* write-flow templates: a name-or-"Hi there," greeting
+# and a structured order-details table (see core/html_email.py's TABLE_START/TABLE_END
+# markup, built by email_facts() below) instead of a "- " bullet list. Selected in render()
+# only when channel == "email" and only for these 5 ids; done_* stays on the plain T dict
+# above (already clean after HTML conversion - a one-line "action is done" statement gains
+# nothing from a table) and every other channel (whatsapp, voice) is untouched.
+EMAIL_T: dict[str, dict[str, str]] = {
+    "confirm_order_cancel": {
+        "hinglish": (
+            "{greeting}\n\n{note}Aapne order *{order}* cancel karne ki request ki hai.\n\n"
+            "Aapke order ki details:\n\n{items_table}\n\n"
+            "Confirm karne ke liye reply karein:\n\n"
+            "- *HAAN* – cancellation aage badhayein\n"
+            "- *NAHI* – order rakhein\n"
+        ),
+        "en": (
+            "{greeting}\n\n{note}Thank you for reaching out regarding your request to cancel "
+            "order *{order}*.\n\nHere are your order details:\n\n{items_table}\n\n"
+            "Please confirm by replying:\n\n"
+            "- *YES* — to proceed with the cancellation\n"
+            "- *NO* — to keep your order as is\n"
+        ),
+        "hi": (
+            "{greeting}\n\n{note}आपने ऑर्डर *{order}* "
+            "कैंसिल करने का "
+            "अनुरोध किया है।\n\n"
+            "आपके ऑर्डर का "
+            "विवरण:\n\n{items_table}\n\n"
+            "कृपया पुष्टि करने "
+            "के लिए रिप्लाई "
+            "करें:\n\n"
+            "- *हाँ* – कैंसिलेशन "
+            "आगे बढ़ाएं\n"
+            "- *नहीं* – ऑर्डर रखें\n"
+        ),
+    },
+    "confirm_address_update": {
+        "hinglish": (
+            "{greeting}\n\n{note}Aapne order *{order}* ka delivery address update karne ko kaha hai.\n\n"
+            "{items_table}\n\n"
+            "Confirm karne ke liye reply karein:\n\n"
+            "- *HAAN* – address update karein\n"
+            "- *NAHI* – rehne dein\n"
+        ),
+        "en": (
+            "{greeting}\n\n{note}You asked us to update the delivery address for order *{order}*.\n\n"
+            "{items_table}\n\n"
+            "Please confirm by replying:\n\n"
+            "- *YES* — to update the address\n"
+            "- *NO* — to leave it as is\n"
+        ),
+        "hi": (
+            "{greeting}\n\n{note}आपने ऑर्डर *{order}* "
+            "का डिलीवरी पता "
+            "अपडेट करने के लिए "
+            "कहा है।\n\n{items_table}\n\n"
+            "कृपया पुष्टि करने "
+            "के लिए रिप्लाई "
+            "करें:\n\n"
+            "- *हाँ* – पता अपडेट "
+            "करें\n"
+            "- *नहीं* – रहने दें\n"
+        ),
+    },
+    "confirm_exchange_request": {
+        "hinglish": (
+            "{greeting}\n\n{note}Aapne order *{order}* me item exchange karne ko kaha hai.\n\n"
+            "{items_table}\n\n"
+            "Confirm karne ke liye reply karein:\n\n"
+            "- *HAAN* – exchange shuru karein\n"
+            "- *NAHI* – rehne dein\n"
+        ),
+        "en": (
+            "{greeting}\n\n{note}You asked to exchange an item in order *{order}*.\n\n"
+            "{items_table}\n\n"
+            "Please confirm by replying:\n\n"
+            "- *YES* — to start the exchange\n"
+            "- *NO* — to leave it as is\n"
+        ),
+        "hi": (
+            "{greeting}\n\n{note}आपने ऑर्डर *{order}* "
+            "में आइटम बदलने के "
+            "लिए कहा है।\n\n{items_table}\n\n"
+            "कृपया पुष्टि करने "
+            "के लिए रिप्लाई "
+            "करें:\n\n"
+            "- *हाँ* – एक्सचेंज "
+            "शुरू करें\n"
+            "- *नहीं* – रहने दें\n"
+        ),
+    },
+    "confirm_refund_create": {
+        "hinglish": (
+            "{greeting}\n\n{note}Aapne order *{order}* ka refund shuru karne ko kaha hai.\n\n"
+            "{items_table}\n\n"
+            "Confirm karne ke liye reply karein:\n\n"
+            "- *HAAN* – refund shuru karein\n"
+            "- *NAHI* – rehne dein\n"
+        ),
+        "en": (
+            "{greeting}\n\n{note}You asked us to start a refund for order *{order}*.\n\n"
+            "{items_table}\n\n"
+            "Please confirm by replying:\n\n"
+            "- *YES* — to start the refund\n"
+            "- *NO* — to leave it as is\n"
+        ),
+        "hi": (
+            "{greeting}\n\n{note}आपने ऑर्डर *{order}* "
+            "का रिफंड शुरू करने "
+            "के लिए कहा है।\n\n{items_table}\n\n"
+            "कृपया पुष्टि करने "
+            "के लिए रिप्लाई "
+            "करें:\n\n"
+            "- *हाँ* – रिफंड शुरू "
+            "करें\n"
+            "- *नहीं* – रहने दें\n"
+        ),
+    },
+    "confirm_return_request": {
+        "hinglish": (
+            "{greeting}\n\n{note}Aapne order *{order}* ke liye return request bhejne ko kaha hai.\n\n"
+            "{items_table}\n\n"
+            "Confirm karne ke liye reply karein:\n\n"
+            "- *HAAN* – return request bhejein\n"
+            "- *NAHI* – rehne dein\n"
+        ),
+        "en": (
+            "{greeting}\n\n{note}You asked us to submit a return request for order *{order}*.\n\n"
+            "{items_table}\n\n"
+            "Please confirm by replying:\n\n"
+            "- *YES* — to submit the return\n"
+            "- *NO* — to leave it as is\n"
+        ),
+        "hi": (
+            "{greeting}\n\n{note}आपने ऑर्डर *{order}* "
+            "के लिए रिटर्न रिक्"
+            "वेस्ट भेजने के लिए "
+            "कहा है।\n\n{items_table}\n\n"
+            "कृपया पुष्टि करने "
+            "के लिए रिप्लाई "
+            "करें:\n\n"
+            "- *हाँ* – रिटर्न रिक्"
+            "वेस्ट भेजें\n"
+            "- *नहीं* – रहने दें\n"
+        ),
+    },
+}
+
+
 # Decision Framework Section 17.2: these are the write-flow confirm/done templates that
 # read an order ref and/or a rupee amount as part of a yes/no ask or a just-completed-action
 # statement - what the framework means by "an account number, order ID... it is reading
@@ -394,7 +544,12 @@ def fields(template: str) -> set[str]:
 
 def render(template_id: str, language: str, channel: str | None = None, **facts: object) -> str:
     lang = language if language in ("en", "hi", "hinglish") else "hinglish"
-    source = WA_T if channel == "whatsapp" and template_id in WA_T else T
+    if channel == "whatsapp" and template_id in WA_T:
+        source = WA_T
+    elif channel == "email" and template_id in EMAIL_T:
+        source = EMAIL_T
+    else:
+        source = T
     template = source[template_id][lang]
     missing = fields(template) - set(facts)
     if missing:
@@ -404,3 +559,85 @@ def render(template_id: str, language: str, channel: str | None = None, **facts:
 
 def rs(paise: int) -> str:
     return v0.paise_to_rs(paise)
+
+
+_GREETING = {
+    "en": ("Hi {name},", "Hi there,"),
+    "hinglish": ("Hi {name},", "Hi there,"),
+    "hi": ("नमस्ते {name},", "नमस्ते,"),
+}
+
+# Column headers for the order-details TABLE_START/TABLE_END block each confirm_* email
+# template embeds via {items_table} (see core/html_email.py for how the markers become a
+# real HTML <table>). One row per OrderFacts.lines entry for order_cancel; the other tools
+# don't have per-line facts, so they get a single summary row instead.
+_HEADERS = {
+    "order_cancel": {
+        "en": ("Order ID", "Item", "Qty", "Total"),
+        "hinglish": ("Order ID", "Item", "Qty", "Total"),
+        "hi": ("ऑर्डर आईडी", "आइटम", "मात्रा", "कुल"),
+    },
+    "refund_create": {
+        "en": ("Order ID", "Refund Amount"),
+        "hinglish": ("Order ID", "Refund Amount"),
+        "hi": ("ऑर्डर आईडी", "रिफंड राशि"),
+    },
+    "address_update": {
+        "en": ("Order ID", "New Address"),
+        "hinglish": ("Order ID", "New Address"),
+        "hi": ("ऑर्डर आईडी", "नया पता"),
+    },
+    "exchange_request": {
+        "en": ("Order ID", "Item", "New Variant"),
+        "hinglish": ("Order ID", "Item", "New Variant"),
+        "hi": ("ऑर्डर आईडी", "आइटम", "नया वेरिएंट"),
+    },
+    "return_request": {
+        "en": ("Order ID",),
+        "hinglish": ("Order ID",),
+        "hi": ("ऑर्डर आईडी",),
+    },
+}
+
+
+def _table_row(*cols: str) -> str:
+    return "|".join(cols)
+
+
+def email_facts(
+    channel: str | None, lang: str, tool: str, order: "OrderFacts | None", facts: dict[str, object]
+) -> dict[str, object]:
+    """{greeting}/{items_table} facts for the EMAIL_T confirm_* templates above - a no-op
+    (returns {}) for any other channel, so WhatsApp/voice rendering is never affected. order
+    is None only when a template is rendered outside the normal order-verified write flow,
+    which does not happen for confirm_* in practice; guarded anyway so render() still gets a
+    usable (if order-less) table instead of a KeyError."""
+    if channel != "email":
+        return {}
+    name_tpl, no_name = _GREETING.get(lang, _GREETING["en"])
+    name = (order.customer_name if order else None) or ""
+    greeting = name_tpl.format(name=name) if name.strip() else no_name
+    headers = _HEADERS.get(tool, {}).get(lang) or _HEADERS.get(tool, {}).get("en") or ("Order ID",)
+    order_name = str(facts.get("order") or (order.order_name if order else "") or "-")
+    rows = [_table_row("TABLE_START"), _table_row(*headers)]
+    if tool == "order_cancel" and order and order.lines:
+        for line in order.lines:
+            rows.append(
+                _table_row(
+                    order_name,
+                    line.title,
+                    str(line.quantity),
+                    f"Rs {rs(line.unit_price_paise * line.quantity)}",
+                )
+            )
+    elif tool == "refund_create":
+        amount = facts.get("amount")
+        rows.append(_table_row(order_name, f"Rs {amount}" if amount else "-"))
+    elif tool == "address_update":
+        rows.append(_table_row(order_name, str(facts.get("address") or "-")))
+    elif tool == "exchange_request":
+        rows.append(_table_row(order_name, str(facts.get("item") or "-"), str(facts.get("variant") or "-")))
+    else:
+        rows.append(_table_row(order_name))
+    rows.append("TABLE_END")
+    return {"greeting": greeting, "items_table": "\n".join(rows)}

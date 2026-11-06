@@ -454,6 +454,7 @@ class OrderLine(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(max_length=200)
     quantity: int = Field(ge=1, le=10000)
+    unit_price_paise: int = Field(default=0, ge=0)
 
 
 class OrderFacts(BaseModel):
@@ -466,6 +467,7 @@ class OrderFacts(BaseModel):
     created_at: AwareDatetime
     tracking_numbers: list[str] = Field(default_factory=list, max_length=10)
     courier: str | None = None
+    customer_name: str | None = Field(default=None, max_length=200)
 
 
 class TrackingFacts(BaseModel):

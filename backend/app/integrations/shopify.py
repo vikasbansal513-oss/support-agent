@@ -54,6 +54,24 @@ def _parse_dt(value: str) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
+def _customer_name(order: dict[str, Any]) -> str | None:
+    """Best-effort display name for the order's "Hi {name}," email greeting. Shopify order
+    shape is not verified against a real account (VERIFY, same as the rest of this module) -
+    tries the customer object, then falls back to the shipping/billing address name. Returns
+    None (greeting falls back to "Hi there,") if nothing usable is present."""
+    for source in (order.get("customer") or {}, order.get("shipping_address") or {}):
+        first = str(source.get("first_name") or "").strip()
+        last = str(source.get("last_name") or "").strip()
+        full = f"{first} {last}".strip()
+        if full:
+            return full[:200]
+    for source in (order.get("shipping_address") or {}, order.get("billing_address") or {}):
+        name = str(source.get("name") or "").strip()
+        if name:
+            return name[:200]
+    return None
+
+
 def to_facts(order: dict[str, Any]) -> OrderFacts:
     fulfillments = order.get("fulfillments") or []
     numbers: list[str] = []
@@ -72,6 +90,7 @@ def to_facts(order: dict[str, Any]) -> OrderFacts:
             OrderLine(
                 title=str(line.get("title") or "item")[:200],
                 quantity=max(1, min(int(line.get("quantity") or 1), 10000)),
+                unit_price_paise=_paise(str(line.get("price") or "0")),
             )
             for line in (order.get("line_items") or [])[:50]
         ],
@@ -79,6 +98,7 @@ def to_facts(order: dict[str, Any]) -> OrderFacts:
         created_at=_parse_dt(str(order["created_at"])),
         tracking_numbers=numbers[:10],
         courier=courier,
+        customer_name=_customer_name(order),
     )
 
 
