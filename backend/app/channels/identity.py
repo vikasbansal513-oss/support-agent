@@ -96,9 +96,20 @@ async def get_or_create_conversation(
 # messaging on two channels gets two separate `customers` rows unless something else tells
 # us they're the same person. link_customer_identities() is that something else: called
 # (best-effort, from the runners) whenever a Shopify order lookup succeeds and the order
-# itself carries both a phone and an email - a trusted source, not customer-asserted - it
-# folds the per-channel rows into one so conversations/handoffs/limits/dedup all share one
-# customer_id across every channel that customer has used.
+# itself carries both a phone and an email.
+#
+# IMPORTANT SAFETY LIMIT: this only ever FILLS IN a missing identifier onto a customer row
+# that already has the other one (e.g. a WhatsApp-only customer gets their email added the
+# first time an order shows both). It deliberately does NOT merge two customer rows that
+# already each have their own phone and email on file, even if an order's phone happens to
+# match one row and its email happens to match a different row. Two different real orders
+# can share a phone number (a shared family/shipping number, reused test data, a store's own
+# contact number on an order, etc.) without being the same person - auto-merging on that
+# alone was found to wrongly fold two unrelated customers together and corrupt the kept
+# customer's email, which then made a genuine customer fail their own identity check. If a
+# tenant wants two existing customer rows merged, that should be a deliberate, reviewed
+# action (e.g. an admin tool calling _merge_customers directly) - not an automatic side
+# effect of a single order lookup.
 async def link_customer_identities(
     session: AsyncSession, phone_e164: str | None, email_lower: str | None
 ) -> None:
@@ -139,7 +150,11 @@ async def link_customer_identities(
         return  # unreachable given the branches above; narrows the type for mypy
     if phone_row.id == email_row.id:
         return  # already linked
-    await _merge_customers(session, keep=phone_row.id, drop=email_row.id)
+    # Both identifiers already belong to pre-existing, DIFFERENT customer rows. Per the
+    # safety note above, do not auto-merge: a shared/reused phone number across orders is
+    # exactly the case that previously corrupted a real customer's email. Leave both rows
+    # as they are; a tenant that wants them combined should do so deliberately.
+    return
 
 
 async def _merge_customers(session: AsyncSession, *, keep: uuid.UUID, drop: uuid.UUID) -> None:
