@@ -135,6 +135,8 @@ async def link_customer_identities(
                 {"p": phone_e164, "c": email_row.id},
             )
         return
+    if phone_row is None or email_row is None:
+        return  # unreachable given the branches above; narrows the type for mypy
     if phone_row.id == email_row.id:
         return  # already linked
     await _merge_customers(session, keep=phone_row.id, drop=email_row.id)
