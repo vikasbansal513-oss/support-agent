@@ -230,18 +230,28 @@ export function PolicySettings() {
   const [list, reload] = useApi(() => api.get<Policy[]>("/policies"));
   const [showHistory, setShowHistory] = useState(false);
   const create = useSubmit(async () => {
-    // Base a new draft on whichever policy is actually LIVE (status "published"), never on
-    // list.data[0] (the highest version number). After a manual/emergency rollback the
-    // published row can have a lower version than some archived ones, so "highest version"
-    // and "currently published" are not the same row - using the wrong one silently resends
-    // stale (possibly archived, since-reverted) autonomy/limits data and the backend rejects
-    // it as an unauthorized "raise to auto" (E-POL-002 auto_needs_admin / limit_raise_needs_admin).
+    // Base the new draft's CONTENT on whichever policy is actually LIVE (status
+    // "published"), never on list.data[0] (the highest version number). After a
+    // manual/emergency rollback the published row can have a lower version than some
+    // archived ones, so "highest version" and "currently published" are not the same row -
+    // using the wrong one silently resends stale (possibly archived, since-reverted)
+    // autonomy/limits data and the backend rejects it as an unauthorized "raise to auto"
+    // (E-POL-002 auto_needs_admin / limit_raise_needs_admin).
+    //
+    // base_version (the optimistic-lock check) is a SEPARATE concern: the backend compares
+    // it against the table-wide highest version number (any status), not against the
+    // published row's version - same split AutonomySettings below already uses (published
+    // row for content, Math.max(...versions) for base_version). Sending the published row's
+    // own version as base_version here would permanently 409 (E-CONF-001) in that same
+    // rolled-back-tenant case, since published.version < table max forever until a new
+    // version is published.
     const items = list.state === "data" ? list.data : [];
     const latest = items.find((p) => p.status === "published");
     const base = latest?.content;
+    const maxVersion = items.length > 0 ? Math.max(...items.map((p) => p.version)) : null;
     await api.post<Policy>("/policies", {
       content: base ?? DEFAULT_POLICY,
-      base_version: latest?.version ?? null,
+      base_version: maxVersion,
     });
     reload();
   }, toast.error);
