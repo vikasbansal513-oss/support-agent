@@ -425,6 +425,8 @@ export const t = {
   statusLabel: "Status",
   ageLabel: "Received",
   timeline: "Timeline",
+  viewChat: "View chat",
+  viewChatEmpty: "No messages in this conversation yet.",
   killTitle: "Automated action settings",
   killOn: "Paused",
   killOff: "Enabled",

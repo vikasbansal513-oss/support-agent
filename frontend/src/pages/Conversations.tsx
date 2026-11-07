@@ -121,7 +121,7 @@ export function Conversations() {
   );
 }
 
-function Bubble({ message, canReport, onReport }: { message: Message; canReport: boolean; onReport: (m: Message) => void }) {
+export function Bubble({ message, canReport, onReport }: { message: Message; canReport: boolean; onReport: (m: Message) => void }) {
   const unsent = message.direction === "out" && message.action_status !== null && message.action_status !== "sent";
   const className = message.direction === "in" ? "message" : "message out";
   const bubbleClassName = message.direction === "in" ? "message-bubble" : unsent ? "message-bubble unsent" : "message-bubble";

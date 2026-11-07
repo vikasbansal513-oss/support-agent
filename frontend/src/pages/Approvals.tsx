@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../api/client";
-import type { Approval, ApprovalDetail, ApprovalOutcome, ToolKill, WriteTool } from "../api/types";
+import type { Approval, ApprovalDetail, ApprovalOutcome, ConversationDetail, ToolKill, WriteTool } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { Async, Chip, Empty, ReasonDialog, Screen } from "../components/common";
 import { Icon } from "../components/Icons";
@@ -8,6 +8,7 @@ import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
 import { formatIst, formatPaise } from "../format";
 import { t, type Key } from "../i18n";
+import { Bubble } from "./Conversations";
 
 type Tab = "pending" | "history";
 type Pending =
@@ -39,6 +40,41 @@ function Timeline({ id }: { id: string }) {
         </ul>
       )}
     </Async>
+  );
+}
+
+function ChatModal({ conversationId, onClose }: { conversationId: string; onClose: () => void }) {
+  const [detail, reload] = useApi(() => api.get<ConversationDetail>(`/conversations/${conversationId}`), [conversationId]);
+  return (
+    <div className="dialog" role="dialog" aria-modal="true" aria-label={t.viewChat}>
+      <div className="card dialog-card">
+        <div className="row dialog-card-header">
+          <h2>{t.viewChat}</h2>
+          <button type="button" className="secondary" onClick={onClose}>
+            {t.cancel}
+          </button>
+        </div>
+        <Async value={detail} reload={reload}>
+          {(c) => (
+            <>
+              <p className="card-sub">
+                {c.customer.masked_phone ?? c.customer.masked_email ?? "-"} · {c.channel}
+                {c.active_order_ref ? ` · ${c.active_order_ref}` : ""}
+              </p>
+              {c.messages.length === 0 ? (
+                <Empty>{t.viewChatEmpty}</Empty>
+              ) : (
+                <div className="messages">
+                  {c.messages.map((m) => (
+                    <Bubble key={m.id} message={m} canReport={false} onReport={() => undefined} />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </Async>
+      </div>
+    </div>
   );
 }
 
@@ -111,6 +147,7 @@ export function Approvals() {
   const [tab, setTab] = useState<Tab>("pending");
   const [open, setOpen] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
+  const [viewChat, setViewChat] = useState<string | null>(null);
   const [rows, reload] = useApi(
     () => api.get<Approval[]>(tab === "pending" ? "/approvals?status=pending_approval" : "/approvals?limit=200"),
     [tab],
@@ -180,6 +217,9 @@ export function Approvals() {
                       <td>{formatIst(a.created_at)}</td>
                       <td>
                         <div className="row">
+                          <button type="button" className="secondary small" onClick={() => setViewChat(a.conversation_id)}>
+                            <Icon name="chat" className="sm" /> {t.viewChat}
+                          </button>
                           <button type="button" className="secondary small" onClick={() => setOpen(open === a.id ? null : a.id)}>
                             {t.timeline}
                           </button>
@@ -210,6 +250,7 @@ export function Approvals() {
         }
       </Async>
       <KillPanel owner={owner} />
+      {viewChat && <ChatModal conversationId={viewChat} onClose={() => setViewChat(null)} />}
       {pending && (pending.kind === "reject" || pending.kind === "reconcile") && (
         <ReasonDialog
           title={pending.kind === "reject" ? t.reject : t.reconcile}
