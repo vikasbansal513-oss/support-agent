@@ -230,7 +230,14 @@ export function PolicySettings() {
   const [list, reload] = useApi(() => api.get<Policy[]>("/policies"));
   const [showHistory, setShowHistory] = useState(false);
   const create = useSubmit(async () => {
-    const latest = list.state === "data" ? list.data[0] : undefined;
+    // Base a new draft on whichever policy is actually LIVE (status "published"), never on
+    // list.data[0] (the highest version number). After a manual/emergency rollback the
+    // published row can have a lower version than some archived ones, so "highest version"
+    // and "currently published" are not the same row - using the wrong one silently resends
+    // stale (possibly archived, since-reverted) autonomy/limits data and the backend rejects
+    // it as an unauthorized "raise to auto" (E-POL-002 auto_needs_admin / limit_raise_needs_admin).
+    const items = list.state === "data" ? list.data : [];
+    const latest = items.find((p) => p.status === "published");
     const base = latest?.content;
     await api.post<Policy>("/policies", {
       content: base ?? DEFAULT_POLICY,
