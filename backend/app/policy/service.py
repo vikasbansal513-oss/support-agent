@@ -133,9 +133,20 @@ async def create_draft(
     await session.execute(text("SELECT id FROM tenants WHERE id = app_current_tenant() FOR UPDATE"))
     if not admin_override:
         await _guard_content(session, content)
-    latest = (await session.execute(text("SELECT max(version) FROM policies"))).scalar_one()
-    if base_version is not None and base_version != (latest or 0):
+    # base_version is the version the caller actually loaded and edited from, which is
+    # always the currently PUBLISHED policy (a new draft is always based on what's live) -
+    # so the conflict check must compare against that, not against max(version) across all
+    # rows. Normally these are the same number (publishing always produces the new highest
+    # version), so the two were interchangeable and this bug stayed hidden. But after a
+    # direct/manual republish of an older version (so the published row is no longer the
+    # highest version number), comparing against max(version) made this check fail forever,
+    # even with a perfectly fresh base_version - see DECISIONS.md.
+    published_version = (
+        await session.execute(text("SELECT version FROM policies WHERE status = 'published'"))
+    ).scalar_one_or_none()
+    if base_version is not None and base_version != (published_version or 0):
         raise AppError("E-CONF-001")
+    latest = (await session.execute(text("SELECT max(version) FROM policies"))).scalar_one()
     row = (
         await session.execute(
             text(
