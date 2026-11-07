@@ -37,6 +37,7 @@ export const t = {
   pendingBody: "Your brand hasn't been approved yet. You'll be able to log in once it's approved.",
   navDashboard: "Dashboard",
   navConversations: "Chats",
+  conversationsBack: "Back",
   navHandoffs: "Handoffs",
   handoffsTotal: "All Handoffs",
   navReview: "Review",

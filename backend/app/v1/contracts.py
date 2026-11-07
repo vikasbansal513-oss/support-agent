@@ -247,6 +247,15 @@ class Plan(BaseModel):
         return self
 
 
+class ConfirmAnswerV1(BaseModel):
+    """LLM fallback output for app.v1.confirm.classify_confirmation_llm. Only used when the
+    deterministic keyword matcher in app.v1.confirm.parse_confirmation() already returned
+    "unclear" - this never overrides a plain "yes"/"no" the keyword matcher already found."""
+
+    model_config = ConfigDict(extra="ignore")
+    answer: Literal["yes", "no", "unclear"]
+
+
 class ReplyDraft(BaseModel):
     model_config = ConfigDict(extra="ignore")
     text: str = Field(min_length=1, max_length=1500)

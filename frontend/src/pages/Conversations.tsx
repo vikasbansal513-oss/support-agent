@@ -9,7 +9,7 @@ import type {
   Message,
   Page,
 } from "../api/types";
-import { Async, Chip, Empty, ErrorBox, Screen, useSubmit } from "../components/common";
+import { Async, Chip, Empty, Screen, useSubmit } from "../components/common";
 import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
 import { useApi } from "../components/useApi";
@@ -28,27 +28,25 @@ const EMAIL_ACTION_TONE: Record<EmailClassificationSummary["action"], "warn" | "
 
 export function Conversations() {
   const [status, setStatus] = useState<string>("");
-  const [extra, setExtra] = useState<Conversation[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [first, reload] = useApi(async () => {
-    const page = await api.get<Page<Conversation>>(`/conversations${status ? `?status=${status}` : ""}`);
-    setExtra([]);
-    setCursor(page.next_cursor);
-    return page;
-  }, [status]);
-  const [loadError, setLoadError] = useState<Error | null>(null);
+  const [cursorStack, setCursorStack] = useState<(string | null)[]>([null]);
+  const [cursorIndex, setCursorIndex] = useState(0);
+  const cursor = cursorStack[cursorIndex] ?? null;
 
-  const more = async () => {
-    if (!cursor) return;
-    try {
-      const page = await api.get<Page<Conversation>>(
-        `/conversations?${status ? `status=${status}&` : ""}cursor=${encodeURIComponent(cursor)}`,
-      );
-      setExtra((current) => [...current, ...page.items]);
-      setCursor(page.next_cursor);
-    } catch (err) {
-      setLoadError(err instanceof Error ? err : new Error("unknown"));
-    }
+  const [page, reload] = useApi(
+    () =>
+      api.get<Page<Conversation>>(
+        `/conversations?${new URLSearchParams({
+          ...(status ? { status } : {}),
+          ...(cursor ? { cursor } : {}),
+        }).toString()}`,
+      ),
+    [status, cursor],
+  );
+
+  const changeStatus = (value: string) => {
+    setStatus(value);
+    setCursorStack([null]);
+    setCursorIndex(0);
   };
 
   return (
@@ -61,19 +59,19 @@ export function Conversations() {
             role="tab"
             aria-selected={value === status}
             className={value === status ? "filter-tab active" : "filter-tab"}
-            onClick={() => setStatus(value)}
+            onClick={() => changeStatus(value)}
           >
             {value ? t[`status${value[0]?.toUpperCase()}${value.slice(1)}` as Key] : t.filterAll}
           </button>
         ))}
       </div>
-      <Async value={first} reload={reload}>
-        {(page) => {
-          const items = [...page.items, ...extra];
-          if (items.length === 0) return <Empty>{t.emptyConversations}</Empty>;
-          return (
+      <Async value={page} reload={reload}>
+        {(p) =>
+          p.items.length === 0 ? (
+            <Empty>{t.emptyConversations}</Empty>
+          ) : (
             <div className="card" style={{ padding: "14px 0" }}>
-              {items.map((c) => {
+              {p.items.map((c) => {
                 const title = c.customer.masked_phone ?? c.customer.masked_email ?? "-";
                 return (
                   <Link key={c.id} to={`/conversations/${c.id}`} className="chat-row" style={{ textDecoration: "none", color: "inherit" }}>
@@ -94,21 +92,30 @@ export function Conversations() {
                   </Link>
                 );
               })}
-              {cursor && (
-                <div style={{ padding: "12px 15px" }}>
-                  <button type="button" className="secondary" onClick={() => void more()}>
-                    {t.loadMore}
+              <div className="pagination">
+                <span>{p.items.length} rows</span>
+                <div>
+                  <button type="button" disabled={cursorIndex === 0} onClick={() => setCursorIndex((i) => Math.max(0, i - 1))}>
+                    {t.prevPage}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!p.next_cursor}
+                    onClick={() => {
+                      if (!p.next_cursor) return;
+                      const next = cursorStack.slice(0, cursorIndex + 1);
+                      next.push(p.next_cursor);
+                      setCursorStack(next);
+                      setCursorIndex(next.length - 1);
+                    }}
+                  >
+                    {t.nextPage}
                   </button>
                 </div>
-              )}
-              {loadError && (
-                <div style={{ padding: "0 15px 12px" }}>
-                  <ErrorBox error={loadError} onRetry={() => void more()} />
-                </div>
-              )}
+              </div>
             </div>
-          );
-        }}
+          )
+        }
       </Async>
     </Screen>
   );
@@ -188,6 +195,9 @@ export function ConversationView() {
         {(c) => (
           <div className="card chat-detail" style={{ minHeight: "calc(100vh - 220px)" }}>
             <div className="chat-person">
+              <Link to="/conversations" className="secondary small" style={{ textDecoration: "none" }}>
+                {t.conversationsBack}
+              </Link>
               <span className="initial">{(c.customer.masked_phone ?? c.customer.masked_email ?? "-").slice(-2)}</span>
               <div style={{ flex: 1 }}>
                 <b>{c.customer.masked_phone ?? c.customer.masked_email ?? "-"}</b>

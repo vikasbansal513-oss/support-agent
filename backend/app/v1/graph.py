@@ -35,7 +35,7 @@ from app.policy import fraud
 from app.policy import tracking as tracking_policy
 from app.v1 import reply as reply_layer
 from app.v1 import templates as t
-from app.v1.confirm import parse_confirmation
+from app.v1.confirm import classify_confirmation_llm, parse_confirmation
 from app.v1.contracts import (
     URGENT_REASONS_V1,
     ConvUpdate,
@@ -249,6 +249,22 @@ def build_graph_v1(deps: V1Deps) -> Any:
             conv.update(awaiting="none", unclear_count=0, clear_pending=True)
             return {"conv": conv, "v1_reply": _reply(state, "confirm_expired")}
         answer = parse_confirmation(state.get("incoming_text", ""), tool=pending.get("tool"))
+        if answer == "unclear":
+            # Keyword matcher couldn't read it (e.g. "Yes, go ahead and cancel it." has
+            # words outside the YES/NO/FILLER lists) - try the LLM fallback before giving
+            # up. A real customer can phrase a yes/no reply any way at all; see
+            # app.v1.confirm.classify_confirmation_llm's own docstring for why this is
+            # safe (it never fires on an already-clear answer, and a failed/invalid LLM
+            # call just keeps this same "unclear" - never a wrong yes/no).
+            llm_answer = await classify_confirmation_llm(
+                deps.llm,
+                tenant_id=uuid.UUID(state["tenant_id"]),
+                run_id=_uuid(state.get("run_id")),
+                tool=pending.get("tool"),
+                text=state.get("incoming_text", ""),
+            )
+            if llm_answer is not None:
+                answer = llm_answer
         if answer == "unclear":
             conv["unclear_count"] = int(conv.get("unclear_count", 0)) + 1
             if conv["unclear_count"] >= 2:
