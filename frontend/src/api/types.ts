@@ -36,6 +36,46 @@ export interface Customer {
   masked_email: string | null;
 }
 
+export interface CustomerProfileConversation {
+  id: string;
+  channel: "whatsapp" | "email" | "voice";
+  status: string;
+  last_message_at: string | null;
+  created_at: string;
+}
+
+export interface CustomerProfileHandoff {
+  id: string;
+  conversation_id: string;
+  channel: "whatsapp" | "email" | "voice";
+  reason_code: string;
+  status: string;
+  priority: string;
+  order_ref: string | null;
+  created_at: string;
+}
+
+export interface CustomerProfileAction {
+  id: string;
+  conversation_id: string;
+  channel: "whatsapp" | "email" | "voice";
+  tool_name: string | null;
+  order_ref: string | null;
+  amount_paise: number | null;
+  status: string;
+  created_at: string;
+}
+
+export interface CustomerProfile {
+  id: string;
+  masked_phone: string | null;
+  masked_email: string | null;
+  created_at: string;
+  conversations: CustomerProfileConversation[];
+  handoffs: CustomerProfileHandoff[];
+  actions: CustomerProfileAction[];
+}
+
 export interface Conversation {
   id: string;
   channel: "whatsapp" | "email" | "voice";
@@ -80,6 +120,7 @@ export interface ConversationDetail extends Conversation {
 export interface HandoffSummary {
   customer_masked_phone: string | null;
   order_ref: string | null;
+  order_items: string | null;
   customer_asked: string;
   agent_did: string[];
   reason_code: string;

@@ -283,6 +283,8 @@ class HandoffSummaryV1(BaseModel):
     model_config = ConfigDict(extra="forbid")
     customer_masked_phone: str | None = None
     order_ref: str | None = None
+    # see app.contracts.contracts.HandoffSummary.order_items - same idea, V1 side.
+    order_items: str | None = Field(default=None, max_length=200)
     customer_asked: str = Field(max_length=400)
     agent_did: list[str] = Field(default_factory=list, max_length=10)
     reason_code: ReasonCodeV1

@@ -13,6 +13,7 @@ from app.agent import templates as agent_templates
 from app.agent.graph import CLASSIFY_VERSION, GRAPH_VERSION, GraphDeps, build_graph
 from app.agent.state import State
 from app.agent.tools import ToolBox
+from app.channels import identity
 from app.contracts.contracts import DecisionOut, NormalizedInbound
 from app.core import timeutil
 from app.core.config import get_settings
@@ -226,6 +227,24 @@ def _mask(phone: str | None, email: str | None) -> str | None:
     return None
 
 
+async def _link_identities_from_order(
+    factory: Factory, tenant_id: uuid.UUID, final: State
+) -> None:
+    """V0 counterpart of app.agent.runner_v1._link_identities_from_order - same best-effort
+    omnichannel identity link, for tenants still on the V0 (read-only) graph."""
+    order_raw = (final.get("tool_results") or {}).get("order")
+    if not order_raw:
+        return
+    phone, email = order_raw.get("customer_phone"), order_raw.get("customer_email")
+    if not phone and not email:
+        return
+    try:
+        async with session_scope(factory, tenant_id=tenant_id) as session:
+            await identity.link_customer_identities(session, phone, email)
+    except Exception:
+        logger.exception("customer identity link failed")
+
+
 async def run_inbound(
     ctx: handlers.JobContext,
     tenant_id: uuid.UUID,
@@ -322,6 +341,7 @@ async def run_inbound(
         mode,
         list(toolbox.calls),
     )
+    await _link_identities_from_order(factory, tenant_id, final)
     senders = (
         ctx.senders or overrides.senders or await build_senders(factory, tenant_id, ctx.transport)
     )

@@ -17,6 +17,7 @@ class State(AgentState, total=False):
     conv: dict[str, Any]
     gate_ctx: dict[str, Any]
     prior_writes: list[dict[str, Any]]
+    active_claims: list[dict[str, Any]]
     plan: dict[str, Any] | None
     gate_order: dict[str, Any] | None
     tool_steps: int

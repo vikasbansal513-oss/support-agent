@@ -419,6 +419,7 @@ export const t = {
   overdue: "SLA overdue",
   amountLabel: "Amount",
   orderLabel: "Order",
+  orderItemsLabel: "Item(s)",
   toolLabel: "Request",
   statusLabel: "Status",
   ageLabel: "Received",
@@ -915,6 +916,17 @@ export const t = {
   // Admin theme (Billing / Control Tower restyle) -- additive keys only.
   monitorShowing: "Showing",
   monitorOf: "of",
+
+  // Customer Profile (omnichannel unified history) -- additive keys only.
+  viewCustomerHistory: "View full customer history",
+  customerProfileTitle: "Customer Profile",
+  customerProfileSince: "Customer since",
+  customerProfileConversationsTitle: "Conversations (all channels)",
+  customerProfileHandoffsTitle: "Handoffs",
+  customerProfileActionsTitle: "Actions taken",
+  emptyCustomerProfileConversations: "No conversations yet on any channel.",
+  emptyCustomerProfileHandoffs: "No handoffs for this customer.",
+  emptyCustomerProfileActions: "No actions taken for this customer yet.",
 } as const;
 
 

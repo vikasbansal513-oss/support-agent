@@ -1,7 +1,14 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
-import type { Conversation, ConversationDetail, EmailClassificationSummary, Message, Page } from "../api/types";
+import type {
+  Conversation,
+  ConversationDetail,
+  CustomerProfile as CustomerProfileData,
+  EmailClassificationSummary,
+  Message,
+  Page,
+} from "../api/types";
 import { Async, Chip, Empty, ErrorBox, Screen, useSubmit } from "../components/common";
 import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
@@ -190,6 +197,9 @@ export function ConversationView() {
                 </span>
               </div>
               <Chip>{t[`status${c.status[0]?.toUpperCase()}${c.status.slice(1)}` as Key]}</Chip>
+              <Link to={`/customers/${c.customer.id}`} className="secondary small" style={{ textDecoration: "none" }}>
+                <Icon name="user" className="sm" /> {t.viewCustomerHistory}
+              </Link>
               {c.status !== "resolved" && (
                 <button type="button" className="secondary small" disabled={resolve.busy} onClick={() => void resolve.run()}>
                   {t.resolve}
@@ -230,6 +240,113 @@ export function ConversationView() {
             </div>
           </div>
         )}
+      </Async>
+    </Screen>
+  );
+}
+
+export function CustomerProfile() {
+  const { id = "" } = useParams();
+  const [profile, reload] = useApi(() => api.get<CustomerProfileData>(`/customers/${id}/profile`), [id]);
+
+  return (
+    <Screen title={t.customerProfileTitle}>
+      <Async value={profile} reload={reload}>
+        {(p) => {
+          const title = p.masked_phone ?? p.masked_email ?? "-";
+          return (
+            <>
+              <div className="card chat-person" style={{ marginBottom: 16 }}>
+                <span className="initial">{title.slice(-2)}</span>
+                <div style={{ flex: 1 }}>
+                  <b>{title}</b>
+                  <br />
+                  {p.masked_phone && p.masked_email && (
+                    <span>
+                      <Icon name="mail" className="sm" /> {p.masked_email}
+                    </span>
+                  )}
+                  <br />
+                  <span className="subline">
+                    {t.customerProfileSince} {formatIst(p.created_at)}
+                  </span>
+                </div>
+              </div>
+
+              <h3>{t.customerProfileConversationsTitle}</h3>
+              {p.conversations.length === 0 ? (
+                <Empty>{t.emptyCustomerProfileConversations}</Empty>
+              ) : (
+                <div className="card" style={{ padding: "14px 0", marginBottom: 16 }}>
+                  {p.conversations.map((c) => (
+                    <Link key={c.id} to={`/conversations/${c.id}`} className="chat-row" style={{ textDecoration: "none", color: "inherit" }}>
+                      <span className="pill blue">
+                        <Icon name={CHANNEL_ICON[c.channel]} className="sm" />
+                        {c.channel}
+                      </span>
+                      <span className="copy">
+                        <Chip tone={c.status === "handoff" ? "warn" : undefined}>
+                          {t[`status${c.status[0]?.toUpperCase()}${c.status.slice(1)}` as Key] ?? c.status}
+                        </Chip>
+                        <p>{formatIst(c.last_message_at ?? c.created_at)}</p>
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+
+              <h3>{t.customerProfileHandoffsTitle}</h3>
+              {p.handoffs.length === 0 ? (
+                <Empty>{t.emptyCustomerProfileHandoffs}</Empty>
+              ) : (
+                <div className="card" style={{ padding: "14px 0", marginBottom: 16 }}>
+                  {p.handoffs.map((h) => (
+                    <Link key={h.id} to={`/conversations/${h.conversation_id}`} className="chat-row" style={{ textDecoration: "none", color: "inherit" }}>
+                      <span className="pill blue">
+                        <Icon name={CHANNEL_ICON[h.channel]} className="sm" />
+                        {h.channel}
+                      </span>
+                      <span className="copy">
+                        <b>{h.reason_code}</b>
+                        <p>
+                          {h.order_ref ? `${h.order_ref} · ` : ""}
+                          {formatIst(h.created_at)}
+                        </p>
+                        <Chip tone={h.priority === "urgent" ? "urgent" : undefined}>{h.priority}</Chip>{" "}
+                        <Chip tone={h.status === "open" ? "warn" : h.status === "claimed" ? "ok" : undefined}>{h.status}</Chip>
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+
+              <h3>{t.customerProfileActionsTitle}</h3>
+              {p.actions.length === 0 ? (
+                <Empty>{t.emptyCustomerProfileActions}</Empty>
+              ) : (
+                <div className="card" style={{ padding: "14px 0" }}>
+                  {p.actions.map((a) => (
+                    <Link key={a.id} to={`/conversations/${a.conversation_id}`} className="chat-row" style={{ textDecoration: "none", color: "inherit" }}>
+                      <span className="pill blue">
+                        <Icon name={CHANNEL_ICON[a.channel]} className="sm" />
+                        {a.channel}
+                      </span>
+                      <span className="copy">
+                        <b>{a.tool_name ?? "-"}</b>
+                        <p>
+                          {a.order_ref ? `${a.order_ref} · ` : ""}
+                          {a.amount_paise != null ? `₹${(a.amount_paise / 100).toFixed(2)} · ` : ""}
+                          {formatIst(a.created_at)}
+                        </p>
+                        <Chip>{a.status}</Chip>
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </>
+          );
+        }}
       </Async>
     </Screen>
   );

@@ -72,6 +72,8 @@ WHY_STUCK_V1 = {
     # Decision Framework Section 3 (see app.policy.tracking):
     "DELIVERY_STUCK": "Shipment ka courier scan kai ghante se update nahi hua, lagta hai atka hua hai.",
     "DELIVERY_DISPUTE": "System delivered dikha raha hai, customer kehta hai usse mila nahi.",
+    "IDENTITY_MISMATCH": "Customer jis email/phone se message kar raha hai woh order ki registered"
+    " detail se match nahi hui, process se pehle identity verify karo.",
 }
 WRITE_INTENT_TOOL: dict[str, WriteTool] = {
     "address_change": "address_update",
@@ -161,9 +163,16 @@ def handoff_decision(state: State, reason: str) -> DecisionV1:
     if gate:
         did.append(f"gate: {gate}")
     lang = _lang(state)
+    order = _order(state)
+    order_items = (
+        ", ".join(f"{line.title} x{line.quantity}" for line in order.lines)[:200]
+        if order and order.lines
+        else None
+    )
     summary = HandoffSummaryV1(
         customer_masked_phone=state.get("customer_masked"),
         order_ref=(state.get("identity") or {}).get("order_ref"),
+        order_items=order_items,
         customer_asked=str(asked)[:400] or "-",
         agent_did=did[:10],
         reason_code=reason,
@@ -179,6 +188,8 @@ def handoff_decision(state: State, reason: str) -> DecisionV1:
         ack = _v0_reply(state, "off_hours_ack", opens=state.get("opens_label") or "-")
     elif template_id == "handoff_ack":
         ack = _v0_reply(state, "handoff_ack", sla=str(policy.handoff_sla_minutes if policy else 30))
+    elif template_id == "identity_mismatch_ack":
+        ack = _v0_reply(state, "identity_mismatch_ack", order=summary.order_ref or "-")
     else:
         ack = _v0_reply(state, template_id)
     return DecisionV1(
@@ -350,7 +361,11 @@ def build_graph_v1(deps: V1Deps) -> Any:
         steps = int(state.get("tool_steps", 0)) + 1
         if not result.ok or result.order is None or gate is None:
             if result.error_code == "customer_mismatch" and plan.action == "propose":
-                return _flag(state, "HIGH_RISK_FLAG", identity=ident, tool_steps=steps)
+                # Customer is asking for a write action (cancel/return/exchange/refund) on an
+                # order whose registered email/phone doesn't match the sender - a dedicated
+                # reason so the ack tells them exactly what to do (identity_mismatch_ack),
+                # instead of the generic "passed to our team" handoff_ack HIGH_RISK_FLAG gets.
+                return _flag(state, "IDENTITY_MISMATCH", identity=ident, tool_steps=steps)
             if result.error_code in ("not_found", "customer_mismatch"):
                 ident["attempts"] = attempts + 1
                 if ident["attempts"] >= MAX_IDENTITY_ATTEMPTS:
@@ -548,6 +563,27 @@ def build_graph_v1(deps: V1Deps) -> Any:
             return _flag(state, "CONFUSED")
         if tool not in policy.enabled_tools:
             return _flag(state, "POLICY_EXCEPTION")
+        # Omnichannel duplicate guard: this same customer (across every channel they've
+        # used - see app.channels.identity.link_customer_identities) already has this
+        # exact tool+order in flight on a DIFFERENT conversation (e.g. they emailed a
+        # cancel request, then WhatsApped the same thing). Don't start a second one -
+        # tell them it's already being handled instead of silently proposing/gating again.
+        duplicate = next(
+            (
+                claim
+                for claim in state.get("active_claims", [])
+                if claim.get("tool") == tool
+                and claim.get("order_ref") == order.order_name
+                and claim.get("conversation_id") != state.get("conversation_id")
+            ),
+            None,
+        )
+        if duplicate is not None:
+            conv["awaiting"] = "none"
+            return {
+                "conv": conv,
+                "v1_reply": _reply(state, "duplicate_request_ack", order=order.order_name),
+            }
         claim_tool = tool in ("refund_create", "exchange_request", "return_request")
         if claim_tool and fraud.requires_evidence(plan.args.reason):
             # Decision Framework Section 12.3: photo/video evidence is mandatory before any

@@ -2,7 +2,7 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-from app.contracts.contracts import OrderFacts, OrderLine, ToolResult
+from app.contracts.contracts import E164_RE, OrderFacts, OrderLine, ToolResult
 from app.integrations.http import ExternalHttp, UpstreamError
 from app.v1.gate import GateOrder
 
@@ -72,7 +72,39 @@ def _customer_name(order: dict[str, Any]) -> str | None:
     return None
 
 
+def _customer_contact(order: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Best-effort E.164 phone + email for this order's customer, used only for omnichannel
+    identity-linking (app.channels.identity.link_customer_identities) - never shown to the
+    customer. VERIFY, same as the rest of this module: real Shopify phone formatting isn't
+    checked against a live account. Accepts a phone only if it's already a valid E.164
+    string, or exactly 10 digits (assumed a Kerala/India mobile number, given this product's
+    market - prefixed +91); anything else is dropped rather than guessed, since a wrong
+    phone would wrongly merge two different customers."""
+    customer = order.get("customer") or {}
+    shipping = order.get("shipping_address") or {}
+    billing = order.get("billing_address") or {}
+    phone = None
+    for candidate in (order.get("phone"), customer.get("phone"), shipping.get("phone"), billing.get("phone")):
+        if not candidate:
+            continue
+        raw = str(candidate).strip()
+        if E164_RE.match(raw):
+            phone = raw
+            break
+        digits = _digits(raw)
+        if len(digits) == 10:
+            phone = f"+91{digits}"
+            break
+    email = None
+    for candidate in (order.get("email"), order.get("contact_email"), customer.get("email")):
+        if isinstance(candidate, str) and candidate.strip():
+            email = candidate.strip().lower()[:200]
+            break
+    return phone, email
+
+
 def to_facts(order: dict[str, Any]) -> OrderFacts:
+    contact_phone, contact_email = _customer_contact(order)
     fulfillments = order.get("fulfillments") or []
     numbers: list[str] = []
     courier: str | None = None
@@ -99,6 +131,8 @@ def to_facts(order: dict[str, Any]) -> OrderFacts:
         tracking_numbers=numbers[:10],
         courier=courier,
         customer_name=_customer_name(order),
+        customer_phone=contact_phone,
+        customer_email=contact_email,
     )
 
 

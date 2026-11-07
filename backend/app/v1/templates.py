@@ -141,6 +141,20 @@ T: dict[str, dict[str, str]] = {
         "en": "To proceed with this, please send a clear photo or video of the product. Our team will review it and confirm with you.",
         "hi": "आगे बढ़ने के लिए प्रोडक्ट की साफ़ फ़ोटो या वीडियो भेजना ज़रूरी है। कृपया भेजें, हमारी टीम देखकर आपको कन्फर्म करेगी।",
     },
+    # Omnichannel duplicate-request guard (v1/graph.py's propose(), via state["active_claims"]):
+    # customer already has this same tool+order in flight on another conversation/channel -
+    # tell them so instead of silently starting a second one.
+    "duplicate_request_ack": {
+        "hinglish": "Shukriya. Order *{order}* ke liye aapki request pehle se hamari team ke paas hai"
+        " aur uspar kaam ho raha hai - isse dobara kisi aur channel par bhejne ki zaroorat nahi."
+        " Poora hote hi hum yahin update karenge.",
+        "en": "Thanks for the update. We already have your request for order *{order}* with our"
+        " team and are working on it - no need to send it again on another channel. We will"
+        " update you here once it's done.",
+        "hi": "धन्यवाद। ऑर्डर *{order}* के लिए आपका अनुरोध पहले से ही हमारी टीम के पास है और उस पर"
+        " काम हो रहा है - इसे दोबारा किसी और चैनल पर भेजने की ज़रूरत नहीं है। पूरा होने पर हम यहीं"
+        " अपडेट करेंगे।",
+    },
     "confirm_reask": {
         "hinglish": "Kripya sirf 'haan' ya 'nahi' likhein.",
         "en": "Please reply with just 'yes' or 'no'.",

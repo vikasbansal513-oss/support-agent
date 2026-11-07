@@ -32,6 +32,7 @@ const PrivacyRequests = lazyNamed(() => import("./pages/Privacy"), "PrivacyReque
 const Dashboard = lazyNamed(() => import("./pages/Dashboard"), "Dashboard");
 const Conversations = lazyNamed(() => import("./pages/Conversations"), "Conversations");
 const ConversationView = lazyNamed(() => import("./pages/Conversations"), "ConversationView");
+const CustomerProfile = lazyNamed(() => import("./pages/Conversations"), "CustomerProfile");
 const Handoffs = lazyNamed(() => import("./pages/Handoffs"), "Handoffs");
 const Review = lazyNamed(() => import("./pages/Review"), "Review");
 const Approvals = lazyNamed(() => import("./pages/Approvals"), "Approvals");
@@ -85,6 +86,7 @@ export function AppRoutes() {
         <Route path="/" element={guarded("user", <Dashboard />)} />
         <Route path="/conversations" element={guarded("user", <Conversations />)} />
         <Route path="/conversations/:id" element={guarded("user", <ConversationView />)} />
+        <Route path="/customers/:id" element={guarded("user", <CustomerProfile />)} />
         <Route path="/handoffs" element={guarded("user", <Handoffs />)} />
         <Route path="/review" element={guarded("user", <Review />)} />
         <Route path="/approvals" element={guarded("user", <Approvals />)} />

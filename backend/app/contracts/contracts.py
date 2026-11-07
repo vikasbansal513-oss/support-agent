@@ -134,6 +134,11 @@ TRACKING_NEW_REASONS = (
     "DELIVERY_STUCK",
     "DELIVERY_DISPUTE",
 )
+# Sender's email/phone does not match the order's registered customer on a write-intent
+# request (app.v1.graph's identity-check step, via Shopify's customer_matches()) - additive
+# for the same reason as VOICE_NEW_REASONS/TRACKING_NEW_REASONS above, kept out of
+# V1_NEW_REASONS/HANDOFF_ORDER_V1 so the strict order/count test on those two is untouched.
+IDENTITY_NEW_REASONS = ("IDENTITY_MISMATCH",)
 # Handoffs from the V0 and V1 graphs (and voice, which shares the same `handoffs` table)
 # land in the same place and are read back through the same API (HandoffOut/HandoffSummary
 # below), so those response models must accept any of their reason codes, not just V0's.
@@ -161,6 +166,7 @@ ReasonCodeV1 = (
         "DELIVERY_STUCK",
         "DELIVERY_DISPUTE",
     ]
+    | Literal["IDENTITY_MISMATCH"]
 )
 URGENT_REASONS = frozenset(
     {"ANGRY", "SAFETY", "LEGAL", "MEDICAL", "FRAUD", "PRESS", "REPEAT_COMPLAINT"}
@@ -173,6 +179,7 @@ TEMPLATE_IDS = (
     "tool_unavailable_ack",
     "handoff_ack",
     "off_hours_ack",
+    "identity_mismatch_ack",
     "media_ack",
     "human_requested_ack",
     "ai_disclosure_line",
@@ -468,6 +475,13 @@ class OrderFacts(BaseModel):
     tracking_numbers: list[str] = Field(default_factory=list, max_length=10)
     courier: str | None = None
     customer_name: str | None = Field(default=None, max_length=200)
+    # Omnichannel identity-link (app.channels.identity.link_customer_identities): the
+    # Shopify order's OWN phone/email, used only to fold separate per-channel `customers`
+    # rows (one found by phone, one by email) into one when a trusted source (the order)
+    # shows they're the same person. Never a named fact in any reply template - never
+    # shown to the customer.
+    customer_phone: str | None = Field(default=None, max_length=20)
+    customer_email: str | None = Field(default=None, max_length=200)
 
 
 class TrackingFacts(BaseModel):
@@ -506,6 +520,11 @@ class HandoffSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
     customer_masked_phone: str | None = None
     order_ref: str | None = None
+    # "Shoe X (Size 9) x1, Shoe Y x2" - short line-item summary so a human reviewing the
+    # handoff sees WHAT is in the order, not just its number. Populated only where the
+    # agent already has the fetched Shopify order facts on hand (see app.agent.graph);
+    # left None elsewhere (voice, outcome, manual report) rather than adding a new fetch.
+    order_items: str | None = Field(default=None, max_length=200)
     customer_asked: str = Field(max_length=400)
     agent_did: list[str] = Field(default_factory=list, max_length=10)
     reason_code: ReasonCodeV1
@@ -1271,6 +1290,49 @@ class CustomerOut(BaseModel):
     id: uuid.UUID
     masked_phone: str | None
     masked_email: str | None
+
+
+# Omnichannel Customer Profile (GET /customers/{id}/profile): one customer's history across
+# every channel (WhatsApp/email/voice) they've used - see app.channels.identity for how a
+# customer stays the same `id` across channels. Read-only, dashboard-facing.
+class CustomerProfileConversation(BaseModel):
+    id: uuid.UUID
+    channel: Literal["whatsapp", "email", "voice"]
+    status: str
+    last_message_at: AwareDatetime | None = None
+    created_at: AwareDatetime
+
+
+class CustomerProfileHandoff(BaseModel):
+    id: uuid.UUID
+    conversation_id: uuid.UUID
+    channel: Literal["whatsapp", "email", "voice"]
+    reason_code: str
+    status: str
+    priority: str
+    order_ref: str | None = None
+    created_at: AwareDatetime
+
+
+class CustomerProfileAction(BaseModel):
+    id: uuid.UUID
+    conversation_id: uuid.UUID
+    channel: Literal["whatsapp", "email", "voice"]
+    tool_name: str | None = None
+    order_ref: str | None = None
+    amount_paise: int | None = None
+    status: str
+    created_at: AwareDatetime
+
+
+class CustomerProfileOut(BaseModel):
+    id: uuid.UUID
+    masked_phone: str | None
+    masked_email: str | None
+    created_at: AwareDatetime
+    conversations: list[CustomerProfileConversation]
+    handoffs: list[CustomerProfileHandoff]
+    actions: list[CustomerProfileAction]
 
 
 class MessageOut(BaseModel):

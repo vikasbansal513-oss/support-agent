@@ -69,6 +69,7 @@ ACK_BY_REASON = {
     "TOOL_FAILED": "tool_unavailable_ack",
     "LLM_UNAVAILABLE": "tool_unavailable_ack",
     "LLM_AUTH_ERROR": "tool_unavailable_ack",
+    "IDENTITY_MISMATCH": "identity_mismatch_ack",
 }
 
 
@@ -176,9 +177,16 @@ def _handoff(state: State, reason: str) -> DecisionOut:
         state.get("incoming_text", ""), 400
     )
     did = [f"{c['tool']}: {'ok' if c['ok'] else c['error']}" for c in state.get("tool_log", [])]
+    order = _order(state)
+    order_items = (
+        ", ".join(f"{line.title} x{line.quantity}" for line in order.lines)[:200]
+        if order and order.lines
+        else None
+    )
     summary = HandoffSummary(
         customer_masked_phone=state.get("customer_masked"),
         order_ref=(state.get("identity") or {}).get("order_ref"),
+        order_items=order_items,
         customer_asked=str(asked)[:400] or "-",
         agent_did=did[:10],
         reason_code=reason,

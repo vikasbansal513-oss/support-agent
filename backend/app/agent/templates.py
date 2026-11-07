@@ -79,6 +79,36 @@ T: dict[str, dict[str, str]] = {
         "hinglish": "Hamari team abhi offline hai. *{opens}* par khulne ke baad reply karenge.",
         "hi": "हमारी टीम अभी ऑफ़लाइन है। *{opens}* पर खुलने के बाद जवाब देंगे।",
     },
+    "identity_mismatch_ack": {
+        "en": (
+            "Thank you for contacting us.\n\n"
+            "We have received your request regarding order *{order}*. However, the email "
+            "address you used to contact us does not match the email address registered "
+            "with this order.\n\n"
+            "For security reasons, we need to verify your identity before processing this "
+            "request.\n\n"
+            "Please contact us using your registered email address, or complete our "
+            "customer verification process."
+        ),
+        "hinglish": (
+            "Humse contact karne ke liye shukriya.\n\n"
+            "Humein order *{order}* ke liye aapki request mil gayi hai. Lekin jis email se "
+            "aapne contact kiya hai, woh is order par registered email se match nahi karti.\n\n"
+            "Security ki wajah se, is request ko process karne se pehle humein aapki identity "
+            "verify karni hogi.\n\n"
+            "Kripya apni registered email se contact karein, ya hamari customer verification "
+            "process complete karein."
+        ),
+        "hi": (
+            "हमसे संपर्क करने के लिए धन्यवाद।\n\n"
+            "हमें ऑर्डर *{order}* के लिए आपका अनुरोध मिल गया है। लेकिन आपने जिस ईमेल से "
+            "संपर्क किया है, वह इस ऑर्डर पर रजिस्टर्ड ईमेल से मेल नहीं खाती।\n\n"
+            "सुरक्षा कारणों से, इस अनुरोध को प्रोसेस करने से पहले हमें आपकी पहचान सत्यापित "
+            "करनी होगी।\n\n"
+            "कृपया अपने रजिस्टर्ड ईमेल पते से संपर्क करें, या हमारी कस्टमर वेरिफिकेशन "
+            "प्रक्रिया पूरी करें।"
+        ),
+    },
     "media_ack": {
         "en": "Thanks for sharing this. Our team will look at it and reply here.",
         "hinglish": "Share karne ke liye shukriya. Hamari team ise dekhkar yahin reply karegi.",

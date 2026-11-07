@@ -38,6 +38,7 @@ function HandoffRow({ item, selected, onSelect }: { item: Handoff; selected: boo
         <span>{item.summary.customer_asked}</span>
         <small>
           {item.reason_code} &middot; {item.summary.order_ref ?? "-"}
+          {item.summary.order_items ? ` · ${item.summary.order_items}` : ""}
         </small>
       </span>
       <span className="handoff-meta">
@@ -152,6 +153,12 @@ function HandoffDetail({ item, onChange }: { item: Handoff; onChange: () => void
               <span>{t.orderLabel}</span>
               <b>{item.summary.order_ref ?? "-"}</b>
             </div>
+            {item.summary.order_items && (
+              <div className="detail-line">
+                <span>{t.orderItemsLabel}</span>
+                <b>{item.summary.order_items}</b>
+              </div>
+            )}
             <div className="detail-line">
               <span>{t.ageLabel}</span>
               <b>

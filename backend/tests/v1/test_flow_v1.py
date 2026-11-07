@@ -241,11 +241,11 @@ async def test_order_changed_between_propose_and_confirm_stops(env: AgentEnv) ->
     assert action.status == "rejected"
 
 
-async def test_customer_mismatch_on_write_is_high_risk(env: AgentEnv) -> None:
+async def test_customer_mismatch_on_write_is_identity_mismatch(env: AgentEnv) -> None:
     tools, shop = await setup(env)
     tools.errors["#1001"] = "customer_mismatch"
     await say(env, "order #1001 cancel kar do", "k1", plan())
-    assert (await env.q("SELECT reason_code FROM handoffs"))[0].reason_code == "HIGH_RISK_FLAG"
+    assert (await env.q("SELECT reason_code FROM handoffs"))[0].reason_code == "IDENTITY_MISMATCH"
     assert shop.calls == []
 
 

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.actions import engine, writes
 from app.actions.senders import Senders
 from app.agent.graph import _lang
+from app.channels import identity
 from app.agent.state import State
 from app.agent.tools import ToolBox
 from app.core import timeutil
@@ -100,7 +101,49 @@ async def load_v1_state(
         )
     ).all()
     state["prior_writes"] = [{"tool": r.tool_name, "order_ref": r.order_ref} for r in prior]
+    # Omnichannel duplicate guard (app.v1.graph's propose()): every in-flight/done write
+    # action this same customer has, on ANY of their conversations/channels - not just this
+    # one. customer_id is the one app.channels.identity.link_customer_identities keeps
+    # unified across WhatsApp/Email/voice, so this naturally covers "emailed a cancel, then
+    # WhatsApped the same cancel" once that link exists; before it's learned (e.g. first-ever
+    # contact on a second channel), the two conversations still have separate customer rows
+    # and this is a no-op, same as today.
+    customer_id = await writes._customer_of(session, conversation_id)
+    claims = (
+        await session.execute(
+            text(
+                "SELECT a.tool_name, a.order_ref, a.conversation_id FROM agent_actions a"
+                " JOIN conversations c ON c.id = a.conversation_id"
+                " WHERE c.customer_id = :cu AND a.tool_name IS NOT NULL AND a.status = ANY(:s)"
+            ),
+            {"cu": customer_id, "s": list(ACTIVE_OR_DONE)},
+        )
+    ).all()
+    state["active_claims"] = [
+        {"tool": r.tool_name, "order_ref": r.order_ref, "conversation_id": str(r.conversation_id)}
+        for r in claims
+    ]
     return row
+
+
+async def _link_identities_from_order(
+    factory: Factory, tenant_id: uuid.UUID, final: State
+) -> None:
+    """Best-effort omnichannel identity link (see app.channels.identity): if this turn
+    looked up a Shopify order, use its own phone+email to fold any separate per-channel
+    `customers` rows for them into one. Never raises - this is an enrichment, not something
+    that should fail an otherwise-successful agent turn."""
+    order_raw = (final.get("tool_results") or {}).get("order")
+    if not order_raw:
+        return
+    phone, email = order_raw.get("customer_phone"), order_raw.get("customer_email")
+    if not phone and not email:
+        return
+    try:
+        async with session_scope(factory, tenant_id=tenant_id) as session:
+            await identity.link_customer_identities(session, phone, email)
+    except Exception:
+        logger.exception("customer identity link failed")
 
 
 async def run(
@@ -149,6 +192,7 @@ async def run(
         mode,
         list(toolbox.calls),
     )
+    await _link_identities_from_order(factory, tenant_id, final)
     if decision.action == "skip":
         return
     row = await _load_row(factory, tenant_id, conversation_id)

@@ -15,6 +15,10 @@ from app.auth.service import Principal
 from app.contracts.contracts import (
     ConversationOut,
     CustomerOut,
+    CustomerProfileAction,
+    CustomerProfileConversation,
+    CustomerProfileHandoff,
+    CustomerProfileOut,
     DecisionOut,
     EmailClassificationSummary,
     HandoffOut,
@@ -152,6 +156,72 @@ async def get_conversation(
             )
             for m in messages
         ],
+    )
+
+
+@router.get("/customers/{customer_id}/profile")
+async def get_customer_profile(
+    customer_id: uuid.UUID,
+    principal: Principal = Depends(require_user),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> CustomerProfileOut:
+    """Omnichannel Customer Profile: everything this one customer (same id across every
+    channel they've used - app.channels.identity keeps it that way) has done, in one place -
+    every conversation, handoff and write action, newest first, whichever channel it
+    happened on."""
+    async with session_scope(
+        factory, tenant_id=principal.tenant_id, user_id=principal.user_id
+    ) as session:
+        customer = (
+            await session.execute(
+                text(
+                    "SELECT id, phone_e164, email_lower, created_at FROM customers WHERE id = :c"
+                ),
+                {"c": customer_id},
+            )
+        ).first()
+        if customer is None:
+            raise AppError("E-NF-001")
+        conv_rows = (
+            await session.execute(
+                text(
+                    "SELECT id, channel, status, last_message_at, created_at FROM conversations"
+                    " WHERE customer_id = :c ORDER BY last_message_at DESC NULLS LAST, created_at DESC"
+                ),
+                {"c": customer_id},
+            )
+        ).all()
+        handoff_rows = (
+            await session.execute(
+                text(
+                    "SELECT h.id, h.conversation_id, c.channel, h.reason_code, h.status,"
+                    " h.priority, h.summary ->> 'order_ref' AS order_ref, h.created_at"
+                    " FROM handoffs h JOIN conversations c ON c.id = h.conversation_id"
+                    " WHERE c.customer_id = :c ORDER BY h.created_at DESC"
+                ),
+                {"c": customer_id},
+            )
+        ).all()
+        action_rows = (
+            await session.execute(
+                text(
+                    "SELECT a.id, a.conversation_id, c.channel, a.tool_name, a.order_ref,"
+                    " a.amount_paise, a.status, a.created_at FROM agent_actions a"
+                    " JOIN conversations c ON c.id = a.conversation_id"
+                    " WHERE c.customer_id = :c AND a.tool_name IS NOT NULL"
+                    " ORDER BY a.created_at DESC LIMIT 50"
+                ),
+                {"c": customer_id},
+            )
+        ).all()
+    return CustomerProfileOut(
+        id=customer.id,
+        masked_phone=mask_mobile(customer.phone_e164) if customer.phone_e164 else None,
+        masked_email=mask_email(customer.email_lower) if customer.email_lower else None,
+        created_at=customer.created_at,
+        conversations=[CustomerProfileConversation(**r._mapping) for r in conv_rows],
+        handoffs=[CustomerProfileHandoff(**r._mapping) for r in handoff_rows],
+        actions=[CustomerProfileAction(**r._mapping) for r in action_rows],
     )
 
 
