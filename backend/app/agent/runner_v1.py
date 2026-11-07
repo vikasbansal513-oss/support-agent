@@ -11,9 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.actions import engine, writes
 from app.actions.senders import Senders
 from app.agent.graph import _lang
-from app.channels import identity
 from app.agent.state import State
 from app.agent.tools import ToolBox
+from app.channels import identity
 from app.core import timeutil
 from app.core.config import get_settings
 from app.core.db import session_scope
@@ -126,9 +126,7 @@ async def load_v1_state(
     return row
 
 
-async def _link_identities_from_order(
-    factory: Factory, tenant_id: uuid.UUID, final: State
-) -> None:
+async def _link_identities_from_order(factory: Factory, tenant_id: uuid.UUID, final: State) -> None:
     """Best-effort omnichannel identity link (see app.channels.identity): if this turn
     looked up a Shopify order, use its own phone+email to fold any separate per-channel
     `customers` rows for them into one. Never raises - this is an enrichment, not something

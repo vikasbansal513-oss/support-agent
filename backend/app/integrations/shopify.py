@@ -84,7 +84,12 @@ def _customer_contact(order: dict[str, Any]) -> tuple[str | None, str | None]:
     shipping = order.get("shipping_address") or {}
     billing = order.get("billing_address") or {}
     phone = None
-    for candidate in (order.get("phone"), customer.get("phone"), shipping.get("phone"), billing.get("phone")):
+    for candidate in (
+        order.get("phone"),
+        customer.get("phone"),
+        shipping.get("phone"),
+        billing.get("phone"),
+    ):
         if not candidate:
             continue
         raw = str(candidate).strip()

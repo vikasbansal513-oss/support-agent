@@ -227,9 +227,7 @@ def _mask(phone: str | None, email: str | None) -> str | None:
     return None
 
 
-async def _link_identities_from_order(
-    factory: Factory, tenant_id: uuid.UUID, final: State
-) -> None:
+async def _link_identities_from_order(factory: Factory, tenant_id: uuid.UUID, final: State) -> None:
     """V0 counterpart of app.agent.runner_v1._link_identities_from_order - same best-effort
     omnichannel identity link, for tenants still on the V0 (read-only) graph."""
     order_raw = (final.get("tool_results") or {}).get("order")
