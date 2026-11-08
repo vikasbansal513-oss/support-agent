@@ -28,20 +28,31 @@ async def get_or_create_customer(session: AsyncSession, inbound: NormalizedInbou
         column, value = "email_lower", (inbound.from_email or "").strip().lower()
     if not value:
         raise ValueError("inbound has no sender")
+    name = (inbound.from_name or "").strip()[:200] or None
     if column == "phone_e164":
         insert = text(
-            "INSERT INTO customers (phone_e164) VALUES (:v)"
+            "INSERT INTO customers (phone_e164, name) VALUES (:v, :n)"
             " ON CONFLICT (tenant_id, phone_e164) WHERE phone_e164 IS NOT NULL DO NOTHING"
         )
         select = text("SELECT id FROM customers WHERE phone_e164 = :v")
     else:
         insert = text(
-            "INSERT INTO customers (email_lower) VALUES (:v)"
+            "INSERT INTO customers (email_lower, name) VALUES (:v, :n)"
             " ON CONFLICT (tenant_id, email_lower) WHERE email_lower IS NOT NULL DO NOTHING"
         )
         select = text("SELECT id FROM customers WHERE email_lower = :v")
-    await session.execute(insert, {"v": value})
-    return uuid.UUID(str((await session.execute(select, {"v": value})).scalar_one()))
+    await session.execute(insert, {"v": value, "n": name})
+    customer_id = uuid.UUID(str((await session.execute(select, {"v": value})).scalar_one()))
+    # The row may have already existed (ON CONFLICT DO NOTHING skipped the INSERT's name),
+    # so this channel's name is only ever filled in when the customer has none on file yet -
+    # same fill-in-only safety rule as link_customer_identities below, never overwrites a
+    # name learned earlier from another channel or from a Shopify order.
+    if name:
+        await session.execute(
+            text("UPDATE customers SET name = COALESCE(name, :n) WHERE id = :c"),
+            {"n": name, "c": customer_id},
+        )
+    return customer_id
 
 
 async def get_or_create_conversation(
@@ -155,6 +166,34 @@ async def link_customer_identities(
     # exactly the case that previously corrupted a real customer's email. Leave both rows
     # as they are; a tenant that wants them combined should do so deliberately.
     return
+
+
+async def link_customer_name(
+    session: AsyncSession, phone_e164: str | None, email_lower: str | None, name: str | None
+) -> None:
+    """Best-effort: fills in customers.name from a trusted source (currently a Shopify
+    order's customer_name, via app.integrations.shopify._customer_name) when the matching
+    customer row has none yet. Deliberately independent of link_customer_identities above -
+    a name can be worth saving even when an order carries only one of phone/email, unlike
+    the two-identifier merge-safety logic that function exists for. Fill-in-only, same
+    safety rule as the rest of this module: never overwrites a name already on file, since
+    we cannot tell whether a later, different name is a correction or a different person's
+    order accidentally matching the same phone/email."""
+    clean_name = (name or "").strip()[:200]
+    if not clean_name:
+        return
+    if phone_e164 and E164_RE.match(phone_e164):
+        await session.execute(
+            text("UPDATE customers SET name = COALESCE(name, :n) WHERE phone_e164 = :p"),
+            {"n": clean_name, "p": phone_e164},
+        )
+        return
+    email_lower = (email_lower or "").strip().lower()
+    if email_lower:
+        await session.execute(
+            text("UPDATE customers SET name = COALESCE(name, :n) WHERE email_lower = :e"),
+            {"n": clean_name, "e": email_lower},
+        )
 
 
 async def _merge_customers(session: AsyncSession, *, keep: uuid.UUID, drop: uuid.UUID) -> None:

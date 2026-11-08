@@ -99,7 +99,9 @@ def from_gmail(message: dict[str, Any]) -> NormalizedInbound | None:
         for h in payload.get("headers") or []
         if isinstance(h, dict)
     }
-    sender = parseaddr(headers.get("from", ""))[1].strip().lower()
+    from_display_name, sender = parseaddr(headers.get("from", ""))
+    sender = sender.strip().lower()
+    sender_name = from_display_name.strip()[:200] or None
     message_id = message.get("id")
     if not sender or "@" not in sender or not message_id:
         return None
@@ -114,6 +116,7 @@ def from_gmail(message: dict[str, Any]) -> NormalizedInbound | None:
             channel="email",
             external_id=str(message_id),
             from_email=sender,
+            from_name=sender_name,
             text=email_body(payload)[:20000],
             email_headers={k: v[:500] for k, v in headers.items() if k in KEPT_HEADERS},
             email_subject=headers.get("subject", "")[:300] or None,

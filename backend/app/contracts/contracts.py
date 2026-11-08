@@ -223,6 +223,11 @@ class NormalizedInbound(BaseModel):
     external_id: str = Field(min_length=1, max_length=200)
     from_phone: str | None = None
     from_email: str | None = None
+    # Best-effort display name from the channel itself (WhatsApp profile name via Gupshup,
+    # or the email "From" header's display name). Never required, never trusted as a
+    # verified identity - only used to fill in customers.name when it is still empty (see
+    # app.channels.identity.get_or_create_customer).
+    from_name: str | None = Field(default=None, max_length=200)
     text: str = Field(default="", max_length=20000)
     media_type: (
         Literal["image", "audio", "video", "document", "sticker", "location", "other"] | None
@@ -1290,6 +1295,10 @@ class CustomerOut(BaseModel):
     id: uuid.UUID
     masked_phone: str | None
     masked_email: str | None
+    # Best-effort display name (see NormalizedInbound.from_name / OrderFacts.customer_name).
+    # None whenever the customer has never provided one on any channel - the dashboard
+    # falls back to masked_phone/masked_email, never a fabricated name.
+    name: str | None = None
 
 
 # Omnichannel Customer Profile (GET /customers/{id}/profile): one customer's history across
@@ -1329,6 +1338,7 @@ class CustomerProfileOut(BaseModel):
     id: uuid.UUID
     masked_phone: str | None
     masked_email: str | None
+    name: str | None = None
     created_at: AwareDatetime
     conversations: list[CustomerProfileConversation]
     handoffs: list[CustomerProfileHandoff]

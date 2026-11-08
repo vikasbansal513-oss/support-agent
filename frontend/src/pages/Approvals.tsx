@@ -58,7 +58,7 @@ function ChatModal({ conversationId, onClose }: { conversationId: string; onClos
           {(c) => (
             <>
               <p className="card-sub">
-                {c.customer.masked_phone ?? c.customer.masked_email ?? "-"} · {c.channel}
+                {c.customer.name ?? c.customer.masked_phone ?? c.customer.masked_email ?? "-"} · {c.channel}
                 {c.active_order_ref ? ` · ${c.active_order_ref}` : ""}
               </p>
               {c.messages.length === 0 ? (
@@ -66,7 +66,13 @@ function ChatModal({ conversationId, onClose }: { conversationId: string; onClos
               ) : (
                 <div className="messages">
                   {c.messages.map((m) => (
-                    <Bubble key={m.id} message={m} canReport={false} onReport={() => undefined} />
+                    <Bubble
+                      key={m.id}
+                      message={m}
+                      customerLabel={c.customer.name ?? c.customer.masked_phone ?? c.customer.masked_email ?? "-"}
+                      canReport={false}
+                      onReport={() => undefined}
+                    />
                   ))}
                 </div>
               )}

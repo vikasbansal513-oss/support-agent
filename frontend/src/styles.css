@@ -193,7 +193,7 @@ table,.table{border-collapse:collapse;width:100%;min-width:0}
 .message-date{text-align:center;font-size:10px;color:#70809a;background:#f5f7fb;border-radius:7px;width:max-content;margin:0 auto 17px;padding:6px 12px}
 .message{display:flex;gap:8px;align-items:flex-start;margin:13px 0}
 .message.out{justify-content:flex-end}
-.message-bubble{max-width:82%;padding:12px 14px;background:#f1f3f6;border-radius:12px;font-size:12px;line-height:1.55;color:#15243a}
+.message-bubble{max-width:82%;padding:12px 14px;background:#f1f3f6;border-radius:12px;font-size:12px;line-height:1.55;color:#15243a;text-align:left}
 .message.out .message-bubble{background:#e3efff}
 .chat-compose{border:1px solid #dfe7f1;border-radius:9px;padding:9px;margin:0 0 12px}
 .chat-compose textarea{border:0;width:100%;resize:none;outline:0;min-height:44px;padding:6px;font-size:12px}
@@ -485,3 +485,18 @@ td.num,th.num{text-align:right;white-space:nowrap}
 .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:17px}
 .muted{font-size:12px;color:#657894;margin:8px 0 0}
 .intel-panel{margin-top:4px}
+
+/* Conversations inbox reskin -- 3-column variant of the existing .chat-shell
+   (list + detail + aside, no left filter rail: Conversations keeps its own
+   .filters tab row above the list instead). Additive only. */
+.chat-shell-3{display:grid;grid-template-columns:minmax(300px,1.05fr) minmax(330px,1.25fr) 255px;gap:10px;min-height:calc(100vh - 170px)}
+.sender-tag{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:800;padding:3px 9px;border-radius:99px;margin:0 0 4px;letter-spacing:.2px}
+.sender-tag .icon{width:12px;height:12px;stroke-width:2.4}
+.sender-tag.ai{background:#eee5ff;color:#5a22db}
+.sender-tag.human-agent{background:#eaf1ff;color:#075cf2}
+.sender-tag.system-tag{background:#f0f3f7;color:#61718a}
+.sender-tag.customer-tag{background:transparent;color:#5c6f8c;padding:3px 0}
+.chat-list-empty{display:flex;align-items:center;justify-content:center;min-height:380px}
+.chat-aside-loading{color:#8291a8;font-size:12px;padding:4px 0}
+@media(max-width:1350px){.chat-shell-3{grid-template-columns:minmax(270px,1fr) minmax(300px,1.1fr)}.chat-shell-3 .chat-aside{display:none}}
+@media(max-width:900px){.chat-shell-3{grid-template-columns:1fr}.chat-shell-3 .chat-detail,.chat-shell-3 .chat-aside{display:none}}

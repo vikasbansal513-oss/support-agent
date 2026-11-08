@@ -42,7 +42,7 @@ ConversationStatus = Literal["open", "handoff", "resolved", "closed"]
 
 _COLUMNS = (
     "c.id, c.channel, c.status, c.active_order_ref, c.language, c.human_active, c.last_message_at,"
-    " c.customer_id, cu.phone_e164, cu.email_lower"
+    " c.customer_id, cu.phone_e164, cu.email_lower, cu.name"
 )
 
 
@@ -63,6 +63,7 @@ def conversation_out(row: Any) -> ConversationOutAny:
             id=row.customer_id,
             masked_phone=mask_mobile(row.phone_e164) if row.phone_e164 else None,
             masked_email=mask_email(row.email_lower) if row.email_lower else None,
+            name=row.name,
         ),
         active_order_ref=row.active_order_ref,
         language=row.language,
@@ -174,7 +175,7 @@ async def get_customer_profile(
     ) as session:
         customer = (
             await session.execute(
-                text("SELECT id, phone_e164, email_lower, created_at FROM customers WHERE id = :c"),
+                text("SELECT id, phone_e164, email_lower, name, created_at FROM customers WHERE id = :c"),
                 {"c": customer_id},
             )
         ).first()
@@ -216,6 +217,7 @@ async def get_customer_profile(
         id=customer.id,
         masked_phone=mask_mobile(customer.phone_e164) if customer.phone_e164 else None,
         masked_email=mask_email(customer.email_lower) if customer.email_lower else None,
+        name=customer.name,
         created_at=customer.created_at,
         conversations=[CustomerProfileConversation(**r._mapping) for r in conv_rows],
         handoffs=[CustomerProfileHandoff(**r._mapping) for r in handoff_rows],

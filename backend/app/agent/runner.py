@@ -234,11 +234,13 @@ async def _link_identities_from_order(factory: Factory, tenant_id: uuid.UUID, fi
     if not order_raw:
         return
     phone, email = order_raw.get("customer_phone"), order_raw.get("customer_email")
+    name = order_raw.get("customer_name")
     if not phone and not email:
         return
     try:
         async with session_scope(factory, tenant_id=tenant_id) as session:
             await identity.link_customer_identities(session, phone, email)
+            await identity.link_customer_name(session, phone, email, name)
     except Exception:
         logger.exception("customer identity link failed")
 

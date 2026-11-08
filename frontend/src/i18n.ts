@@ -930,6 +930,19 @@ export const t = {
   emptyCustomerProfileConversations: "No conversations yet on any channel.",
   emptyCustomerProfileHandoffs: "No handoffs for this customer.",
   emptyCustomerProfileActions: "No actions taken for this customer yet.",
+
+  // Conversations inbox reskin -- additive keys only.
+  conversationsSubtitle: "Customer conversations across WhatsApp, email and voice, in one place.",
+  selectConversationHint: "Select a chat from the list to view the conversation.",
+  customerPanelTitle: "Customer",
+  currentOrderLabel: "Current order",
+  totalConversationsLabel: "Conversations",
+  totalHandoffsLabel: "Handoffs",
+  totalActionsLabel: "Actions taken",
+  humanLabel: "Human",
+  senderAiAgent: "AI Agent",
+  senderHumanAgent: "Support team",
+  senderSystem: "System",
 } as const;
 
 

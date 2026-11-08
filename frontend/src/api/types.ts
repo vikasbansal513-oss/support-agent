@@ -34,6 +34,7 @@ export interface Customer {
   id: string;
   masked_phone: string | null;
   masked_email: string | null;
+  name: string | null;
 }
 
 export interface CustomerProfileConversation {
@@ -70,6 +71,7 @@ export interface CustomerProfile {
   id: string;
   masked_phone: string | null;
   masked_email: string | null;
+  name: string | null;
   created_at: string;
   conversations: CustomerProfileConversation[];
   handoffs: CustomerProfileHandoff[];

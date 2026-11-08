@@ -47,6 +47,9 @@ def parse(body: dict[str, Any]) -> dict[str, Any] | None:
     phone = phone_e164(p.get("source") or (p.get("sender") or {}).get("phone"))
     if not mid or not phone:
         return None
+    # WhatsApp profile display name, when Gupshup includes it (payload.sender.name per
+    # docs.gupshup.io). Best-effort only - never present on every callback, never verified.
+    sender_name = str((p.get("sender") or {}).get("name") or "").strip()[:200] or None
     inner = p.get("payload") if isinstance(p.get("payload"), dict) else {}
     ptype = str(p.get("type") or "").lower()
     text, media = "", None
@@ -61,5 +64,5 @@ def parse(body: dict[str, Any]) -> dict[str, Any] | None:
         media = "other"
     ts = body.get("timestamp")
     received = datetime.fromtimestamp(ts / 1000, tz=timezone.utc) if isinstance(ts, (int, float)) else datetime.now(timezone.utc)
-    return {"channel": "whatsapp", "external_id": str(mid), "from_phone": phone, "text": text[:20000],
-            "media_type": media, "received_at": received, "_app": body.get("app")}
+    return {"channel": "whatsapp", "external_id": str(mid), "from_phone": phone, "from_name": sender_name,
+            "text": text[:20000], "media_type": media, "received_at": received, "_app": body.get("app")}
