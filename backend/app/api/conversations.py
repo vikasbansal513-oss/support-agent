@@ -175,7 +175,9 @@ async def get_customer_profile(
     ) as session:
         customer = (
             await session.execute(
-                text("SELECT id, phone_e164, email_lower, name, created_at FROM customers WHERE id = :c"),
+                text(
+                    "SELECT id, phone_e164, email_lower, name, created_at FROM customers WHERE id = :c"
+                ),
                 {"c": customer_id},
             )
         ).first()

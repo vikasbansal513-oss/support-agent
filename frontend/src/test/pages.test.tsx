@@ -123,7 +123,10 @@ describe("screens", () => {
     expect(await screen.findByText("ship ho gaya")).toBeInTheDocument();
     expect(screen.getByText(new RegExp(t.notSent))).toBeInTheDocument();
     expect(screen.getByText(t.humanActive)).toBeInTheDocument();
-    expect(screen.getByText("******3210")).toBeInTheDocument();
+    // The masked contact now shows in more than one place (chat header,
+    // customer aside panel, and the per-message sender tag), so this
+    // asserts it's shown somewhere rather than exactly once.
+    expect(screen.getAllByText("******3210").length).toBeGreaterThan(0);
   });
 
   it("handoffs list shows empty state", async () => {
