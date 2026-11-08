@@ -860,9 +860,7 @@ async def _collect(
     ).all()
     # Month-end close always needs every tenant's compute/voice usage, same as before -
     # t=None keeps the "CAST(:t AS uuid) IS NULL" branch active, so this is unchanged.
-    compute_rows = (
-        await session.execute(_COMPUTE_USAGE, {"s": start, "e": end, "t": None})
-    ).all()
+    compute_rows = (await session.execute(_COMPUTE_USAGE, {"s": start, "e": end, "t": None})).all()
     voice_rows = (await session.execute(_VOICE_USAGE, {"s": start, "e": end, "t": None})).all()
     plivo_rows = (await session.execute(_PLIVO_CALLS_FOR_PERIOD, {"p": period_start})).all()
     speech_rows = (await session.execute(_SPEECH_USAGE_FOR_PERIOD, {"p": period_start})).all()
