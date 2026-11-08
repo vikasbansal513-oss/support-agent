@@ -197,15 +197,25 @@ _LLM_USAGE = text(
     " AND (CAST(:t AS uuid) IS NULL OR tenant_id = CAST(:t AS uuid))"
     " GROUP BY tenant_id, provider, model"
 )
+# Section 2 (Speed & Scaling): both queries used to have no tenant filter at all, so every
+# caller - including the per-tenant Client Dashboard usage card - scanned `jobs`/
+# `voice_calls` for every tenant on the platform and then threw away every row but one in
+# Python (see usage.py's _collect_range). The `:t` clause mirrors the same
+# "CAST(:t AS uuid) IS NULL OR tenant_id = CAST(:t AS uuid)" pattern already used by
+# _LLM_USAGE/_GCP_RANGE/etc above: a caller that still wants every tenant (the monthly
+# billing-close pipeline in _collect() below) passes t=None and gets the exact same rows
+# as before; a caller that wants one tenant (usage.py's client_usage path) now has Postgres
+# do the filtering instead of fetching every tenant's rows over the network first.
 _COMPUTE_USAGE = text(
     "SELECT tenant_id, COALESCE(sum(duration_ms), 0) AS ms, count(*) AS jobs FROM jobs"
-    " WHERE status = 'done' AND finished_at >= :s AND finished_at < :e GROUP BY tenant_id"
+    " WHERE status = 'done' AND finished_at >= :s AND finished_at < :e"
+    " AND (CAST(:t AS uuid) IS NULL OR tenant_id = CAST(:t AS uuid)) GROUP BY tenant_id"
 )
 _VOICE_USAGE = text(
     "SELECT tenant_id, count(*) AS calls,"
     " COALESCE(sum(extract(epoch FROM (ended_at - started_at))), 0)::bigint AS seconds"
     " FROM voice_calls WHERE ended_at IS NOT NULL AND started_at >= :s AND started_at < :e"
-    " GROUP BY tenant_id"
+    " AND (CAST(:t AS uuid) IS NULL OR tenant_id = CAST(:t AS uuid)) GROUP BY tenant_id"
 )
 _TENANT = text("SELECT id, name FROM tenants WHERE id = :t")
 _INVOICE_LOCK = text(
@@ -848,8 +858,12 @@ async def _collect(
             {"s": start, "e": end, "t": str(llm_tenant) if llm_tenant else None},
         )
     ).all()
-    compute_rows = (await session.execute(_COMPUTE_USAGE, {"s": start, "e": end})).all()
-    voice_rows = (await session.execute(_VOICE_USAGE, {"s": start, "e": end})).all()
+    # Month-end close always needs every tenant's compute/voice usage, same as before -
+    # t=None keeps the "CAST(:t AS uuid) IS NULL" branch active, so this is unchanged.
+    compute_rows = (
+        await session.execute(_COMPUTE_USAGE, {"s": start, "e": end, "t": None})
+    ).all()
+    voice_rows = (await session.execute(_VOICE_USAGE, {"s": start, "e": end, "t": None})).all()
     plivo_rows = (await session.execute(_PLIVO_CALLS_FOR_PERIOD, {"p": period_start})).all()
     speech_rows = (await session.execute(_SPEECH_USAGE_FOR_PERIOD, {"p": period_start})).all()
     rental_cost = await _plivo_rental_cost(session, period_start)

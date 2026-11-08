@@ -110,4 +110,4 @@ async def billing_usage_view(
     if principal.tenant_id is None:
         raise AppError("E-AUTH-007")
     async with session_scope(factory, super_admin=True, user_id=principal.user_id) as session:
-        return await billing_usage.client_usage(session, principal.tenant_id)
+        return await billing_usage.client_usage_cached(session, principal.tenant_id)

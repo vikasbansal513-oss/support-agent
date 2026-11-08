@@ -14,6 +14,7 @@ estimate/allocation rather than a provider-billed actual.
 
 import csv
 import io
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -233,8 +234,14 @@ async def _collect_range(
     llm_lines_by_tenant = {
         tid: billing_service.price_llm(usages, rates, fx) for tid, usages in llm_by_tenant.items()
     }
+    # `t` (declared above as `str(tenant_id) if tenant_id else None`) now reaches the SQL
+    # itself - see the comment on _COMPUTE_USAGE/_VOICE_USAGE in service.py. For the
+    # client-dashboard path (tenant_id set) Postgres now filters to that one tenant's rows
+    # instead of returning every tenant's usage on the platform. The `if tenant_id is
+    # None or r.tenant_id == tenant_id` checks stay as a harmless no-op safety net: with
+    # the SQL filter in place they're always true for whatever rows come back.
     compute_rows = (
-        await session.execute(billing_service._COMPUTE_USAGE, {"s": s, "e": e})  # noqa: SLF001
+        await session.execute(billing_service._COMPUTE_USAGE, {"s": s, "e": e, "t": t})  # noqa: SLF001
     ).all()
     compute_by_tenant = {
         r.tenant_id: billing_service.Compute(int(r.ms), int(r.jobs))
@@ -242,7 +249,7 @@ async def _collect_range(
         if tenant_id is None or r.tenant_id == tenant_id
     }
     voice_rows = (
-        await session.execute(billing_service._VOICE_USAGE, {"s": s, "e": e})  # noqa: SLF001
+        await session.execute(billing_service._VOICE_USAGE, {"s": s, "e": e, "t": t})  # noqa: SLF001
     ).all()
     voice_by_tenant = {
         r.tenant_id: billing_service.VoiceUsage(int(r.seconds), int(r.calls))
@@ -1143,6 +1150,33 @@ async def billing_export_status(session: AsyncSession) -> BillingExportSyncStatu
 
 
 # ---------------------------------------------------------------- Client-facing own-usage view
+# Section 2 (Speed & Scaling): the Client Dashboard calls this on every single page load
+# (Dashboard.tsx fires it alongside /dashboard/stats, /usage and /agent/status), and it
+# aggregates across 8+ tables (LLM calls, Cloud Run jobs, voice calls, GCP usage, Plivo
+# CDRs, speech usage, invoices) every time. These are informational usage/cost figures
+# shown to the client, not the authoritative invoiced amount (that always comes straight
+# from `invoices`, e.g. in billing_history below), so a short TTL here is safe - same
+# "short TTL, re-aggregate on expiry" approach as the published-policy cache in
+# app/policy/service.py. No explicit invalidation hook: nothing writes to the tables this
+# aggregates outside of background jobs/webhooks, so a plain TTL is enough (unlike the
+# policy cache, which invalidates on save because a user's own edit must show up
+# immediately).
+_CLIENT_USAGE_CACHE_TTL_SECONDS = 60.0
+_client_usage_cache: dict[uuid.UUID, tuple[float, ClientUsageOut]] = {}
+
+
+async def client_usage_cached(session: AsyncSession, tenant_id: uuid.UUID) -> ClientUsageOut:
+    """Cached wrapper around client_usage() for the Dashboard endpoint - see the comment
+    above. Call client_usage() directly (as before) anywhere that needs a fresh read."""
+    now = time.monotonic()
+    cached = _client_usage_cache.get(tenant_id)
+    if cached is not None and cached[0] > now:
+        return cached[1]
+    result = await client_usage(session, tenant_id)
+    _client_usage_cache[tenant_id] = (now + _CLIENT_USAGE_CACHE_TTL_SECONDS, result)
+    return result
+
+
 async def client_usage(session: AsyncSession, tenant_id: uuid.UUID) -> ClientUsageOut:
     today = timeutil.to_ist(timeutil.utc_now()).date()
     month_start = today.replace(day=1)

@@ -352,9 +352,9 @@ async def report_message(
         customer_masked_phone=mask_mobile(conv.phone_e164) if conv.phone_e164 else None,
         order_ref=conv.active_order_ref,
         customer_asked=body.reason[:400],
-        agent_did=["Brand ne agent ka jawab galat bataya"],
+        agent_did=["Brand flagged the agent's reply as incorrect"],
         reason_code="CUSTOMER_REPORT",
-        why_stuck="Brand ne jawab ko galat bataya.",
+        why_stuck="The brand flagged the reply as incorrect.",
         language=conv.language or "hinglish",
     )
     decision = DecisionOut(

@@ -21,8 +21,9 @@ HANDOFF_FOR = {
     "rejected": "POLICY_EXCEPTION",
 }
 WHY = {
-    "ACTION_FAILED": "Action Shopify par poora ya verify nahi hua, insaan check kare.",
-    "POLICY_EXCEPTION": "Brand ne request approve nahi ki ya policy ke bahar thi.",
+    "ACTION_FAILED": "The action did not complete or could not be verified on Shopify;"
+    " needs human review.",
+    "POLICY_EXCEPTION": "The brand did not approve the request, or it fell outside policy.",
 }
 
 
@@ -58,7 +59,7 @@ def handoff_for(action: writes.ActionRow, reason: str, lang: str) -> DecisionV1:
         customer_asked=f"{action.tool} on {action.order_ref}"[:400],
         agent_did=[f"action {action.status}: {action.error or '-'}"[:200]],
         reason_code=reason,
-        why_stuck=WHY.get(reason, "Insaan ki madad chahiye."),
+        why_stuck=WHY.get(reason, "Needs human assistance."),
         language=lang,
     )
     return DecisionV1(

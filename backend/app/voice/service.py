@@ -218,15 +218,17 @@ def _handoff_decision(
 
 
 WHY = {
-    "CONFUSED": "Call par awaaz baar baar saaf nahi aayi.",
-    "STEP_LIMIT": "Call bahut lambi chali, insaan ko sambhalni chahiye.",
-    "POLICY_EXCEPTION": "Voice agent is brand ke liye abhi chalu nahi hai ya request policy ke bahar thi.",
-    "ACTION_FAILED": "Call ke dauran takneeki dikkat aayi.",
+    "CONFUSED": "The call audio was repeatedly unclear.",
+    "STEP_LIMIT": "The call ran too long; a human should take over.",
+    "POLICY_EXCEPTION": "The voice agent isn't enabled for this brand yet, or the request fell"
+    " outside policy.",
+    "ACTION_FAILED": "A technical issue occurred during the call.",
     # Section 17.1 consent-capture (see _consent_turn):
-    "HUMAN_REQUESTED": "Customer ne call shuru me hi insaan se baat karne ko kaha.",
-    "CONSENT_DECLINED": "Customer ne AI assistant se baat karne / call record hone ke liye consent nahi diya.",
+    "HUMAN_REQUESTED": "Customer asked to speak with a human right at the start of the call.",
+    "CONSENT_DECLINED": "Customer did not consent to speaking with the AI assistant / having the"
+    " call recorded.",
     # Section 17.4:
-    "SILENCE_NO_RESPONSE": "Customer ne dobara prompt karne ke baad bhi jawaab nahi diya.",
+    "SILENCE_NO_RESPONSE": "Customer did not respond even after being prompted again.",
 }
 
 

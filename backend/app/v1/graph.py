@@ -58,22 +58,22 @@ MAX_CLARIFY = 2
 SKIP_REASONS = frozenset({"OPTED_OUT", "HUMAN_ACTIVE"})
 WHY_STUCK_V1 = {
     **WHY_STUCK,
-    "ABUSE": "Customer ne gaali ya badtameezi ki.",
-    "THREAT": "Customer ne dhamki di.",
-    "SENTIMENT_NEGATIVE": "Customer bahut naraaz lag raha hai.",
-    "CONFUSED": "Agent customer ki baat samajh nahi paya.",
-    "NO_PROGRESS": "Do baar poochne par bhi kaam aage nahi badha.",
-    "STEP_LIMIT": "Ek baatcheet me action ki limit poori ho gayi.",
-    "CONFIRM_UNCLEAR": "Customer ne confirm ka haan ya na saaf nahi kiya.",
-    "POLICY_EXCEPTION": "Request policy ke bahar hai ya is tool par abhi insaan chahiye.",
-    "LIMIT_EXCEEDED": "Amount auto limit ke upar hai.",
-    "HIGH_RISK_FLAG": "Order ya customer par risk flag hai, insaan dekhe.",
-    "ACTION_FAILED": "Action poora nahi ho paya ya verify nahi hua.",
+    "ABUSE": "Customer used abusive language.",
+    "THREAT": "Customer made a threat.",
+    "SENTIMENT_NEGATIVE": "Customer appears very upset.",
+    "CONFUSED": "The agent could not understand the customer.",
+    "NO_PROGRESS": "No progress was made even after asking twice.",
+    "STEP_LIMIT": "This conversation hit its action-step limit.",
+    "CONFIRM_UNCLEAR": "Customer did not clearly confirm yes or no.",
+    "POLICY_EXCEPTION": "The request falls outside policy, or this tool currently requires a human.",
+    "LIMIT_EXCEEDED": "The amount is above the auto-approval limit.",
+    "HIGH_RISK_FLAG": "A risk flag is set on this order/customer; needs human review.",
+    "ACTION_FAILED": "The action did not complete or could not be verified.",
     # Decision Framework Section 3 (see app.policy.tracking):
-    "DELIVERY_STUCK": "Shipment ka courier scan kai ghante se update nahi hua, lagta hai atka hua hai.",
-    "DELIVERY_DISPUTE": "System delivered dikha raha hai, customer kehta hai usse mila nahi.",
-    "IDENTITY_MISMATCH": "Customer jis email/phone se message kar raha hai woh order ki registered"
-    " detail se match nahi hui, process se pehle identity verify karo.",
+    "DELIVERY_STUCK": "The courier scan hasn't updated for several hours; the shipment looks stuck.",
+    "DELIVERY_DISPUTE": "The system shows delivered, but the customer says they didn't receive it.",
+    "IDENTITY_MISMATCH": "The email/phone the customer is messaging from doesn't match the order's"
+    " registered details; verify identity before proceeding.",
 }
 WRITE_INTENT_TOOL: dict[str, WriteTool] = {
     "address_change": "address_update",
@@ -176,7 +176,7 @@ def handoff_decision(state: State, reason: str) -> DecisionV1:
         customer_asked=str(asked)[:400] or "-",
         agent_did=did[:10],
         reason_code=reason,
-        why_stuck=WHY_STUCK_V1.get(reason, "Insaan ki madad chahiye."),
+        why_stuck=WHY_STUCK_V1.get(reason, "Needs human assistance."),
         language=lang,
     )
     ack: dict[str, Any] | None = None

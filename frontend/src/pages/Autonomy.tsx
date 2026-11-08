@@ -241,7 +241,7 @@ function Editor({ policy, latest, onDone }: { policy: Policy; latest: number; on
           <i>2</i>
           <div>
             <b>{t.level_approval}</b>
-            <p>{t.autonomyAutoConfirmBody}</p>
+            <p>{t.autonomyApprovalDesc}</p>
           </div>
         </div>
         <div className="how-item">
