@@ -551,3 +551,41 @@ intent "other" + action "handoff" (it matches the prompt's own example, but not
 confirmed against a live model); real courier `status_text`/`expected_delivery` field
 shapes from Shiprocket/Delhivery are still the pre-existing P3 VERIFY item, unchanged by
 this; pytest/mypy real environment run still pending.
+
+## P43 — CI fix for P42 (TEMPLATE_IDS), verified against a real CI-equivalent run this time
+
+Same root cause class as P34: a new template id added to `agent/templates.py`'s `T`
+dict without adding it to `contracts.py::TEMPLATE_IDS`, the tuple that
+`tests/spec/test_keywords_templates.py::test_all_templates_exist_for_all_langs` checks
+by set-equality — and, more importantly, the same tuple backs
+`ReplySpec.template_id: Literal[TEMPLATE_IDS]`. So this wasn't just a test gap: before
+this fix, the P42 code would have raised a Pydantic validation error in production the
+first time `handoff_decision()` actually hit the new mixed-intent branch, crashing the
+handoff instead of improving it. Fixed by adding `"handoff_ack_with_status"` and
+`"off_hours_ack_with_status"` to `TEMPLATE_IDS`.
+
+User asked explicitly for CI to pass in one shot this time. Static checks (ast.parse,
+ruff) alone had already missed this exact failure mode once (P34) and again just now
+(P42), because neither one can see a Pydantic `Literal` validated only at the call site
+this new code path reaches. So this time the full CI command sequence was actually run
+in this sandbox against a real Postgres 16 instance, not just reasoned about:
+`pg_ctlcluster 16 main start`, `uv pip install --system -c constraints.txt ".[dev]"`,
+then every backend CI step in order (`ruff check .`, `ruff format --check .`, `mypy`,
+`pytest -q -n 2 --dist loadfile --durations=15`, `python -m app.evals.run`,
+`pip-audit -r constraints.txt --no-deps`) — all exit 0, pytest 728/728 (one more than
+the 727 that passed with the bug — the broken test is counted back in). Frontend wasn't
+touched this round but was re-verified anyway (`npm ci`, `tsc --noEmit`, `vitest run`
+37/37, `npm run build`, `npm audit --audit-level=high` — two pre-existing moderate
+react-router advisories, below the high-severity gate, unrelated to this change).
+
+One local-only wrinkle, not a code bug: a stray `build/` directory existed under
+`backend/` (leftover from an earlier `pip install .` in this sandbox) that `ruff check`
+was linting as if it were source, producing ~50 fake errors on a stale copy of
+`policy/service.py`. Deleted before running the real check — this directory is never
+present in an actual CI checkout, so it is not something that needs fixing in the repo
+itself.
+
+**VERIFY:** this is now backed by an actual full-suite run rather than static analysis
+alone, so confidence is high, but the real GitHub Actions run is still the final
+confirmation; nothing here changes the P3 (courier field shapes) or P42 (real-LLM
+classification of the mixed-intent message) VERIFY items.
