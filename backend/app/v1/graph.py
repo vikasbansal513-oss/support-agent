@@ -8,6 +8,7 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from app.agent import keywords
+from app.agent import templates as v0_templates
 from app.agent.graph import (
     ACK_BY_REASON,
     WHY_STUCK,
@@ -19,7 +20,7 @@ from app.agent.graph import (
     build_reply,
 )
 from app.agent.state import State
-from app.contracts.contracts import OrderFacts, ToolResult
+from app.contracts.contracts import OrderFacts, ToolResult, TrackingFacts
 from app.core import timeutil
 from app.core.masking import redact_for_llm
 from app.llm.client import (
@@ -155,6 +156,77 @@ def _order(state: State) -> OrderFacts | None:
     return OrderFacts.model_validate(raw) if raw else None
 
 
+def _tracking_v1(state: State) -> TrackingFacts | None:
+    raw = state.get("tool_results", {}).get("tracking")
+    return TrackingFacts.model_validate(raw) if raw else None
+
+
+def _handoff_status_line(order: OrderFacts, tracking: TrackingFacts | None, lang: str) -> str:
+    """One line for the handoff ack: shipped-with-date / shipped-no-date / not shipped."""
+    if order.fulfillment_status == "unfulfilled":
+        return {
+            "en": "It has not shipped yet - still being prepared.",
+            "hinglish": "Abhi tak ship nahi hua hai, tayyar ho raha hai.",
+            "hi": "अभी तक शिप नहीं हुआ है, तैयार हो रहा है।",
+        }[lang]
+    if tracking is not None:
+        if tracking.expected_delivery is not None:
+            when = timeutil.to_ist(tracking.expected_delivery).strftime("%d %b %Y")
+            return {
+                "en": f"Shipped - {tracking.status_text}. Expected delivery by {when}.",
+                "hinglish": f"Ship ho chuka hai - {tracking.status_text}. Expected delivery {when} tak.",
+                "hi": f"शिप हो चुका है - {tracking.status_text}। अपेक्षित डिलीवरी {when} तक।",
+            }[lang]
+        return {
+            "en": f"Shipped - {tracking.status_text}. Exact delivery date is not available yet.",
+            "hinglish": (
+                f"Ship ho chuka hai - {tracking.status_text}. "
+                "Exact delivery date abhi available nahi hai."
+            ),
+            "hi": f"शिप हो चुका है - {tracking.status_text}। सटीक डिलीवरी तिथि अभी उपलब्ध नहीं है।",
+        }[lang]
+    word = v0_templates.status_word(v0_templates.FULFILL, order.fulfillment_status, lang)
+    return {"en": f"Status: {word}.", "hinglish": f"Status: {word}.", "hi": f"स्थिति: {word}।"}[lang]
+
+
+async def _status_facts_for_mixed_handoff(deps: V1Deps, state: State) -> dict[str, Any] | None:
+    """Best-effort order/tracking fetch for the mixed-intent handoff case only (a message
+    that combines a read-only ask - order status/tracking - with a write ask such as
+    cancel/refund; plan.v1.md's prompt always classifies that combination as intent
+    "other" + action "handoff", so it never reaches identity()/answer() and the customer
+    used to get zero order information in the ack, just "passed to our team").
+
+    This mirrors identity()'s own order lookup (same order_gate call, same order_ref
+    extraction) purely so handoff_decision() can show the status in the ack - it never
+    turns into a reply/clarify turn. Any failure (no order ref found in the text, order
+    not found, customer/order mismatch, tool disabled or down) just means no extra
+    facts are added and the handoff proceeds exactly as it did before this existed.
+    """
+    policy = _policy2(state)
+    if policy is None or "order_lookup" not in policy.enabled_tools:
+        return None
+    ref = keywords.extract_order_ref(state.get("incoming_text", ""))
+    if ref is None:
+        return None
+    result, _gate = await deps.tools.order_gate(
+        ref, state.get("customer_phone"), state.get("customer_email")
+    )
+    if not result.ok or result.order is None:
+        return None
+    results: dict[str, Any] = {"order": result.order.model_dump(mode="json")}
+    if "tracking_lookup" in policy.enabled_tools and result.order.tracking_numbers:
+        tracked = await deps.tools.tracking_lookup(
+            result.order.tracking_numbers[0], result.order.courier
+        )
+        if tracked.ok and tracked.tracking is not None:
+            results["tracking"] = tracked.tracking.model_dump(mode="json")
+    return {
+        "tool_results": results,
+        "tool_steps": int(state.get("tool_steps", 0)) + 1,
+        "handoff_order_hint": True,
+    }
+
+
 def handoff_decision(state: State, reason: str) -> DecisionV1:
     plan = state.get("plan") or {}
     asked = plan.get("summary") or redact_for_llm(state.get("incoming_text", ""), 400)
@@ -171,7 +243,8 @@ def handoff_decision(state: State, reason: str) -> DecisionV1:
     )
     summary = HandoffSummaryV1(
         customer_masked_phone=state.get("customer_masked"),
-        order_ref=(state.get("identity") or {}).get("order_ref"),
+        order_ref=(state.get("identity") or {}).get("order_ref")
+        or (order.order_name if order else None),
         order_items=order_items,
         customer_asked=str(asked)[:400] or "-",
         agent_did=did[:10],
@@ -182,8 +255,32 @@ def handoff_decision(state: State, reason: str) -> DecisionV1:
     ack: dict[str, Any] | None = None
     policy = _policy2(state)
     template_id = ACK_BY_REASON.get(reason, "handoff_ack")
+    # Mixed-intent handoff (order status/tracking asked alongside a cancel/refund/etc.
+    # request): _status_facts_for_mixed_handoff() in rules() fetched the order (and
+    # tracking, if shipped) specifically so it can be shown here instead of a bare
+    # "passed to our team" ack. handoff_order_hint is only ever set by that one path,
+    # so every other handoff reason renders exactly as before.
+    status_order = order if state.get("handoff_order_hint") and order is not None else None
     if reason == "AGENT_PAUSED":
         ack = None
+    elif template_id == "handoff_ack" and status_order is not None:
+        status_line = _handoff_status_line(status_order, _tracking_v1(state), lang)
+        if not state.get("within_office_hours", True):
+            ack = _v0_reply(
+                state,
+                "off_hours_ack_with_status",
+                opens=state.get("opens_label") or "-",
+                order_name=status_order.order_name,
+                status_line=status_line,
+            )
+        else:
+            ack = _v0_reply(
+                state,
+                "handoff_ack_with_status",
+                sla=str(policy.handoff_sla_minutes if policy else 30),
+                order_name=status_order.order_name,
+                status_line=status_line,
+            )
     elif template_id == "handoff_ack" and not state.get("within_office_hours", True):
         ack = _v0_reply(state, "off_hours_ack", opens=state.get("opens_label") or "-")
     elif template_id == "handoff_ack":
@@ -332,6 +429,14 @@ def build_graph_v1(deps: V1Deps) -> Any:
         if plan.action == "handoff":
             if plan.intent in WRITE_INTENT_TOOL:
                 return _flag(state, "POLICY_EXCEPTION")
+            if plan.intent == "other":
+                # The "status question + cancel/refund in one message" case: plan.v1.md
+                # always classifies this as intent "other" (two different requests, one
+                # of them a write) - best-effort fetch the order so the customer gets
+                # the status in the handoff ack, not just "passed to our team".
+                extra = await _status_facts_for_mixed_handoff(deps, state)
+                if extra:
+                    return _flag(state, "UNSUPPORTED_INTENT", **extra)
             return _flag(state, "UNSUPPORTED_INTENT")
         if plan.intent == "greeting":
             return {"v1_reply": _v0_reply(state, "ask_order_ref")}

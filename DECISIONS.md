@@ -493,3 +493,61 @@ usual no-DB-test standing rule — user asked for the zip directly). **VERIFY:**
 against a real Neon suspend/resume cycle; `pool_recycle=300s` and retry
 attempts(3)/backoff(0.2s base) are reasonable defaults, not tuned from real Neon timing or
 load-tested; real pytest/mypy run still pending, same as every "no test this session" part.
+
+## P42 — Mixed-intent handoff ack now includes order status
+
+User flagged a real conversation: customer emailed asking "where is order #1006 /
+confirm delivery date" plus "if it won't arrive soon, cancel and refund" in the same
+message. `plan.v1.md`'s own rule (a read-only ask + a write ask together = handoff,
+intent "other") correctly sends this to a human — amount/cancel/refund decisions
+involving a conditional SLA judgment are exactly what that rule exists to keep out of
+auto-reply. The bug was elsewhere: the customer got zero order information, just
+"passed to our team, ~30 minutes" — because `rules()` flags this straight to `decide()`
+without ever running `identity()` (the node that would normally look the order up), so
+there were no facts available to show.
+
+**Fix, scoped to only this one path:** `_status_facts_for_mixed_handoff()` in
+`v1/graph.py` does a best-effort order+tracking lookup (same `order_gate`/
+`tracking_lookup` calls `identity()`/`answer()` already make, same policy gating) only
+when `plan.intent == "other"` inside the `plan.action == "handoff"` branch of `rules()`.
+Any failure — no order ref extractable from the text, not found, customer/order
+mismatch, tool disabled — silently yields nothing, so the handoff proceeds exactly as
+before. Deliberately NOT done: reusing `identity()` itself, because it can return a
+"please resend your order number" reply turn on a not-found/mismatch, which would turn
+a clean handoff into an extra back-and-forth before the customer still gets handed off —
+the opposite of what was asked.
+
+**Why a new state field instead of reusing `UNSUPPORTED_INTENT` + "order present"
+directly:** several *other* existing handoff reasons (STEP_LIMIT, ACTION_FAILED,
+CONFIRM_UNCLEAR, FRAUD, HIGH_RISK_FLAG, DELIVERY_STUCK, ...) already run through
+`identity()` first and so already have order data in `tool_results` by the time they
+hit `handoff_decision()`. Branching on "is order data present" alone would have changed
+the ack text for all of those too — including ones (FRAUD, HIGH_RISK_FLAG, ABUSE/ANGRY)
+where casually printing order status in the same breath as a handoff may not be
+appropriate, and that is well outside what was asked. `handoff_order_hint` (new,
+`agent/state.py`) is set by exactly one function, so every other handoff reason's ack
+is byte-identical to before this change.
+
+New templates `handoff_ack_with_status`/`off_hours_ack_with_status`
+(`agent/templates.py`, en/hinglish/hi) instead of editing the existing `handoff_ack`/
+`off_hours_ack` text in place — same reason: zero risk to every other caller of those
+two templates (POLICY_EXCEPTION, ANGRY, CONFUSED, NO_PROGRESS, etc. all still render
+through the untouched originals). `_handoff_status_line()` covers the three states the
+user asked for — not shipped yet / shipped with a courier ETA / shipped with no ETA
+yet — from `OrderFacts.fulfillment_status` and `TrackingFacts.expected_delivery`
+(courier-supplied, not invented). `HandoffSummaryV1.order_ref` also now falls back to
+the freshly-fetched order name when `identity()` never ran (this path), so the human
+agent's internal handoff card shows the order reference too, not just the customer ack.
+
+Ruff check + ruff format clean (`v1/graph.py`, `agent/templates.py`, `agent/state.py`),
+`ast.parse` clean. Both new templates rendered by hand in all three languages (no
+pydantic/sqlalchemy available in this sandbox to run the app itself) and
+`_handoff_status_line()`'s four branches traced with stand-in objects — correct output
+in every case checked. Pytest not run this session (standing no-DB-test instruction);
+grepped the existing test suite for anything that exercises this exact branch and found
+nothing, so collision risk with existing tests is low. **VERIFY:** whether the real LLM
+actually classifies this "status question + conditional cancel/refund" phrasing as
+intent "other" + action "handoff" (it matches the prompt's own example, but not
+confirmed against a live model); real courier `status_text`/`expected_delivery` field
+shapes from Shiprocket/Delhivery are still the pre-existing P3 VERIFY item, unchanged by
+this; pytest/mypy real environment run still pending.

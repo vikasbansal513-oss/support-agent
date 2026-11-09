@@ -79,6 +79,44 @@ T: dict[str, dict[str, str]] = {
         "hinglish": "Hamari team abhi offline hai. *{opens}* par khulne ke baad reply karenge.",
         "hi": "हमारी टीम अभी ऑफ़लाइन है। *{opens}* पर खुलने के बाद जवाब देंगे।",
     },
+    # Same handoff as "handoff_ack", used only when the customer's message also asked
+    # a read-only order question (order status / tracking) alongside the part that
+    # needs a human - so they get that answer immediately instead of a content-free
+    # "team will reply" message.
+    "handoff_ack_with_status": {
+        "en": (
+            "Here is a quick update on your order *{order_name}*: {status_line}\n\n"
+            "I have also passed the rest of your request to our team. They will reply "
+            "to you here. Expected within *{sla} minutes* during working hours."
+        ),
+        "hinglish": (
+            "Aapke order *{order_name}* ka turant update: {status_line}\n\n"
+            "Aapki baaki request maine hamari team ko de di hai. Woh yahin aapko reply "
+            "karenge. Working hours me lagbhag *{sla} minute* me."
+        ),
+        "hi": (
+            "आपके ऑर्डर *{order_name}* का त्वरित अपडेट: {status_line}\n\n"
+            "आपके अनुरोध का बाकी हिस्सा मैंने हमारी टीम को दे दिया है। वे यहीं आपको "
+            "जवाब देंगे। कार्य समय में लगभग *{sla} मिनट* में।"
+        ),
+    },
+    "off_hours_ack_with_status": {
+        "en": (
+            "Here is a quick update on your order *{order_name}*: {status_line}\n\n"
+            "Our team is offline right now. They will follow up on the rest of your "
+            "request when we open at *{opens}*."
+        ),
+        "hinglish": (
+            "Aapke order *{order_name}* ka turant update: {status_line}\n\n"
+            "Hamari team abhi offline hai. *{opens}* par khulne ke baad baaki request "
+            "par follow up karenge."
+        ),
+        "hi": (
+            "आपके ऑर्डर *{order_name}* का त्वरित अपडेट: {status_line}\n\n"
+            "हमारी टीम अभी ऑफ़लाइन है। *{opens}* पर खुलने के बाद आपके शेष अनुरोध पर "
+            "फ़ॉलो अप करेंगे।"
+        ),
+    },
     "identity_mismatch_ack": {
         "en": (
             "Thank you for contacting us.\n\n"
