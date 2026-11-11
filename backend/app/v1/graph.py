@@ -1,3 +1,4 @@
+import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -225,6 +226,79 @@ def _handoff_status_line(order: OrderFacts, tracking: TrackingFacts | None, lang
     return {"en": f"Status: {word}.", "hinglish": f"Status: {word}.", "hi": f"स्थिति: {word}।"}[lang]
 
 
+MAX_ACK_ITEMS = 3
+_CANCEL_ASK = re.compile(r"cancel|कैंसिल|रद्द", re.IGNORECASE)
+_REFUND_ASK = re.compile(r"refund|money back|paisa wapas|paise wapas|रिफंड|पैसे वापस", re.IGNORECASE)
+_ORDER_LABELS = {
+    "en": ("Your order", "Items", "Total", "Status"),
+    "hinglish": ("Aapka order", "Items", "Total", "Status"),
+    "hi": ("आपका ऑर्डर", "आइटम", "कुल", "स्थिति"),
+}
+_REQUEST_NOTES = {
+    "en": {
+        "both": "I have noted your request regarding cancellation and refund.",
+        "cancel": "I have noted your request regarding cancellation.",
+        "refund": "I have noted your request regarding a refund.",
+        "other": "I have noted the rest of your request.",
+    },
+    "hinglish": {
+        "both": "Maine cancel aur refund ki aapki request note kar li hai.",
+        "cancel": "Maine cancel ki aapki request note kar li hai.",
+        "refund": "Maine refund ki aapki request note kar li hai.",
+        "other": "Maine aapki baaki request note kar li hai.",
+    },
+    "hi": {
+        "both": "मैंने कैंसिलेशन और रिफंड का आपका अनुरोध नोट कर लिया है।",
+        "cancel": "मैंने कैंसिलेशन का आपका अनुरोध नोट कर लिया है।",
+        "refund": "मैंने रिफंड का आपका अनुरोध नोट कर लिया है।",
+        "other": "मैंने आपके अनुरोध का बाकी हिस्सा नोट कर लिया है।",
+    },
+}
+_EMAIL_GREETING = {"en": "Hi {name},", "hinglish": "Hi {name},", "hi": "नमस्ते {name},"}
+
+
+def _request_note(text: str, lang: str) -> str:
+    """Names the kind of request (cancel/refund) from the customer's own words with plain
+    keyword matching - never from the planner's free-text summary, which is LLM output and
+    must not be echoed back to the customer."""
+    cancel = bool(_CANCEL_ASK.search(text))
+    refund = bool(_REFUND_ASK.search(text))
+    kind = "both" if cancel and refund else "cancel" if cancel else "refund" if refund else "other"
+    return _REQUEST_NOTES[lang][kind]
+
+
+def _order_block(order: OrderFacts, status_line: str, lang: str) -> str:
+    """Order facts for the mixed-handoff ack, all from the verified Shopify order (the order
+    gate already matched it to this customer). At most MAX_ACK_ITEMS lines are listed."""
+    head, items_label, total_label, status_label = _ORDER_LABELS[lang]
+    shown = [f"{line.title} x{line.quantity}" for line in order.lines[:MAX_ACK_ITEMS]]
+    extra = len(order.lines) - MAX_ACK_ITEMS
+    if extra > 0:
+        shown.append(f"+{extra} more")
+    rows = [f"{head} *{order.order_name}*:"]
+    if shown:
+        rows.append(f"- {items_label}: {', '.join(shown)}")
+    rows.append(f"- {total_label}: *Rs {v0_templates.paise_to_rs(order.total_paise)}*")
+    rows.append(f"- {status_label}: {status_line}")
+    return "\n".join(rows)
+
+
+def _with_email_greeting(
+    state: State, ack: dict[str, Any] | None, order: OrderFacts | None
+) -> dict[str, Any] | None:
+    """Email only: opens with the customer's first name, taken from the verified order."""
+    if ack is None or order is None or state.get("channel") != "email":
+        return ack
+    first = (order.customer_name or "").split()[:1]
+    if not first:
+        return ack
+    template = _EMAIL_GREETING.get(str(ack.get("language")), _EMAIL_GREETING["en"])
+    body = f"{template.format(name=first[0])}\n\n{ack['text']}"
+    if len(body) > 1500:
+        return ack
+    return {**ack, "text": body, "facts_used": [*ack.get("facts_used", []), "customer_name"]}
+
+
 async def _status_facts_for_mixed_handoff(deps: V1Deps, state: State) -> dict[str, Any] | None:
     """Best-effort order/tracking fetch for the mixed-intent handoff case only (a message
     that combines a read-only ask - order status/tracking - with a write ask such as
@@ -301,21 +375,22 @@ def handoff_decision(state: State, reason: str) -> DecisionV1:
         ack = None
     elif template_id == "handoff_ack" and status_order is not None:
         status_line = _handoff_status_line(status_order, _tracking_v1(state), lang)
+        order_block = _order_block(status_order, status_line, lang)
+        request_note = _request_note(state.get("incoming_text", ""), lang)
         if not state.get("within_office_hours", True):
             ack = _v0_reply(
                 state,
                 "off_hours_ack_with_status",
                 opens=state.get("opens_label") or "-",
-                order_name=status_order.order_name,
-                status_line=status_line,
+                order_block=order_block,
+                request_note=request_note,
             )
         else:
             ack = _v0_reply(
                 state,
                 "handoff_ack_with_status",
-                sla=str(policy.handoff_sla_minutes if policy else 30),
-                order_name=status_order.order_name,
-                status_line=status_line,
+                order_block=order_block,
+                request_note=request_note,
             )
     elif template_id == "handoff_ack" and not state.get("within_office_hours", True):
         ack = _v0_reply(state, "off_hours_ack", opens=state.get("opens_label") or "-")
@@ -327,6 +402,7 @@ def handoff_decision(state: State, reason: str) -> DecisionV1:
         ack = _v0_reply(state, template_id)
     if template_id == "handoff_ack":
         ack = _with_empathy(state, reason, ack)
+        ack = _with_email_greeting(state, ack, status_order)
     return DecisionV1(
         action="handoff",
         reason_code=reason,

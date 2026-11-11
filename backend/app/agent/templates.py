@@ -85,37 +85,30 @@ T: dict[str, dict[str, str]] = {
     # "team will reply" message.
     "handoff_ack_with_status": {
         "en": (
-            "Here is a quick update on your order *{order_name}*: {status_line}\n\n"
-            "I have noted the rest of your request and passed it, with these details, to our "
-            "team. They will reply to you here. Expected within *{sla} minutes* during "
-            "working hours."
+            "{order_block}\n\n{request_note} I have passed this to our team with the "
+            "details above, and they will review it and reply to you here."
         ),
         "hinglish": (
-            "Aapke order *{order_name}* ka turant update: {status_line}\n\n"
-            "Aapki baaki request maine in details ke saath note karke hamari team ko de di "
-            "hai. Woh yahin aapko reply karenge. Working hours me lagbhag *{sla} minute* me."
+            "{order_block}\n\n{request_note} Maine yeh upar ki details ke saath hamari "
+            "team ko de diya hai. Woh dekh kar yahin aapko reply karenge."
         ),
         "hi": (
-            "आपके ऑर्डर *{order_name}* का त्वरित अपडेट: {status_line}\n\n"
-            "आपके अनुरोध का बाकी हिस्सा मैंने इन विवरणों के साथ नोट करके हमारी टीम को दे दिया "
-            "है। वे यहीं आपको जवाब देंगे। कार्य समय में लगभग *{sla} मिनट* में।"
+            "{order_block}\n\n{request_note} मैंने यह ऊपर के विवरण के साथ हमारी टीम को दे "
+            "दिया है। वे देखकर यहीं आपको जवाब देंगे।"
         ),
     },
     "off_hours_ack_with_status": {
         "en": (
-            "Here is a quick update on your order *{order_name}*: {status_line}\n\n"
-            "Our team is offline right now. They will follow up on the rest of your "
-            "request when we open at *{opens}*."
+            "{order_block}\n\n{request_note} Our team is offline right now and will "
+            "follow up on this when we open at *{opens}*."
         ),
         "hinglish": (
-            "Aapke order *{order_name}* ka turant update: {status_line}\n\n"
-            "Hamari team abhi offline hai. *{opens}* par khulne ke baad baaki request "
-            "par follow up karenge."
+            "{order_block}\n\n{request_note} Hamari team abhi offline hai. *{opens}* par "
+            "khulne ke baad is par follow up karenge."
         ),
         "hi": (
-            "आपके ऑर्डर *{order_name}* का त्वरित अपडेट: {status_line}\n\n"
-            "हमारी टीम अभी ऑफ़लाइन है। *{opens}* पर खुलने के बाद आपके शेष अनुरोध पर "
-            "फ़ॉलो अप करेंगे।"
+            "{order_block}\n\n{request_note} हमारी टीम अभी ऑफ़लाइन है। *{opens}* पर "
+            "खुलने के बाद इस पर फ़ॉलो अप करेंगे।"
         ),
     },
     "identity_mismatch_ack": {
