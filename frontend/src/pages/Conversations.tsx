@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import type {
@@ -38,6 +38,12 @@ function senderTag(message: Message, customerLabel: string): { text: string; ico
   return { text: customerLabel, icon: "user", cls: "customer-tag" };
 }
 
+function renderBold(content: string): ReactNode {
+  const parts = content.split(/\*([^*\n]+)\*/);
+  if (parts.length === 1) return content;
+  return parts.map((part, index) => (index % 2 === 1 ? <strong key={index}>{part}</strong> : part));
+}
+
 export function Bubble({
   message,
   customerLabel,
@@ -62,7 +68,7 @@ export function Bubble({
           {tag.text}
         </span>
         <div className={bubbleClassName} style={unsent ? { background: "transparent", border: "1px dashed var(--blue)" } : undefined}>
-          {message.content}
+          {renderBold(message.content)}
         </div>
         <span className="subline">
           {formatIst(message.created_at)}

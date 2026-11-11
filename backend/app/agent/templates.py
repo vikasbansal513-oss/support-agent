@@ -86,18 +86,19 @@ T: dict[str, dict[str, str]] = {
     "handoff_ack_with_status": {
         "en": (
             "Here is a quick update on your order *{order_name}*: {status_line}\n\n"
-            "I have also passed the rest of your request to our team. They will reply "
-            "to you here. Expected within *{sla} minutes* during working hours."
+            "I have noted the rest of your request and passed it, with these details, to our "
+            "team. They will reply to you here. Expected within *{sla} minutes* during "
+            "working hours."
         ),
         "hinglish": (
             "Aapke order *{order_name}* ka turant update: {status_line}\n\n"
-            "Aapki baaki request maine hamari team ko de di hai. Woh yahin aapko reply "
-            "karenge. Working hours me lagbhag *{sla} minute* me."
+            "Aapki baaki request maine in details ke saath note karke hamari team ko de di "
+            "hai. Woh yahin aapko reply karenge. Working hours me lagbhag *{sla} minute* me."
         ),
         "hi": (
             "आपके ऑर्डर *{order_name}* का त्वरित अपडेट: {status_line}\n\n"
-            "आपके अनुरोध का बाकी हिस्सा मैंने हमारी टीम को दे दिया है। वे यहीं आपको "
-            "जवाब देंगे। कार्य समय में लगभग *{sla} मिनट* में।"
+            "आपके अनुरोध का बाकी हिस्सा मैंने इन विवरणों के साथ नोट करके हमारी टीम को दे दिया "
+            "है। वे यहीं आपको जवाब देंगे। कार्य समय में लगभग *{sla} मिनट* में।"
         ),
     },
     "off_hours_ack_with_status": {

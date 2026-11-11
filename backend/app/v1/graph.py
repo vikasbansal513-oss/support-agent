@@ -90,6 +90,42 @@ WRITE_INTENT_TOOL: dict[str, WriteTool] = {
 }
 
 
+EMPATHY_SENTIMENT = -0.2
+NO_EMPATHY_REASONS = frozenset({"ABUSE", "THREAT", "AGENT_PAUSED"})
+EMPATHY_LINE = {
+    "en": "I'm sorry for the trouble and the wait.",
+    "hinglish": "Pareshani aur intezaar ke liye maafi chahta hoon.",
+    "hi": "परेशानी और इंतज़ार के लिए क्षमा चाहता हूँ।",
+}
+
+
+def _with_empathy(state: State, reason: str, ack: dict[str, Any] | None) -> dict[str, Any] | None:
+    """One short apology line for a customer who sounded unhappy (planner sentiment at or
+    below mild impatience, -0.2). Only the generic handoff acks reach this (never abuse/
+    threat, never a paused agent), and it goes after the AI-disclosure line, not before it.
+    A plain status question with neutral sentiment gets no apology."""
+    if ack is None or reason in NO_EMPATHY_REASONS:
+        return ack
+    plan = state.get("plan") or {}
+    try:
+        sentiment = float(plan.get("sentiment") or 0.0)
+    except (TypeError, ValueError):
+        return ack
+    if sentiment > EMPATHY_SENTIMENT:
+        return ack
+    lang = str(ack.get("language") or "en")
+    line = EMPATHY_LINE.get(lang, EMPATHY_LINE["en"])
+    body = str(ack["text"])
+    disclosure = f"{_disclosure_text(state, lang)}\n\n" if state.get("first_message") else ""
+    if disclosure and body.startswith(disclosure):
+        body = f"{disclosure}{line}\n\n{body[len(disclosure) :]}"
+    else:
+        body = f"{line}\n\n{body}"
+    if len(body) > 1500:
+        return ack
+    return {**ack, "text": body, "facts_used": [*ack.get("facts_used", []), "empathy"]}
+
+
 @dataclass
 class V1Deps:
     llm: LlmClient
@@ -289,6 +325,8 @@ def handoff_decision(state: State, reason: str) -> DecisionV1:
         ack = _v0_reply(state, "identity_mismatch_ack", order=summary.order_ref or "-")
     else:
         ack = _v0_reply(state, template_id)
+    if template_id == "handoff_ack":
+        ack = _with_empathy(state, reason, ack)
     return DecisionV1(
         action="handoff",
         reason_code=reason,
