@@ -254,7 +254,6 @@ _REQUEST_NOTES = {
         "other": "मैंने आपके अनुरोध का बाकी हिस्सा नोट कर लिया है।",
     },
 }
-_EMAIL_GREETING = {"en": "Hi {name},", "hinglish": "Hi {name},", "hi": "नमस्ते {name},"}
 
 
 def _request_note(text: str, lang: str) -> str:
@@ -281,22 +280,6 @@ def _order_block(order: OrderFacts, status_line: str, lang: str) -> str:
     rows.append(f"- {total_label}: *Rs {v0_templates.paise_to_rs(order.total_paise)}*")
     rows.append(f"- {status_label}: {status_line}")
     return "\n".join(rows)
-
-
-def _with_email_greeting(
-    state: State, ack: dict[str, Any] | None, order: OrderFacts | None
-) -> dict[str, Any] | None:
-    """Email only: opens with the customer's first name, taken from the verified order."""
-    if ack is None or order is None or state.get("channel") != "email":
-        return ack
-    first = (order.customer_name or "").split()[:1]
-    if not first:
-        return ack
-    template = _EMAIL_GREETING.get(str(ack.get("language")), _EMAIL_GREETING["en"])
-    body = f"{template.format(name=first[0])}\n\n{ack['text']}"
-    if len(body) > 1500:
-        return ack
-    return {**ack, "text": body, "facts_used": [*ack.get("facts_used", []), "customer_name"]}
 
 
 async def _status_facts_for_mixed_handoff(deps: V1Deps, state: State) -> dict[str, Any] | None:
@@ -402,7 +385,6 @@ def handoff_decision(state: State, reason: str) -> DecisionV1:
         ack = _v0_reply(state, template_id)
     if template_id == "handoff_ack":
         ack = _with_empathy(state, reason, ack)
-        ack = _with_email_greeting(state, ack, status_order)
     return DecisionV1(
         action="handoff",
         reason_code=reason,
