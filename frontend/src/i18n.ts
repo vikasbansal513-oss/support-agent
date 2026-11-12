@@ -935,6 +935,7 @@ export const t = {
 
   // Conversations inbox reskin -- additive keys only.
   conversationsSubtitle: "Customer conversations across WhatsApp, email and voice, in one place.",
+  toggleChatList: "Toggle Chat List (Ctrl + Shift + S)",
   selectConversationHint: "Select a chat from the list to view the conversation.",
   customerPanelTitle: "Customer",
   currentOrderLabel: "Current order",

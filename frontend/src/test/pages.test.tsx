@@ -129,6 +129,38 @@ describe("screens", () => {
     expect(screen.getAllByText("******3210").length).toBeGreaterThan(0);
   });
 
+  it("toggles the chat list with the button and Ctrl+Shift+S while the open chat stays", async () => {
+    window.localStorage.removeItem("chat-list-open");
+    mockFetch((call) =>
+      call.url.includes("/conversations/c1")
+        ? {
+            body: {
+              id: "c1", channel: "whatsapp", status: "open", customer: { id: "x", masked_phone: "******3210", masked_email: null },
+              active_order_ref: null, language: "hinglish", human_active: false, last_message_at: null,
+              messages: [{ id: "m1", direction: "in", sender: "customer", content: "order kahan hai", created_at: "2026-01-01T00:00:00Z", action_status: null }],
+            },
+          }
+        : undefined,
+    );
+    renderApp(
+      <Routes>
+        <Route path="/conversations/:id" element={<ConversationView />} />
+      </Routes>,
+      "/conversations/c1",
+    );
+    expect(await screen.findByText("order kahan hai")).toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: t.toggleChatList });
+    expect(toggle).toHaveAttribute("title", t.toggleChatList);
+    const panel = document.getElementById("chat-list-panel");
+    expect(panel).not.toHaveAttribute("hidden");
+    await userEvent.click(toggle);
+    expect(panel).toHaveAttribute("hidden");
+    expect(screen.getByText("order kahan hai")).toBeInTheDocument();
+    await userEvent.keyboard("{Control>}{Shift>}s{/Shift}{/Control}");
+    expect(panel).not.toHaveAttribute("hidden");
+    window.localStorage.removeItem("chat-list-open");
+  });
+
   it("handoffs list shows empty state", async () => {
     mockFetch(() => ({ body: { items: [], next_cursor: null } }));
     renderApp(<Handoffs />);

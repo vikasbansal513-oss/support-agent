@@ -36,6 +36,7 @@ export function IconSprite() {
       <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15.4-6.4L21 8M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-15.4 6.4L3 16M3 21v-5h5" /></symbol>
       <symbol id="i-filter" viewBox="0 0 24 24"><path d="M3 4h18l-7 9v6l-4 2v-8L3 4Z" /></symbol>
       <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1" /><rect x="14" y="4" width="4" height="16" rx="1" /></symbol>
+      <symbol id="i-panel-left" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M5.5 8h.01M5.5 11h.01M5.5 14h.01" /></symbol>
       <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol>
       <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" /></symbol>
       <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l2-8 4 16 2-8h6" /></symbol>

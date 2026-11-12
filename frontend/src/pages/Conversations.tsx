@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import type {
@@ -15,6 +15,7 @@ import { useApi } from "../components/useApi";
 import { formatIst } from "../format";
 import { t, type Key } from "../i18n";
 
+const LIST_OPEN_KEY = "chat-list-open";
 const STATUSES = ["", "open", "handoff", "resolved", "closed"] as const;
 const CHANNEL_ICON: Record<Conversation["channel"], string> = { whatsapp: "whatsapp", email: "mail", voice: "phone" };
 
@@ -340,6 +341,35 @@ export function Conversations() {
   const [cursorStack, setCursorStack] = useState<(string | null)[]>([null]);
   const [cursorIndex, setCursorIndex] = useState(0);
   const cursor = cursorStack[cursorIndex] ?? null;
+  const [listOpen, setListOpen] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem(LIST_OPEN_KEY) !== "0";
+    } catch {
+      return true;
+    }
+  });
+
+  const toggleList = useCallback(() => {
+    setListOpen((open) => {
+      try {
+        window.localStorage.setItem(LIST_OPEN_KEY, open ? "0" : "1");
+      } catch {
+        // Storage can be blocked; the toggle still works for this visit.
+      }
+      return !open;
+    });
+  }, []);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        toggleList();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleList]);
 
   const [page, reload] = useApi(
     () =>
@@ -362,6 +392,17 @@ export function Conversations() {
     <section className="chat-page">
       <div className="chat-page-head">
         <div className="chat-page-title">
+          <button
+            type="button"
+            className="chat-list-toggle"
+            title={t.toggleChatList}
+            aria-label={t.toggleChatList}
+            aria-expanded={listOpen}
+            aria-controls="chat-list-panel"
+            onClick={toggleList}
+          >
+            <Icon name="panel-left" />
+          </button>
           <h1>{t.navConversations}</h1>
           <p>{t.conversationsSubtitle}</p>
         </div>
@@ -380,8 +421,8 @@ export function Conversations() {
           ))}
         </div>
       </div>
-      <div className="chat-shell-3">
-        <div className="card chat-list" style={{ padding: "6px 0" }}>
+      <div className={listOpen ? "chat-shell-3" : "chat-shell-3 list-hidden"}>
+        <div id="chat-list-panel" className="card chat-list" style={{ padding: "6px 0" }} hidden={!listOpen}>
           <Async value={page} reload={reload}>
             {(p) =>
               p.items.length === 0 ? (
