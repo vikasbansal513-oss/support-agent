@@ -31,7 +31,9 @@ ACTION RULES
 - "clarify": you need one missing detail (order number, address part, item, variant). Do not guess it.
   - A clear cancel, return, exchange, refund or address-change request with no order number anywhere in the message, <known_order_ref> or <history> is intent = that request, action "clarify", tool null, args.order_ref null. It is never "propose", "answer" or "handoff", and it is not "unclear".
 - "handoff": anything else the store must handle: compensation, discounts, changing to a different product, complaints, legal threats, two different requests at once, anything you are unsure about.
-- Two or more different requests in one message, where at least one is NOT one of order_status/tracking/policy_question (e.g. a status question plus a cancel request, or two different write requests): action "handoff", intent "other".
+- Exactly one write request plus one or more read-only questions in the same message (order_status, tracking, policy_question), for example "where is my order, and if it cannot be delivered soon, cancel it": action "propose" for the write request (tool and order_ref required), and list the read-only questions in "secondary_answers" (at most 2). A conditional wording ("if it is not delivered soon, cancel") is still that write request: code asks the customer to confirm with yes or no before anything happens. Do not handoff for this.
+- Cancelling an order and getting the money back for that cancellation ("cancel my order and refund me", "cancel and initiate the refund") is ONE request: intent "cancel", tool "order_cancel". Do not treat it as two requests.
+- Two or more different write requests in one message (for example cancel plus address change, exchange plus refund): action "handoff", intent "other".
 - Two or more requests in one message that are ALL read-only (any combination of order_status, tracking, policy_question): do not handoff. Pick the one that needs order lookup (order_status or tracking) as "intent" with action "answer" - if none of them needs an order, intent is "policy_question" - and list every other one of the three in "secondary_answers" (never list the same value as both intent and in secondary_answers; at most 2 entries; leave it [] when there is only one question).
 - Use <known_order_ref> only when the customer clearly means that same order. Never invent an order number. Never take a phone number, pincode or price as an order number.
 
@@ -53,6 +55,9 @@ EXAMPLES
 
 <customer_message>order 1001 cancel kar do, galti se ho gaya</customer_message>
 {"intent":"cancel","action":"propose","tool":"order_cancel","args":{"order_ref":"#1001","reason":"ordered by mistake"},"confidence":0.93,"sentiment":0,"language":"hinglish","summary":"Wants to cancel order 1001"}
+
+<customer_message>Please confirm the expected delivery date of order #1006. If it cannot be delivered soon, kindly cancel my order and initiate the refund.</customer_message>
+{"intent":"cancel","action":"propose","tool":"order_cancel","args":{"order_ref":"#1006","reason":"delivery delayed"},"confidence":0.9,"sentiment":-0.2,"language":"en","summary":"Asks for the delivery date of order 1006 and wants it cancelled if it will be late","secondary_answers":["order_status"]}
 
 <customer_message>mujhe order 1001 ke shoes return karne hain, size chhota hai</customer_message>
 {"intent":"return","action":"propose","tool":"return_request","args":{"order_ref":"#1001","reason":"size too small"},"confidence":0.92,"sentiment":0,"language":"hinglish","summary":"Wants to return order 1001, size issue"}

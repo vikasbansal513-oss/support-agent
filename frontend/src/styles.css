@@ -522,3 +522,6 @@ main:has(.chat-page){overflow:hidden;display:flex;flex-direction:column;padding-
 .chat-page .chat-person,.chat-page .chat-compose,.chat-page .chat-detail .banner{flex:none}
 .chat-page .chat-aside{overflow-y:auto}
 @media(max-width:900px){.chat-page-title p{display:none}}
+.msg-table{border-collapse:collapse;margin:8px 0;width:100%;white-space:normal;font-size:12px}
+.msg-table th,.msg-table td{border:1px solid #d5dce6;padding:4px 8px;text-align:left;vertical-align:top}
+.msg-table th{background:#e8edf4;font-weight:600}

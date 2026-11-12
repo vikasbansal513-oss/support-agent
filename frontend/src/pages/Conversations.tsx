@@ -44,6 +44,51 @@ function renderBold(content: string): ReactNode {
   return parts.map((part, index) => (index % 2 === 1 ? <strong key={index}>{part}</strong> : part));
 }
 
+// Email replies store their order-details table as TABLE_START / "Label|Value" rows / TABLE_END
+// (the email sender turns it into an HTML table); show it as a real table here too.
+const TABLE_BLOCK = /TABLE_START\n([\s\S]*?)\nTABLE_END\n?/;
+
+function renderMessage(content: string): ReactNode {
+  const parts: ReactNode[] = [];
+  let rest = content.replace(/\r\n/g, "\n");
+  let key = 0;
+  for (let match = TABLE_BLOCK.exec(rest); match !== null; match = TABLE_BLOCK.exec(rest)) {
+    const rows = (match[1] ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line !== "")
+      .map((line) => line.split("|").map((cell) => cell.trim()));
+    parts.push(<span key={key++}>{renderBold(rest.slice(0, match.index))}</span>);
+    if (rows.length > 0) {
+      const [head, ...body] = rows;
+      parts.push(
+        <table key={key++} className="msg-table">
+          <thead>
+            <tr>
+              {(head ?? []).map((cell, i) => (
+                <th key={i}>{cell}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {body.map((row, r) => (
+              <tr key={r}>
+                {row.map((cell, i) => (
+                  <td key={i}>{cell}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>,
+      );
+    }
+    rest = rest.slice(match.index + match[0].length);
+  }
+  if (parts.length === 0) return renderBold(rest);
+  parts.push(<span key={key++}>{renderBold(rest)}</span>);
+  return parts;
+}
+
 export function Bubble({
   message,
   customerLabel,
@@ -68,7 +113,7 @@ export function Bubble({
           {tag.text}
         </span>
         <div className={bubbleClassName} style={unsent ? { background: "transparent", border: "1px dashed var(--blue)" } : undefined}>
-          {renderBold(message.content)}
+          {renderMessage(message.content)}
         </div>
         <span className="subline">
           {formatIst(message.created_at)}

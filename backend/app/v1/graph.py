@@ -294,6 +294,27 @@ def _handoff_status_line(order: OrderFacts, tracking: TrackingFacts | None, lang
     return {"en": f"Status: {word}.", "hinglish": f"Status: {word}.", "hi": f"स्थिति: {word}।"}[lang]
 
 
+_NOT_SHIPPED_NOTE = {
+    "en": "Your order *{order}* has not shipped yet, so there is no expected delivery date right now.\n\n",
+    "hinglish": (
+        "Aapka order *{order}* abhi ship nahi hua hai, isliye abhi koi expected delivery date nahi hai.\n\n"
+    ),
+    "hi": (
+        "आपका ऑर्डर *{order}* अभी शिप नहीं हुआ है, इसलिए अभी कोई अपेक्षित डिलीवरी तिथि उपलब्ध नहीं है।\n\n"
+    ),
+}
+STATUS_ASKS = frozenset({"order_status", "tracking"})
+
+
+def _status_note(order: OrderFacts, lang: str) -> str:
+    """The read-only half of a mixed message ("where is my order ... if late, cancel it"),
+    built only from the verified order, placed above the confirmation question. An
+    unshipped order says plainly that no delivery date exists yet."""
+    if order.fulfillment_status in ("unfulfilled", ""):
+        return _NOT_SHIPPED_NOTE[lang].format(order=order.order_name)
+    return f"*{order.order_name}*: {_handoff_status_line(order, None, lang)}\n\n"
+
+
 MAX_ACK_ITEMS = 3
 _CANCEL_ASK = re.compile(r"cancel|कैंसिल|रद्द", re.IGNORECASE)
 _REFUND_ASK = re.compile(r"refund|money back|paisa wapas|paise wapas|रिफंड|पैसे वापस", re.IGNORECASE)
@@ -305,8 +326,7 @@ _ORDER_LABELS = {
 _RETURN_ASK = re.compile(r"\breturn|वापस भेज|रिटर्न|wapas bhej", re.IGNORECASE)
 _EXCHANGE_ASK = re.compile(r"exchange|replace|एक्सचेंज|badalna|badal do", re.IGNORECASE)
 _COMPLAINT_ASK = re.compile(
-    r"complain|damag|defect|broken|faulty|wrong item|not received|didn.?t receive|"
-    r"nahi mila|nahi aaya|mila nahi|शिकायत|खराब|टूटा|shikayat",
+    r"complain|damag|defect|broken|faulty|wrong item|शिकायत|खराब|टूटा|shikayat",
     re.IGNORECASE,
 )
 _REQUEST_KINDS = (
@@ -1061,6 +1081,8 @@ def build_graph_v1(deps: V1Deps) -> Any:
         )
         lang = _lang(state)
         note = t.render("approval_note" if decision.route == "approval" else "no_note", lang)
+        if state.get("channel") != "voice" and STATUS_ASKS.intersection(plan.secondary_answers):
+            note = _status_note(order, lang) + note
         if plan.sentiment < 0:
             # Already past rules()'s SENTIMENT_NEGATIVE handoff check (plan.sentiment >=
             # policy.sentiment_min there), so any remaining negative score here is a
