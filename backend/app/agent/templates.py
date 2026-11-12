@@ -119,8 +119,8 @@ T: dict[str, dict[str, str]] = {
             "with this order.\n\n"
             "For security reasons, please reply from the email address you used when "
             "placing this order.\n\n"
-            "If you can no longer use that email address, reply with the words *talk to a "
-            "human* and our team will help you."
+            "If you no longer have access to that email address, just reply to this email "
+            "and tell us you would like to speak with our team. We will be happy to help."
         )
         for lang in ("en", "hinglish", "hi")
     },

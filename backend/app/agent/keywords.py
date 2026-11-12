@@ -53,6 +53,12 @@ HUMAN = _rx(
         "representative",
         "talk to someone",
         "speak to someone",
+        *(
+            f"{verb} {det} team"
+            for verb in ("talk to", "talk with", "speak to", "speak with")
+            for det in ("your", "our", "the")
+        ),
+        "team se baat",
         "call me",
         "call karo",
         "call kijiye",
