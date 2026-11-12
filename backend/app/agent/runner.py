@@ -133,7 +133,7 @@ async def _load_state(
         await session.execute(
             text(
                 "SELECT c.customer_id, c.channel, c.human_active, c.active_order_ref,"
-                " c.identity_attempts, c.language, cu.phone_e164, cu.email_lower"
+                " c.identity_attempts, c.language, cu.phone_e164, cu.email_lower, cu.name"
                 " FROM conversations c JOIN customers cu ON cu.id = c.customer_id WHERE c.id = :c"
             ),
             {"c": conversation_id},
@@ -211,6 +211,7 @@ async def _load_state(
         "customer_masked": masked,
         "customer_phone": phone,
         "customer_email": email,
+        "customer_name": conv.name,
         "active_order_ref": conv.active_order_ref,
         "prior_customer_refs": prior,
         "last_language": conv.language,

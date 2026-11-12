@@ -160,7 +160,7 @@ def _email_order_ack(
     a full order-details table (all from the verified order) and what happens next."""
     empathy = _empathy_text(state, reason, lang)
     facts: dict[str, object] = {
-        "greeting": t.greeting(lang),
+        "greeting": t.greeting(lang, state.get("customer_name")),
         "note": f"{empathy}\n\n" if empathy else "",
         "request_note": request_note,
         "order_block": t.order_details("email", lang, order, delivery_text=status_line),
@@ -219,7 +219,11 @@ def _ask_order_ref(state: State, plan: Plan) -> dict[str, Any]:
     if plan.intent not in WRITE_INTENT_TOOL:
         return _v0_reply(state, "ask_order_ref")
     if state.get("channel") == "email":
-        return _reply(state, "ask_order_ref_write", greeting=t.greeting("en"))
+        return _reply(
+            state,
+            "ask_order_ref_write",
+            greeting=t.greeting("en", state.get("customer_name")),
+        )
     return _reply(state, "ask_order_ref_write")
 
 
@@ -983,7 +987,15 @@ def build_graph_v1(deps: V1Deps) -> Any:
                 "request": t.REQUEST_NOUN.get(dup_lang, t.REQUEST_NOUN["en"])[tool],
             }
             dup_facts.update(
-                t.detail_facts(state.get("channel"), dup_lang, tool, order, dup_facts, dup_status)
+                t.detail_facts(
+                    state.get("channel"),
+                    dup_lang,
+                    tool,
+                    order,
+                    dup_facts,
+                    dup_status,
+                    greet_name=state.get("customer_name"),
+                )
             )
             conv["awaiting"] = "none"
             return {"conv": conv, "v1_reply": _reply(state, dup_template, **dup_facts)}
@@ -1064,7 +1076,14 @@ def build_graph_v1(deps: V1Deps) -> Any:
                 "days": policy.return_window_days,
             }
             decline_facts.update(
-                t.detail_facts(state.get("channel"), _lang(state), tool, order, decline_facts)
+                t.detail_facts(
+                    state.get("channel"),
+                    _lang(state),
+                    tool,
+                    order,
+                    decline_facts,
+                    greet_name=state.get("customer_name"),
+                )
             )
             return {
                 **gate_note,
@@ -1104,7 +1123,11 @@ def build_graph_v1(deps: V1Deps) -> Any:
             pass
         else:
             facts.update(address=_address_text(args["new_address"]))
-        facts.update(t.detail_facts(state.get("channel"), lang, tool, order, facts))
+        facts.update(
+            t.detail_facts(
+                state.get("channel"), lang, tool, order, facts, greet_name=state.get("customer_name")
+            )
+        )
         conv.update(awaiting="confirm", unclear_count=0, order_ref=order.order_name)
         return {
             **gate_note,

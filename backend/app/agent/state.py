@@ -7,6 +7,7 @@ class State(AgentState, total=False):
     customer_masked: str | None
     customer_phone: str | None
     customer_email: str | None
+    customer_name: str | None
     active_order_ref: str | None
     opens_label: str | None
     attempt: int

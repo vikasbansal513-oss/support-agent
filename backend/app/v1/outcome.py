@@ -63,7 +63,15 @@ def order_snapshot(final: Mapping[str, Any]) -> dict[str, Any] | None:
         order = OrderFacts.model_validate(raw)
     except ValidationError:
         return None
-    stripped = order.model_copy(update={"customer_phone": None, "customer_email": None})
+    # customer_name becomes the sender's own name (or None): the outcome email greets with it,
+    # and the order's name may belong to someone else.
+    stripped = order.model_copy(
+        update={
+            "customer_phone": None,
+            "customer_email": None,
+            "customer_name": final.get("customer_name"),
+        }
+    )
     return stripped.model_dump(mode="json")
 
 
@@ -112,7 +120,16 @@ def outcome_facts(
     # include_status=False: payment/delivery come from the confirm-time snapshot and would
     # be stale next to "completed"; the request rows carry the real, current status.
     facts.update(
-        t.detail_facts(channel, lang, action.tool, order, facts, status, include_status=False)
+        t.detail_facts(
+            channel,
+            lang,
+            action.tool,
+            order,
+            facts,
+            status,
+            include_status=False,
+            greet_name=order.customer_name if order else None,
+        )
     )
     return facts
 

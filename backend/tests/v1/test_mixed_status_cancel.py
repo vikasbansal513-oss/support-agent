@@ -1,3 +1,4 @@
+from app.v1 import templates as t
 from app.v1.graph import _request_note
 from tests.agent.helpers import AgentEnv
 from tests.v1.flow import actions, last_reply, plan, say, setup
@@ -32,3 +33,14 @@ def test_not_received_is_not_a_complaint() -> None:
     note = _request_note("I have still not received my order, please cancel it", "en")
     assert "complaint" not in note and "cancellation" in note
     assert "complaint" in _request_note("the item arrived damaged", "en")
+
+
+def test_greeting_uses_only_the_senders_first_name() -> None:
+    assert t.greeting("en", "Vikas Bansal") == "Dear Vikas,"
+    assert t.greeting("en", "manisha bansal") == "Dear Manisha,"
+    assert t.greeting("hi", "विकास बंसल") == "प्रिय विकास,"
+    assert t.greeting("en", None) == "Dear Customer,"
+    assert t.greeting("en", "   ") == "Dear Customer,"
+    assert t.greeting("en", "vikas@gmail.com") == "Dear Customer,"
+    assert t.greeting("en", "12345") == "Dear Customer,"
+    assert t.greeting("en", "Vik<b>as") == "Dear Vikbas,"

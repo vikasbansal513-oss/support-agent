@@ -1,3 +1,4 @@
+import unicodedata
 from collections.abc import Sequence
 from string import Formatter
 
@@ -946,11 +947,28 @@ _GREETING = {
 }
 
 
+def first_name(raw: str | None) -> str | None:
+    """The sender's first name for a salutation, or None. The name is customer-supplied text
+    (an email From header), so only letters (any script), marks, apostrophes and hyphens
+    survive, an address or a number never becomes a name, and it is length-capped."""
+    parts = (raw or "").split()
+    token = parts[0] if parts else ""
+    if "@" in token:
+        return None
+    kept = "".join(
+        ch for ch in token if ch.isalpha() or unicodedata.category(ch)[0] == "M" or ch in "'-"
+    )[:30]
+    if not any(ch.isalpha() for ch in kept):
+        return None
+    return kept[:1].upper() + kept[1:]
+
+
 def greeting(lang: str, name: str | None = None) -> str:
-    """Formal email salutation; "Dear Customer," when no name is given (handoff acks never
-    echo the order's name - only the verified confirm/outcome flows pass one)."""
+    """Formal email salutation with the sender's own first name; "Dear Customer," when there
+    is none. Callers pass the name of the person writing (never the Shopify order's name -
+    an order can be placed by someone else)."""
     name_tpl, no_name = _GREETING.get(lang, _GREETING["en"])
-    clean = (name or "").strip()
+    clean = first_name(name)
     return name_tpl.format(name=clean) if clean else no_name
 
 
@@ -1143,6 +1161,7 @@ def detail_facts(
     facts: dict[str, object],
     status: str | None = None,
     include_status: bool = True,
+    greet_name: str | None = None,
 ) -> dict[str, object]:
     """{details}/{greeting}/{items_table} facts for the email and WhatsApp reply templates
     above - a no-op (returns {}) for any other channel (voice reads the plain T text), so
@@ -1166,6 +1185,6 @@ def detail_facts(
             details = "\n".join(f"- {k}: *{_cell(v)}*" for k, v in fallback)
     result: dict[str, object] = {"details": details}
     if channel == "email":
-        result["greeting"] = greeting(lang, order.customer_name if order else None)
+        result["greeting"] = greeting(lang, greet_name)
         result["items_table"] = details
     return result
