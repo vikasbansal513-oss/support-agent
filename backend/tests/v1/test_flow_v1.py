@@ -198,7 +198,12 @@ async def test_write_intent_without_order_number_asks_for_it_instead_of_handoff(
     env: AgentEnv,
 ) -> None:
     await setup(env)
-    await say(env, "please cancel my order", "n1", plan("cancel", "propose", None, ref=None))
+    await say(
+        env,
+        "please cancel my order",
+        "n1",
+        plan("cancel", "clarify", None, ref=None, confidence=0.5),
+    )
     assert "order number" in last_reply(env)
     assert await env.q("SELECT reason_code FROM handoffs") == []
     assert await actions(env) == []
