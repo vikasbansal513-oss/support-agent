@@ -523,6 +523,7 @@ export const t = {
   limitsTitle: "Automation limits",
   limit_cancel_auto_limit_paise: "Cancel auto limit (₹)",
   limit_exchange_auto_limit_paise: "Exchange auto limit (₹)",
+  limit_return_auto_limit_paise: "Return auto limit (₹)",
   limit_refund_auto_limit_paise: "Refund auto limit (₹)",
   limit_refund_customer_daily_paise: "Refund customer daily limit (₹)",
   limit_brand_daily_auto_value_paise: "Brand daily auto limit (₹)",

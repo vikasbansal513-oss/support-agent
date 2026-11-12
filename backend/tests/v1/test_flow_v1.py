@@ -153,14 +153,32 @@ async def test_two_unclear_answers_hand_off(env: AgentEnv) -> None:
     assert action.status == "expired" and shop.calls == []
 
 
-async def test_gate_handoffs_use_v1_reason_codes(env: AgentEnv) -> None:
+async def test_high_value_order_goes_to_approvals_not_handoff(env: AgentEnv) -> None:
     tools, shop = await setup(env)
     tools.orders["#1001"] = facts(total=900_000)
     await say(env, "order #1001 cancel kar do", "g1", plan())
-    assert (await env.q("SELECT reason_code, priority FROM handoffs"))[
-        0
-    ].reason_code == "HIGH_RISK_FLAG"
-    assert await actions(env) == []
+    assert await env.q("SELECT reason_code FROM handoffs") == []
+    (pending,) = await actions(env, "order_cancel")
+    assert pending.status == "awaiting_customer" and pending.requires_approval is True
+    assert shop.calls == []
+
+
+async def test_refund_on_unshipped_order_is_declined_not_handed_off(env: AgentEnv) -> None:
+    _, shop = await setup(env)
+    llm = plan("refund", "propose", "refund_create", args={"reason": "no longer needed"})
+    await say(env, "order #1001 ka refund chahiye", "g2", llm)
+    assert "not marked as delivered" in last_reply(env)
+    assert await env.q("SELECT reason_code FROM handoffs") == []
+    assert await actions(env) == [] and shop.calls == []
+
+
+async def test_shipped_order_cancel_still_hands_off(env: AgentEnv) -> None:
+    tools, shop = await setup(env)
+    result, gate = tools.orders["#1001"]
+    tools.orders["#1001"] = (result, replace(gate, fulfillment_status="fulfilled"))
+    await say(env, "order #1001 cancel kar do", "g3", plan())
+    assert (await env.q("SELECT reason_code FROM handoffs"))[0].reason_code == "POLICY_EXCEPTION"
+    assert await actions(env) == [] and shop.calls == []
 
 
 async def test_tool_off_is_policy_exception(env: AgentEnv) -> None:

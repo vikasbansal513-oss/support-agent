@@ -45,6 +45,7 @@ class Limits(BaseModel):
     model_config = ConfigDict(extra="forbid")
     cancel_auto_limit_paise: int = Field(default=200_000, gt=0)
     exchange_auto_limit_paise: int = Field(default=200_000, gt=0)
+    return_auto_limit_paise: int = Field(default=200_000, gt=0)
     refund_auto_limit_paise: int = Field(default=50_000, gt=0)
     refund_customer_daily_paise: int = Field(default=100_000, gt=0)
     brand_daily_auto_value_paise: int = Field(default=2_000_000, gt=0)
@@ -219,6 +220,7 @@ def raised_levels(new: PolicyV2, published: PolicyV2 | None) -> list[str]:
 _LIMIT_TOOL = {
     "cancel_auto_limit_paise": "order_cancel",
     "exchange_auto_limit_paise": "exchange_request",
+    "return_auto_limit_paise": "return_request",
     "refund_auto_limit_paise": "refund_create",
     "refund_customer_daily_paise": "refund_create",
 }

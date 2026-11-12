@@ -240,6 +240,7 @@ export type Autonomy = Record<WriteTool, Level> & { order_status: "auto" };
 export interface Limits {
   cancel_auto_limit_paise: number;
   exchange_auto_limit_paise: number;
+  return_auto_limit_paise: number;
   refund_auto_limit_paise: number;
   refund_customer_daily_paise: number;
   brand_daily_auto_value_paise: number;

@@ -502,3 +502,23 @@ td.num,th.num{text-align:right;white-space:nowrap}
 .chat-aside-loading{color:#8291a8;font-size:12px;padding:4px 0}
 @media(max-width:1350px){.chat-shell-3{grid-template-columns:minmax(270px,1fr) minmax(300px,1.1fr)}.chat-shell-3 .chat-aside{display:none}}
 @media(max-width:900px){.chat-shell-3{grid-template-columns:1fr}.chat-shell-3 .chat-detail,.chat-shell-3 .chat-aside{display:none}}
+
+/* Chats page: the page itself never scrolls. Left list, the open chat's messages and the
+   customer panel scroll on their own; the reply box stays pinned under the messages. */
+main:has(.chat-page){overflow:hidden;display:flex;flex-direction:column;padding-bottom:12px}
+.chat-page{flex:1;min-height:0;display:flex;flex-direction:column}
+.chat-page-head{display:flex;align-items:center;justify-content:space-between;gap:8px 16px;flex-wrap:wrap;margin:0 0 10px}
+.chat-page-title{display:flex;align-items:baseline;gap:12px;min-width:0}
+.chat-page-title h1{font-size:22px;line-height:1.2;letter-spacing:-.4px;margin:0;color:#101827;font-weight:760}
+.chat-page-title p{font-size:12px;color:#657894;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-page .filters{margin:0}
+.chat-page .filter-tab{height:34px;padding:0 14px}
+.chat-page .chat-shell-3{flex:1;min-height:0;grid-template-rows:minmax(0,1fr)}
+.chat-page .chat-shell-3>*{margin:0;min-height:0}
+.chat-page .chat-list{overflow-y:auto}
+.chat-page .chat-list .pagination{position:sticky;bottom:0;background:#fff;border-top:1px solid #edf1f6}
+.chat-page .chat-detail{overflow:hidden}
+.chat-page .chat-detail .messages{flex:1 1 auto;min-height:0;overflow-y:auto}
+.chat-page .chat-person,.chat-page .chat-compose,.chat-page .chat-detail .banner{flex:none}
+.chat-page .chat-aside{overflow-y:auto}
+@media(max-width:900px){.chat-page-title p{display:none}}

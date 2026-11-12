@@ -48,7 +48,7 @@ from app.v1.contracts import (
     WriteIntent,
     WriteTool,
 )
-from app.v1.gate import GateContext, GateOrder, evaluate
+from app.v1.gate import GateContext, GateOrder, resolve
 from app.v1.policy import PolicyV2, parse_any
 from app.v1.toolbox import V1ToolBox
 
@@ -1013,10 +1013,24 @@ def build_graph_v1(deps: V1Deps) -> Any:
             channel="voice" if state.get("channel") == "voice" else "text",
             recent_claim_count=int(ctx_raw.get("recent_claims", 0)),
         )
-        decision = evaluate(policy, ctx)
+        decision = resolve(policy, ctx)
         gate_note = {"gate_ctx": {**ctx_raw, "last_reason": decision.reason}}
         if decision.route == "handoff":
             return _flag(state, decision.handoff_reason or "POLICY_EXCEPTION", **gate_note)
+        if decision.route == "decline":
+            conv.update(awaiting="none", unclear_count=0, order_ref=order.order_name)
+            decline_facts: dict[str, object] = {
+                "order": order.order_name,
+                "days": policy.return_window_days,
+            }
+            decline_facts.update(
+                t.detail_facts(state.get("channel"), _lang(state), tool, order, decline_facts)
+            )
+            return {
+                **gate_note,
+                "conv": conv,
+                "v1_reply": _reply(state, t.DECLINE_TEMPLATE[decision.reason], **decline_facts),
+            }
         intent = WriteIntent(
             tool=tool,
             order_ref=order.order_name,

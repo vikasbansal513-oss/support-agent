@@ -13,6 +13,7 @@ const TOOLS: WriteTool[] = ["address_update", "order_cancel", "exchange_request"
 const LIMIT_KEYS: (keyof Limits)[] = [
   "cancel_auto_limit_paise",
   "exchange_auto_limit_paise",
+  "return_auto_limit_paise",
   "refund_auto_limit_paise",
   "refund_customer_daily_paise",
   "brand_daily_auto_value_paise",
@@ -21,6 +22,7 @@ const LIMIT_KEYS: (keyof Limits)[] = [
 const DEFAULT_LIMITS: Limits = {
   cancel_auto_limit_paise: 200_000,
   exchange_auto_limit_paise: 200_000,
+  return_auto_limit_paise: 200_000,
   refund_auto_limit_paise: 50_000,
   refund_customer_daily_paise: 100_000,
   brand_daily_auto_value_paise: 2_000_000,
@@ -98,7 +100,7 @@ function Editor({ policy, latest, onDone }: { policy: Policy; latest: number; on
   });
   const [limits, setLimits] = useState<Record<keyof Limits, string>>(() => {
     const base = c.limits ?? DEFAULT_LIMITS;
-    return Object.fromEntries(LIMIT_KEYS.map((k) => [k, String(base[k] / 100)])) as Record<keyof Limits, string>;
+    return Object.fromEntries(LIMIT_KEYS.map((k) => [k, String((base[k] ?? DEFAULT_LIMITS[k]) / 100)])) as Record<keyof Limits, string>;
   });
   const [busy, setBusy] = useState(false);
   const [autoTarget, setAutoTarget] = useState<WriteTool | null>(null);

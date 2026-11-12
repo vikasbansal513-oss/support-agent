@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.v1.contracts import WriteTool
-from app.v1.gate import GateContext, GateOrder, amount_for, evaluate
+from app.v1.gate import GateContext, GateOrder, amount_for, evaluate, resolve
 from app.v1.policy import PolicyV2
 
 NOW = datetime(2026, 3, 10, 12, 0, tzinfo=UTC)
@@ -214,3 +214,82 @@ def test_claim_cluster_applies_to_every_claim_tool_not_address_update() -> None:
     # leak into a tool the framework never asked it to gate.
     addr = evaluate(policy("auto"), ctx("address_update", order(), recent_claim_count=3))
     assert addr.route == "auto"
+
+
+def test_resolve_declines_clear_policy_answers_instead_of_handoff() -> None:
+    late = order(fulfillment_status="fulfilled", delivered_at=NOW - timedelta(days=30))
+    cases = [
+        (ctx("refund_create", order()), "NOT_DELIVERED"),
+        (ctx("refund_create", late), "WINDOW_EXPIRED"),
+        (ctx("order_cancel", order(cancelled=True)), "ORDER_CLOSED"),
+        (ctx("refund_create", delivered(refunded_paise=100)), "ALREADY_REFUNDED"),
+        (ctx("exchange_request", delivered(exchange_already_requested=True)), "EXCHANGE_EXISTS"),
+        (ctx("return_request", delivered(return_already_requested=True)), "RETURN_EXISTS"),
+    ]
+    for context, reason in cases:
+        d = resolve(policy(), context)
+        assert d.route == "decline" and d.reason == reason, reason
+
+
+def test_resolve_sends_risk_flags_to_approval_once_hard_checks_pass() -> None:
+    big = resolve(policy(), ctx("order_cancel", order(total_paise=500_000)))
+    assert big.route == "approval" and big.reason == "HIGH_VALUE_ORDER"
+    disputed = resolve(policy(), ctx("order_cancel", order(disputed=True)))
+    assert disputed.route == "approval" and disputed.reason == "ORDER_DISPUTED"
+    recent = resolve(policy(), ctx("refund_create", delivered(), customer_refund_in_last_30d=True))
+    assert recent.route == "approval" and recent.reason == "RECENT_REFUND"
+    unknown = order(fulfillment_status="fulfilled", delivered_at=None)
+    assert resolve(policy(), ctx("refund_create", unknown)).reason == "DELIVERY_DATE_UNKNOWN"
+    assert resolve(policy(), ctx("refund_create", unknown)).route == "approval"
+
+
+def test_resolve_hard_checks_win_over_risk_flags() -> None:
+    big_shipped = order(total_paise=500_000, fulfillment_status="fulfilled")
+    assert resolve(policy(), ctx("order_cancel", big_shipped)).route == "handoff"
+    big_unshipped_refund = order(total_paise=500_000)
+    d = resolve(policy(), ctx("refund_create", big_unshipped_refund))
+    assert d.route == "decline" and d.reason == "NOT_DELIVERED"
+
+
+def test_resolve_keeps_handoff_for_off_killed_fraud_and_limits() -> None:
+    assert resolve(policy("off"), ctx("order_cancel", order())).route == "handoff"
+    assert resolve(policy(), ctx("order_cancel", order(), killed=True)).route == "handoff"
+    clustered = resolve(policy(), ctx("refund_create", delivered(), recent_claim_count=3))
+    assert clustered.route == "handoff" and clustered.reason == "CLAIM_CLUSTERING"
+    assert resolve(policy(), ctx("order_cancel", order(), write_count=99)).route == "handoff"
+    shipped = resolve(policy(), ctx("order_cancel", order(fulfillment_status="fulfilled")))
+    assert shipped.route == "handoff" and shipped.reason == "ALREADY_SHIPPED"
+    final = PolicyV2.model_validate(
+        {
+            "enabled_tools": TOOLS,
+            "final_sale_tags": ["final-sale"],
+            "autonomy": {"refund_create": "auto"},
+        }
+    )
+    assert resolve(final, ctx("refund_create", delivered(tags=("final-sale",)))).route == "handoff"
+
+
+def test_resolve_matches_evaluate_when_nothing_is_flagged() -> None:
+    assert resolve(policy(), ctx("order_cancel", order())) == evaluate(
+        policy(), ctx("order_cancel", order())
+    )
+
+
+def test_return_request_auto_is_capped_by_its_own_order_value_limit() -> None:
+    p = policy("auto", return_auto_limit_paise=50_000)
+    within = evaluate(p, ctx("return_request", delivered(total_paise=50_000)))
+    assert within.route == "auto" and within.reason == "AUTO_OK" and within.amount_paise == 0
+    over = evaluate(p, ctx("return_request", delivered(total_paise=50_001)))
+    assert over.route == "approval" and over.reason == "LIMIT_EXCEEDED" and over.amount_paise == 0
+
+
+def test_return_request_does_not_use_the_brand_daily_auto_value() -> None:
+    p = policy("auto", return_auto_limit_paise=50_000)
+    d = evaluate(
+        p, ctx("return_request", delivered(total_paise=40_000), brand_auto_value_today_paise=10**9)
+    )
+    assert d.route == "auto"
+
+
+def test_return_auto_limit_defaults_for_policies_saved_before_it_existed() -> None:
+    assert PolicyV2.model_validate({"schema_version": 2}).limits.return_auto_limit_paise == 200_000

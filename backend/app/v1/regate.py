@@ -9,7 +9,7 @@ from app.actions import writes
 from app.core import timeutil
 from app.core.db import session_scope
 from app.integrations.shopify_write import ShopifyWriter
-from app.v1.gate import GateContext, GateDecision, GateOrder, amount_for, evaluate
+from app.v1.gate import GateContext, GateDecision, GateOrder, amount_for, resolve
 from app.v1.policy import PolicyV2
 
 Factory = async_sessionmaker[AsyncSession]
@@ -140,7 +140,11 @@ async def regate(
         write_count=0,
         recent_claim_count=recent_claims,
     )
-    decision = evaluate(policy, ctx)
+    decision = resolve(policy, ctx)
+    if decision.route == "decline":
+        return GateDecision(
+            "handoff", decision.reason, "POLICY_EXCEPTION", decision.amount_paise, decision.tier
+        )
     if decision.route != "handoff" and amount_for(action.tool, order) != action.amount_paise:
         return GateDecision("handoff", "ORDER_CHANGED", "POLICY_EXCEPTION", decision.amount_paise)
     return decision

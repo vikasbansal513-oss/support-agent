@@ -195,6 +195,44 @@ T: dict[str, dict[str, str]] = {
         "en": "Okay, no changes have been made.",
         "hi": "ठीक है, कोई बदलाव नहीं किया गया।",
     },
+    "decline_not_shipped": {
+        "hinglish": (
+            "Order *{order}* abhi delivered nahi hua hai, isliye abhi return, exchange ya refund ki "
+            "request nahi ho sakti. Agar aap order cancel karna chahte hain to bata dijiye."
+        ),
+        "en": (
+            "Order *{order}* is not marked as delivered yet, so a return, exchange or refund cannot "
+            "be requested right now. If you would like to cancel the order instead, just let me know."
+        ),
+        "hi": (
+            "ऑर्डर *{order}* अभी डिलीवर नहीं हुआ है, इसलिए अभी रिटर्न, एक्सचेंज या रिफंड की रिक्वेस्ट "
+            "नहीं हो सकती। अगर आप ऑर्डर कैंसल करना चाहते हैं तो बता दीजिए।"
+        ),
+    },
+    "decline_window_expired": {
+        "hinglish": (
+            "Maaf kijiye, order *{order}* ki return window (delivery ke {days} din baad tak) khatam ho "
+            "chuki hai, isliye ye request nahi ho sakti."
+        ),
+        "en": (
+            "I'm sorry, the return window for order *{order}* ({days} days after delivery) has ended, "
+            "so this request cannot be processed."
+        ),
+        "hi": (
+            "क्षमा कीजिए, ऑर्डर *{order}* की रिटर्न विंडो (डिलीवरी के {days} दिन बाद तक) खत्म हो चुकी है, "
+            "इसलिए यह रिक्वेस्ट नहीं हो सकती।"
+        ),
+    },
+    "decline_order_closed": {
+        "hinglish": "Order *{order}* pehle hi cancel ya refund ho chuka hai, isliye ispar ab kuch aur nahi ho sakta.",
+        "en": "Order *{order}* has already been cancelled or refunded, so nothing more can be done on it.",
+        "hi": "ऑर्डर *{order}* पहले ही कैंसल या रिफंड हो चुका है, इसलिए इस पर अब कुछ और नहीं हो सकता।",
+    },
+    "decline_already_requested": {
+        "hinglish": "Order *{order}* ke liye is tarah ki request pehle se darj hai, isliye dusri request nahi ban sakti.",
+        "en": "A request of this kind is already registered for order *{order}*, so I cannot create another one.",
+        "hi": "ऑर्डर *{order}* के लिए इस तरह की रिक्वेस्ट पहले से दर्ज है, इसलिए दूसरी रिक्वेस्ट नहीं बन सकती।",
+    },
     "awaiting_team": {
         "hinglish": "Aapki confirmation mil gayi. Hamari team ise dekh rahi hai, update milte hi hum batayenge.",
         "en": "Thanks for confirming. Our team is reviewing it and we will update you as soon as it is done.",
@@ -230,6 +268,16 @@ T: dict[str, dict[str, str]] = {
         "en": "Your reference number is *{ref}*. Please share it if you contact us again about this.",
         "hi": "आपका रेफ़रेंस नंबर *{ref}* है। दोबारा संपर्क करते समय कृपया यह नंबर बताइए।",
     },
+}
+
+
+DECLINE_TEMPLATE: dict[str, str] = {
+    "NOT_DELIVERED": "decline_not_shipped",
+    "WINDOW_EXPIRED": "decline_window_expired",
+    "ORDER_CLOSED": "decline_order_closed",
+    "ALREADY_REFUNDED": "decline_order_closed",
+    "RETURN_EXISTS": "decline_already_requested",
+    "EXCHANGE_EXISTS": "decline_already_requested",
 }
 
 
@@ -816,6 +864,18 @@ EMAIL_T: dict[str, dict[str, str]] = {
         ),
     },
 }
+
+
+_DECLINE_SUMMARY = {
+    "en": "Here is a summary of your order:",
+    "hinglish": "Aapke order ka saransh:",
+    "hi": "आपके ऑर्डर का सारांश:",
+}
+for _decline_id in set(DECLINE_TEMPLATE.values()):
+    EMAIL_T[_decline_id] = {
+        _lang: f"{{greeting}}\n\n{T[_decline_id][_lang]}\n\n{_DECLINE_SUMMARY[_lang]}\n\n{{details}}\n"
+        for _lang in ("en", "hinglish", "hi")
+    }
 
 
 # Decision Framework Section 17.2: these are the write-flow confirm/done templates that

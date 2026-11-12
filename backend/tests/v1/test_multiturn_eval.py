@@ -277,23 +277,25 @@ async def test_approval_level_waits_for_owner_and_writes_once(env: AgentEnv) -> 
 
 
 @pytest.mark.parametrize("kind", KINDS)
-async def test_gate_blocks_become_handoffs_not_writes(env: AgentEnv, kind: str) -> None:
+async def test_gate_blocks_follow_the_autonomy_rules(env: AgentEnv, kind: str) -> None:
     tools, shop = await setup(env, "auto")
     run = Runner(env, tools, shop)
-    cases: list[tuple[str, int, bool | None]] = [("high_value", 900_000, None)]
-    if kind in ("cancel", "address_update"):
-        cases.append(("already_shipped", TOTAL, True))
-    else:
-        cases.append(("not_delivered", TOTAL, False))
+    shipped_blocks = kind in ("cancel", "address_update")
     for lang in LANGS:
-        for label, total, shipped in cases:
-            convo = run.start(kind, lang, total=total, shipped=shipped)
-            await run.ask(convo)
-            assert await run.rows(convo) == [], (kind, lang, label)
-            assert run.calls_for(convo) == 0 and not run.shop.orders[convo.order].cancelled
+        high = run.start(kind, lang, total=900_000)
+        await run.ask(high)
+        (row,) = await run.rows(high)
+        assert row.status == "awaiting_customer", (kind, lang, "high_value")
+        assert run.calls_for(high) == 0
+        blocked = run.start(kind, lang, shipped=shipped_blocks)
+        await run.ask(blocked)
+        assert await run.rows(blocked) == [], (kind, lang, "blocked")
+        assert run.calls_for(blocked) == 0 and not run.shop.orders[blocked.order].cancelled
     handoffs = await env.q("SELECT reason_code FROM handoffs")
-    assert len(handoffs) == 6
-    assert {h.reason_code for h in handoffs} <= {"HIGH_RISK_FLAG", "POLICY_EXCEPTION"}
+    if shipped_blocks:
+        assert len(handoffs) == 3 and {h.reason_code for h in handoffs} == {"POLICY_EXCEPTION"}
+    else:
+        assert handoffs == []
 
 
 async def test_answers_and_greetings_never_create_actions(env: AgentEnv) -> None:

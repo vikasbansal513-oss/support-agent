@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import type {
@@ -82,6 +82,29 @@ export function Bubble({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function MessageList({
+  messages,
+  customerLabel,
+  onReport,
+}: {
+  messages: Message[];
+  customerLabel: string;
+  onReport: (m: Message) => void;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = box.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages.length]);
+  return (
+    <div className="messages" ref={box}>
+      {messages.map((m) => (
+        <Bubble key={m.id} message={m} customerLabel={customerLabel} canReport onReport={onReport} />
+      ))}
     </div>
   );
 }
@@ -232,11 +255,7 @@ function ConversationDetailPane({ id }: { id: string }) {
             </div>
             {c.human_active && <p className="banner">{t.humanActive}</p>}
             {windowClosed && <p className="banner">{t.windowClosed}</p>}
-            <div className="messages">
-              {c.messages.map((m) => (
-                <Bubble key={m.id} message={m} customerLabel={conversationTitle(c)} canReport onReport={setReporting} />
-              ))}
-            </div>
+            <MessageList messages={c.messages} customerLabel={conversationTitle(c)} onReport={setReporting} />
             {reporting && (
               <div className="card">
                 <label className="field">
@@ -295,23 +314,29 @@ export function Conversations() {
   };
 
   return (
-    <Screen title={t.navConversations} subtitle={t.conversationsSubtitle}>
-      <div className="filters" role="tablist">
-        {STATUSES.map((value) => (
-          <button
-            key={value || "all"}
-            type="button"
-            role="tab"
-            aria-selected={value === status}
-            className={value === status ? "filter-tab active" : "filter-tab"}
-            onClick={() => changeStatus(value)}
-          >
-            {value ? t[statusKey(value)] : t.filterAll}
-          </button>
-        ))}
+    <section className="chat-page">
+      <div className="chat-page-head">
+        <div className="chat-page-title">
+          <h1>{t.navConversations}</h1>
+          <p>{t.conversationsSubtitle}</p>
+        </div>
+        <div className="filters" role="tablist">
+          {STATUSES.map((value) => (
+            <button
+              key={value || "all"}
+              type="button"
+              role="tab"
+              aria-selected={value === status}
+              className={value === status ? "filter-tab active" : "filter-tab"}
+              onClick={() => changeStatus(value)}
+            >
+              {value ? t[statusKey(value)] : t.filterAll}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="chat-shell-3">
-        <div className="card chat-list" style={{ padding: "6px 0", overflow: "hidden" }}>
+        <div className="card chat-list" style={{ padding: "6px 0" }}>
           <Async value={page} reload={reload}>
             {(p) =>
               p.items.length === 0 ? (
@@ -357,7 +382,7 @@ export function Conversations() {
           </div>
         )}
       </div>
-    </Screen>
+    </section>
   );
 }
 

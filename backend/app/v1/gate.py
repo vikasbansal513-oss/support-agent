@@ -6,7 +6,7 @@ from app.agent.policy_engine import OrderForPolicy, check_return_eligibility, re
 from app.v1.contracts import TOOL_TIER, ReasonCodeV1, Tier, WriteTool
 from app.v1.policy import PolicyV2
 
-Route = Literal["auto", "approval", "handoff"]
+Route = Literal["auto", "approval", "handoff", "decline"]
 CANCEL_OK_FINANCIAL = ("paid", "pending", "authorized", "partially_paid")
 
 
@@ -74,8 +74,7 @@ VOICE_APPROVAL_REASON: dict[str, str] = {
 }
 
 
-def evaluate(policy: PolicyV2, ctx: GateContext) -> GateDecision:
-    decision = _evaluate(policy, ctx)
+def _voice_gate(decision: GateDecision, ctx: GateContext) -> GateDecision:
     if ctx.channel == "voice" and decision.route == "auto":
         reason = VOICE_APPROVAL_REASON.get(ctx.tool)
         if reason is not None:
@@ -83,7 +82,36 @@ def evaluate(policy: PolicyV2, ctx: GateContext) -> GateDecision:
     return decision
 
 
-def _evaluate(policy: PolicyV2, ctx: GateContext) -> GateDecision:
+def evaluate(policy: PolicyV2, ctx: GateContext) -> GateDecision:
+    return _voice_gate(_evaluate(policy, ctx), ctx)
+
+
+DECLINE_REASONS: frozenset[str] = frozenset(
+    {
+        "NOT_DELIVERED",
+        "WINDOW_EXPIRED",
+        "ORDER_CLOSED",
+        "ALREADY_REFUNDED",
+        "RETURN_EXISTS",
+        "EXCHANGE_EXISTS",
+    }
+)
+
+
+def resolve(policy: PolicyV2, ctx: GateContext) -> GateDecision:
+    """What the agent actually does with a request. Handoff stays only for a tool that is off or
+    killed and for the safety stops (claim clustering, write limit, shipped cancel/address,
+    final sale, future delivery date). A clear policy answer (not shipped, window over, order
+    closed, already requested) becomes a plain customer reply ("decline"), and a risk flag
+    (high value, disputed, recent refund, unknown delivery date) goes to the client's Approvals
+    once every hard check has passed."""
+    decision = _voice_gate(_evaluate(policy, ctx, soft=True), ctx)
+    if decision.route == "handoff" and decision.reason in DECLINE_REASONS:
+        return GateDecision("decline", decision.reason, None, decision.amount_paise, decision.tier)
+    return decision
+
+
+def _evaluate(policy: PolicyV2, ctx: GateContext, soft: bool = False) -> GateDecision:
     tool, order = ctx.tool, ctx.order
     amount = amount_for(tool, order)
     tier: Tier = TOOL_TIER[tool]
@@ -94,16 +122,23 @@ def _evaluate(policy: PolicyV2, ctx: GateContext) -> GateDecision:
         return _handoff(tool, "TOOL_OFF", "POLICY_EXCEPTION", amount)
     if ctx.write_count >= policy.max_write_actions:
         return _handoff(tool, "WRITE_LIMIT", "STEP_LIMIT", amount)
+    risk: str | None = None
     if order.disputed:
-        return _handoff(tool, "ORDER_DISPUTED", "HIGH_RISK_FLAG", amount)
+        if not soft:
+            return _handoff(tool, "ORDER_DISPUTED", "HIGH_RISK_FLAG", amount)
+        risk = "ORDER_DISPUTED"
     if tool in CLAIM_TOOLS and ctx.recent_claim_count >= policy.fraud_cluster_claim_limit:
         # Section 12.4: claim-clustering - hard block, always to a human, even if every
         # individual rule elsewhere in this gate would otherwise allow auto-approval.
         return _handoff(tool, "CLAIM_CLUSTERING", "FRAUD", amount)
     if order.total_paise >= policy.limits.high_value_threshold_paise:
-        return _handoff(tool, "HIGH_VALUE_ORDER", "HIGH_RISK_FLAG", amount)
+        if not soft:
+            return _handoff(tool, "HIGH_VALUE_ORDER", "HIGH_RISK_FLAG", amount)
+        risk = risk or "HIGH_VALUE_ORDER"
     if tool in ("refund_create", "exchange_request") and ctx.customer_refund_in_last_30d:
-        return _handoff(tool, "RECENT_REFUND", "HIGH_RISK_FLAG", amount)
+        if not soft:
+            return _handoff(tool, "RECENT_REFUND", "HIGH_RISK_FLAG", amount)
+        risk = risk or "RECENT_REFUND"
     if order.cancelled or order.financial_status in ("refunded", "voided"):
         return _handoff(tool, "ORDER_CLOSED", "POLICY_EXCEPTION", amount)
 
@@ -130,7 +165,9 @@ def _evaluate(policy: PolicyV2, ctx: GateContext) -> GateDecision:
             list(policy.final_sale_tags),
         )
         if eligibility.decision == "needs_human":
-            return _handoff(tool, eligibility.reason, "POLICY_EXCEPTION", amount)
+            if not (soft and eligibility.reason == "DELIVERY_DATE_UNKNOWN"):
+                return _handoff(tool, eligibility.reason, "POLICY_EXCEPTION", amount)
+            risk = risk or eligibility.reason
         if eligibility.decision == "not_eligible":
             return _handoff(tool, eligibility.reason, "POLICY_EXCEPTION", amount)
         if tool == "refund_create" and (order.refunded_paise > 0 or amount <= 0):
@@ -140,6 +177,8 @@ def _evaluate(policy: PolicyV2, ctx: GateContext) -> GateDecision:
         if tool == "return_request" and order.return_already_requested:
             return _handoff(tool, "RETURN_EXISTS", "POLICY_EXCEPTION", amount)
 
+    if risk is not None:
+        return GateDecision("approval", risk, None, amount, tier)
     if level == "approval":
         return GateDecision("approval", "LEVEL_APPROVAL", None, amount, tier)
     return _within_auto(policy, ctx, amount, tier)
@@ -148,11 +187,14 @@ def _evaluate(policy: PolicyV2, ctx: GateContext) -> GateDecision:
 def _within_auto(policy: PolicyV2, ctx: GateContext, amount: int, tier: Tier) -> GateDecision:
     tool = ctx.tool
     limits = policy.limits
-    if tool in ("address_update", "return_request"):
-        # Neither tool moves money (return_request only registers a return;
-        # the later refund, if any, is a separate refund_create action that
-        # goes through its own limit check), so there is no paise cap to
-        # apply here - same treatment as address_update.
+    if tool == "address_update":
+        return GateDecision("auto", "AUTO_OK", None, 0, tier)
+    if tool == "return_request":
+        # A return moves no money (the later refund is its own refund_create action with its
+        # own limits), so its amount stays 0 and it does not count toward the brand's daily
+        # auto value. The brand's return_auto_limit caps the ORDER value it may register alone.
+        if ctx.order.total_paise > limits.return_auto_limit_paise:
+            return GateDecision("approval", "LIMIT_EXCEEDED", None, 0, tier)
         return GateDecision("auto", "AUTO_OK", None, 0, tier)
     cap = limits.auto_limit(tool)
     if cap is None or amount > cap:
