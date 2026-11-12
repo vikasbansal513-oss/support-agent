@@ -1125,7 +1125,12 @@ def build_graph_v1(deps: V1Deps) -> Any:
             facts.update(address=_address_text(args["new_address"]))
         facts.update(
             t.detail_facts(
-                state.get("channel"), lang, tool, order, facts, greet_name=state.get("customer_name")
+                state.get("channel"),
+                lang,
+                tool,
+                order,
+                facts,
+                greet_name=state.get("customer_name"),
             )
         )
         conv.update(awaiting="confirm", unclear_count=0, order_ref=order.order_name)
