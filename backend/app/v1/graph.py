@@ -91,6 +91,11 @@ WRITE_INTENT_TOOL: dict[str, WriteTool] = {
 }
 
 
+# agent_actions statuses of an earlier request on the same order (runner_v1.ACTIVE_OR_DONE):
+# finished vs still waiting only for the customer's own yes/no.
+DONE_STATUSES = frozenset({"executed", "confirmed"})
+AWAITING_ONLY = frozenset({"awaiting_customer"})
+
 EMPATHY_SENTIMENT = -0.2
 NO_EMPATHY_REASONS = frozenset({"ABUSE", "THREAT", "AGENT_PAUSED"})
 EMPATHY_LINE = {
@@ -125,6 +130,44 @@ def _with_empathy(state: State, reason: str, ack: dict[str, Any] | None) -> dict
     if len(body) > 1500:
         return ack
     return {**ack, "text": body, "facts_used": [*ack.get("facts_used", []), "empathy"]}
+
+
+def _empathy_text(state: State, reason: str, lang: str) -> str | None:
+    """Same rule as _with_empathy() (mild impatience or worse, never abuse/threat/paused),
+    returned as a bare line for the email handoff template, which places it itself - under
+    the "Dear <name>," salutation - instead of prepending it to the finished text."""
+    if reason in NO_EMPATHY_REASONS:
+        return None
+    plan = state.get("plan") or {}
+    try:
+        sentiment = float(plan.get("sentiment") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if sentiment > EMPATHY_SENTIMENT:
+        return None
+    return EMPATHY_LINE.get(lang, EMPATHY_LINE["en"])
+
+
+def _email_order_ack(
+    state: State,
+    reason: str,
+    order: OrderFacts,
+    status_line: str,
+    request_note: str,
+    lang: str,
+) -> dict[str, Any]:
+    """Professional email handoff acknowledgement: salutation, the customer's request named,
+    a full order-details table (all from the verified order) and what happens next."""
+    empathy = _empathy_text(state, reason, lang)
+    facts: dict[str, object] = {
+        "greeting": t.greeting(lang),
+        "note": f"{empathy}\n\n" if empathy else "",
+        "request_note": request_note,
+        "order_block": t.order_details("email", lang, order, delivery_text=status_line),
+    }
+    if not state.get("within_office_hours", True):
+        return _reply(state, "off_hours_ack_order", opens=state.get("opens_label") or "-", **facts)
+    return _reply(state, "handoff_ack_order", **facts)
 
 
 @dataclass
@@ -167,7 +210,14 @@ def _reply(state: State, template_id: str, **facts: object) -> dict[str, Any]:
     text = t.render(template_id, lang, channel=state.get("channel"), **facts)
     used = sorted(facts)
     if state.get("first_message"):
-        text = f"{_disclosure_text(state, lang)}\n\n{text}"
+        disclosure = _disclosure_text(state, lang)
+        greeting = str(facts.get("greeting") or "") if state.get("channel") == "email" else ""
+        if greeting and text.startswith(greeting):
+            # An email opens with its own "Dear <name>," - the AI disclosure goes right under
+            # it, not above it.
+            text = f"{greeting}\n\n{disclosure}\n\n{text[len(greeting) :].lstrip()}"
+        else:
+            text = f"{disclosure}\n\n{text}"
         used = [*used, "ai_disclosure"]
     return V1Reply(template_id=template_id, language=lang, text=text, facts_used=used).model_dump(
         mode="json"
@@ -230,54 +280,103 @@ MAX_ACK_ITEMS = 3
 _CANCEL_ASK = re.compile(r"cancel|कैंसिल|रद्द", re.IGNORECASE)
 _REFUND_ASK = re.compile(r"refund|money back|paisa wapas|paise wapas|रिफंड|पैसे वापस", re.IGNORECASE)
 _ORDER_LABELS = {
-    "en": ("Your order", "Items", "Total", "Status"),
-    "hinglish": ("Aapka order", "Items", "Total", "Status"),
-    "hi": ("आपका ऑर्डर", "आइटम", "कुल", "स्थिति"),
+    "en": ("Your order", "Items", "Total", "Status", "Order date", "Payment"),
+    "hinglish": ("Aapka order", "Items", "Total", "Status", "Order date", "Payment"),
+    "hi": ("आपका ऑर्डर", "आइटम", "कुल", "स्थिति", "ऑर्डर की तारीख", "भुगतान"),
 }
-_REQUEST_NOTES = {
+_RETURN_ASK = re.compile(r"\breturn|वापस भेज|रिटर्न|wapas bhej", re.IGNORECASE)
+_EXCHANGE_ASK = re.compile(r"exchange|replace|एक्सचेंज|badalna|badal do", re.IGNORECASE)
+_COMPLAINT_ASK = re.compile(
+    r"complain|damag|defect|broken|faulty|wrong item|not received|didn.?t receive|"
+    r"nahi mila|nahi aaya|mila nahi|शिकायत|खराब|टूटा|shikayat",
+    re.IGNORECASE,
+)
+_REQUEST_KINDS = (
+    ("cancel", _CANCEL_ASK),
+    ("refund", _REFUND_ASK),
+    ("return", _RETURN_ASK),
+    ("exchange", _EXCHANGE_ASK),
+    ("complaint", _COMPLAINT_ASK),
+)
+_KIND_NOUN = {
     "en": {
-        "both": "I have noted your request regarding cancellation and refund.",
-        "cancel": "I have noted your request regarding cancellation.",
-        "refund": "I have noted your request regarding a refund.",
-        "other": "I have noted the rest of your request.",
+        "cancel": "cancellation",
+        "refund": "refund",
+        "return": "return",
+        "exchange": "exchange",
+        "complaint": "complaint",
     },
     "hinglish": {
-        "both": "Maine cancel aur refund ki aapki request note kar li hai.",
-        "cancel": "Maine cancel ki aapki request note kar li hai.",
-        "refund": "Maine refund ki aapki request note kar li hai.",
-        "other": "Maine aapki baaki request note kar li hai.",
+        "cancel": "cancel",
+        "refund": "refund",
+        "return": "return",
+        "exchange": "exchange",
+        "complaint": "shikayat",
     },
     "hi": {
-        "both": "मैंने कैंसिलेशन और रिफंड का आपका अनुरोध नोट कर लिया है।",
-        "cancel": "मैंने कैंसिलेशन का आपका अनुरोध नोट कर लिया है।",
-        "refund": "मैंने रिफंड का आपका अनुरोध नोट कर लिया है।",
-        "other": "मैंने आपके अनुरोध का बाकी हिस्सा नोट कर लिया है।",
+        "cancel": "कैंसिलेशन",
+        "refund": "रिफंड",
+        "return": "रिटर्न",
+        "exchange": "एक्सचेंज",
+        "complaint": "शिकायत",
+    },
+}
+_JOIN_WORD = {"en": " and ", "hinglish": " aur ", "hi": " और "}
+_NOTE_ONE = {
+    "en": "I have noted your request regarding {kinds}.",
+    "hinglish": "Maine {kinds} ki aapki request note kar li hai.",
+    "hi": "मैंने {kinds} का आपका अनुरोध नोट कर लिया है।",
+}
+_NOTE_COMPLAINT_ONLY = {
+    "en": "I have noted your complaint.",
+    "hinglish": "Maine aapki shikayat note kar li hai.",
+    "hi": "मैंने आपकी शिकायत नोट कर ली है।",
+}
+_NOTE_FALLBACK = {
+    "other": {
+        "en": "I have noted the rest of your request.",
+        "hinglish": "Maine aapki baaki request note kar li hai.",
+        "hi": "मैंने आपके अनुरोध का बाकी हिस्सा नोट कर लिया है।",
+    },
+    "generic": {
+        "en": "I have noted your request.",
+        "hinglish": "Maine aapki request note kar li hai.",
+        "hi": "मैंने आपका अनुरोध नोट कर लिया है।",
     },
 }
 
 
-def _request_note(text: str, lang: str) -> str:
-    """Names the kind of request (cancel/refund) from the customer's own words with plain
-    keyword matching - never from the planner's free-text summary, which is LLM output and
-    must not be echoed back to the customer."""
-    cancel = bool(_CANCEL_ASK.search(text))
-    refund = bool(_REFUND_ASK.search(text))
-    kind = "both" if cancel and refund else "cancel" if cancel else "refund" if refund else "other"
-    return _REQUEST_NOTES[lang][kind]
+def _request_note(text: str, lang: str, fallback: str = "other") -> str:
+    """Names the kind(s) of request (cancel / refund / return / exchange / complaint) from the
+    customer's own words with plain keyword matching - never from the planner's free-text
+    summary, which is LLM output and must not be echoed back to the customer. fallback picks
+    the sentence when no kind matched: "other" for the mixed status+write message, "generic"
+    for any other handoff."""
+    found = [kind for kind, rx in _REQUEST_KINDS if rx.search(text)]
+    if not found:
+        return _NOTE_FALLBACK[fallback][lang]
+    if found == ["complaint"]:
+        return _NOTE_COMPLAINT_ONLY[lang]
+    nouns = [_KIND_NOUN[lang][kind] for kind in found]
+    return _NOTE_ONE[lang].format(kinds=_JOIN_WORD[lang].join(nouns))
 
 
 def _order_block(order: OrderFacts, status_line: str, lang: str) -> str:
-    """Order facts for the mixed-handoff ack, all from the verified Shopify order (the order
+    """Order facts for the handoff ack, all from the verified Shopify order (the order
     gate already matched it to this customer). At most MAX_ACK_ITEMS lines are listed."""
-    head, items_label, total_label, status_label = _ORDER_LABELS[lang]
+    head, items_label, total_label, status_label, date_label, payment_label = _ORDER_LABELS[lang]
     shown = [f"{line.title} x{line.quantity}" for line in order.lines[:MAX_ACK_ITEMS]]
     extra = len(order.lines) - MAX_ACK_ITEMS
     if extra > 0:
         shown.append(f"+{extra} more")
     rows = [f"{head} *{order.order_name}*:"]
+    rows.append(f"- {date_label}: {timeutil.to_ist(order.created_at).strftime('%d %b %Y')}")
     if shown:
         rows.append(f"- {items_label}: {', '.join(shown)}")
     rows.append(f"- {total_label}: *Rs {v0_templates.paise_to_rs(order.total_paise)}*")
+    rows.append(
+        f"- {payment_label}: {v0_templates.status_word(v0_templates.PAY, order.financial_status, lang)}"
+    )
     rows.append(f"- {status_label}: {status_line}")
     return "\n".join(rows)
 
@@ -298,7 +397,12 @@ async def _status_facts_for_mixed_handoff(deps: V1Deps, state: State) -> dict[st
     policy = _policy2(state)
     if policy is None or "order_lookup" not in policy.enabled_tools:
         return None
-    ref = keywords.extract_order_ref(state.get("incoming_text", ""))
+    plan_ref = ((state.get("plan") or {}).get("args") or {}).get("order_ref")
+    ref = (
+        keywords.extract_order_ref(state.get("incoming_text", ""))
+        or (keywords.extract_order_ref(str(plan_ref)) if plan_ref else None)
+        or state.get("active_order_ref")
+    )
     if ref is None:
         return None
     result, _gate = await deps.tools.order_gate(
@@ -353,14 +457,32 @@ def handoff_decision(state: State, reason: str) -> DecisionV1:
     # tracking, if shipped) specifically so it can be shown here instead of a bare
     # "passed to our team" ack. handoff_order_hint is only ever set by that one path,
     # so every other handoff reason renders exactly as before.
-    status_order = order if state.get("handoff_order_hint") and order is not None else None
+    # The verified order is shown in every email/WhatsApp handoff ack (cancel, return, refund,
+    # exchange and complaint cases all land here), not only in the mixed-intent case above.
+    # tool_results["order"] is only ever set by a verified order lookup, so it is safe to show.
+    status_order = (
+        order
+        if order is not None
+        and (state.get("handoff_order_hint") or state.get("channel") in ("email", "whatsapp"))
+        else None
+    )
+    email_order_ack = False
     if reason == "AGENT_PAUSED":
         ack = None
     elif template_id == "handoff_ack" and status_order is not None:
         status_line = _handoff_status_line(status_order, _tracking_v1(state), lang)
         order_block = _order_block(status_order, status_line, lang)
-        request_note = _request_note(state.get("incoming_text", ""), lang)
-        if not state.get("within_office_hours", True):
+        request_note = _request_note(
+            state.get("incoming_text", ""),
+            lang,
+            "other"
+            if state.get("handoff_order_hint") and reason == "UNSUPPORTED_INTENT"
+            else "generic",
+        )
+        if state.get("channel") == "email":
+            email_order_ack = True
+            ack = _email_order_ack(state, reason, status_order, status_line, request_note, lang)
+        elif not state.get("within_office_hours", True):
             ack = _v0_reply(
                 state,
                 "off_hours_ack_with_status",
@@ -383,7 +505,7 @@ def handoff_decision(state: State, reason: str) -> DecisionV1:
         ack = _v0_reply(state, "identity_mismatch_ack", order=summary.order_ref or "-")
     else:
         ack = _v0_reply(state, template_id)
-    if template_id == "handoff_ack":
+    if template_id == "handoff_ack" and not email_order_ack:
         ack = _with_empathy(state, reason, ack)
     return DecisionV1(
         action="handoff",
@@ -517,14 +639,25 @@ def build_graph_v1(deps: V1Deps) -> Any:
             return _flag(state, "POLICY_MISSING")
         plan = Plan.model_validate(state["plan"])
         if plan.sentiment < policy.sentiment_min:
-            return _flag(state, "SENTIMENT_NEGATIVE")
+            # An upset customer (often a complaint) still gets their order details in the ack.
+            order_facts = (
+                await _status_facts_for_mixed_handoff(deps, state)
+                if state.get("channel") != "voice"
+                else None
+            )
+            return _flag(state, "SENTIMENT_NEGATIVE", **(order_facts or {}))
         if plan.intent == "unclear" or plan.confidence < deps.min_confidence:
             return _flag(state, "CONFUSED")
         if state.get("channel") == "voice" and plan.intent == "address_change":
             return _flag(state, "POLICY_EXCEPTION")
         if plan.action == "handoff":
             if plan.intent in WRITE_INTENT_TOOL:
-                return _flag(state, "POLICY_EXCEPTION")
+                order_facts = (
+                    await _status_facts_for_mixed_handoff(deps, state)
+                    if state.get("channel") != "voice"
+                    else None
+                )
+                return _flag(state, "POLICY_EXCEPTION", **(order_facts or {}))
             if plan.intent == "other":
                 # The "status question + cancel/refund in one message" case: plan.v1.md
                 # always classifies this as intent "other" (two different requests, one
@@ -785,22 +918,35 @@ def build_graph_v1(deps: V1Deps) -> Any:
         # exact tool+order in flight on a DIFFERENT conversation (e.g. they emailed a
         # cancel request, then WhatsApped the same thing). Don't start a second one -
         # tell them it's already being handled instead of silently proposing/gating again.
-        duplicate = next(
-            (
-                claim
-                for claim in state.get("active_claims", [])
-                if claim.get("tool") == tool
-                and claim.get("order_ref") == order.order_name
-                and claim.get("conversation_id") != state.get("conversation_id")
-            ),
-            None,
-        )
-        if duplicate is not None:
-            conv["awaiting"] = "none"
-            return {
-                "conv": conv,
-                "v1_reply": _reply(state, "duplicate_request_ack", order=order.order_name),
+        same_request = [
+            claim
+            for claim in state.get("active_claims", [])
+            if claim.get("tool") == tool
+            and claim.get("order_ref") == order.order_name
+            and claim.get("conversation_id") != state.get("conversation_id")
+        ]
+        if same_request:
+            # The reply follows the earlier action's real status: finished, waiting for the
+            # customer's own yes/no, or genuinely with the team. It never says "our team is
+            # working on it" for something that is already done or was never handed over.
+            statuses = {str(claim.get("status")) for claim in same_request}
+            if statuses & DONE_STATUSES:
+                dup_template, dup_status = "duplicate_request_done", "completed"
+            elif statuses - AWAITING_ONLY - DONE_STATUSES:
+                dup_template, dup_status = "duplicate_request_ack", "processing"
+            else:
+                dup_template, dup_status = "duplicate_request_awaiting", "awaiting"
+            dup_lang = _lang(state)
+            dup_facts: dict[str, object] = {
+                "order": order.order_name,
+                "brand": state.get("tenant_name") or "Support",
+                "request": t.REQUEST_NOUN.get(dup_lang, t.REQUEST_NOUN["en"])[tool],
             }
+            dup_facts.update(
+                t.detail_facts(state.get("channel"), dup_lang, tool, order, dup_facts, dup_status)
+            )
+            conv["awaiting"] = "none"
+            return {"conv": conv, "v1_reply": _reply(state, dup_template, **dup_facts)}
         claim_tool = tool in ("refund_create", "exchange_request", "return_request")
         if claim_tool and fraud.requires_evidence(plan.args.reason):
             # Decision Framework Section 12.3: photo/video evidence is mandatory before any
@@ -902,7 +1048,7 @@ def build_graph_v1(deps: V1Deps) -> Any:
             pass
         else:
             facts.update(address=_address_text(args["new_address"]))
-        facts.update(t.email_facts(state.get("channel"), lang, tool, order, facts))
+        facts.update(t.detail_facts(state.get("channel"), lang, tool, order, facts))
         conv.update(awaiting="confirm", unclear_count=0, order_ref=order.order_name)
         return {
             **gate_note,

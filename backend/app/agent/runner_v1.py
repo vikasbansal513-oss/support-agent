@@ -112,7 +112,7 @@ async def load_v1_state(
     claims = (
         await session.execute(
             text(
-                "SELECT a.tool_name, a.order_ref, a.conversation_id FROM agent_actions a"
+                "SELECT a.tool_name, a.order_ref, a.conversation_id, a.status FROM agent_actions a"
                 " JOIN conversations c ON c.id = a.conversation_id"
                 " WHERE c.customer_id = :cu AND a.tool_name IS NOT NULL AND a.status = ANY(:s)"
             ),
@@ -120,7 +120,12 @@ async def load_v1_state(
         )
     ).all()
     state["active_claims"] = [
-        {"tool": r.tool_name, "order_ref": r.order_ref, "conversation_id": str(r.conversation_id)}
+        {
+            "tool": r.tool_name,
+            "order_ref": r.order_ref,
+            "conversation_id": str(r.conversation_id),
+            "status": r.status,
+        }
         for r in claims
     ]
     return row
@@ -387,6 +392,9 @@ async def _plain(
                     if proposal.created:
                         row.pending_action_id = proposal.action.id
                         row.context["confirm_token"] = proposal.token
+                        snapshot = outcome.order_snapshot(final)
+                        if snapshot is not None:
+                            row.context["order_snapshot"] = snapshot
                     await convstate.save(session, conversation_id, row)
             except IntegrityError:
                 logger.error("write proposal conflicted", extra={"run_id": str(run_id)})

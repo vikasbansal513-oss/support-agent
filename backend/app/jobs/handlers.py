@@ -158,6 +158,7 @@ async def _ingest(ctx: JobContext) -> dict[str, Any] | Staged:
         if tenant.status != "active":
             await _set_event(session, event_id, "skipped", "TENANT_INACTIVE")
             return {"stage": "skipped", "reason": "TENANT_INACTIVE"}
+        hold_for_review: str | None = None
         if inbound.channel == "email":
             reason = prechecks.email_skip_reason(inbound, await _own_address(session))
             if reason:
@@ -168,6 +169,15 @@ async def _ingest(ctx: JobContext) -> dict[str, Any] | Staged:
                 email_reason = f"EMAIL_FILTER_{classification.action}:{classification.category}"
                 await _set_event(session, event_id, "skipped", email_reason)
                 return {"stage": "skipped", "reason": email_reason}
+            if (
+                classification.action == "MANUAL_REVIEW"
+                and not classification.is_customer_related
+                and classification.reason != email_classify.LLM_FALLBACK_REASON
+            ):
+                # The LLM read the mail and said it is not a customer writing to this brand,
+                # but was not sure enough to SKIP it. It is still kept visible to a human in
+                # Chats, and the AI agent never answers it (no acknowledgement, no handoff).
+                hold_for_review = f"EMAIL_FILTER_MANUAL_REVIEW:{classification.category}"
         customer_id = await identity.get_or_create_customer(session, inbound)
         ref = await identity.get_or_create_conversation(session, customer_id, inbound.channel)
         await privacy.ensure_consent(session, customer_id, inbound.channel, "first_inbound")
@@ -226,6 +236,9 @@ async def _ingest(ctx: JobContext) -> dict[str, Any] | Staged:
             await privacy.record_consent(session, customer_id, purpose, True, "customer_start")
             await _set_event(session, event_id, "processed", "OPT_IN")
             return {"stage": "opt_in"}
+        if hold_for_review:
+            await _set_event(session, event_id, "skipped", hold_for_review)
+            return {"stage": "manual_review", "reason": hold_for_review}
         return tenant_id, event_id, ref.conversation_id, message_id, inbound
 
 

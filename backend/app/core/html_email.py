@@ -95,7 +95,9 @@ def plain_to_email_html(body: str, brand: str | None = None) -> str:
         i += 1
     if list_open:
         parts.append("</ul>")
-    signature = f"Thanks,<br>{html.escape(brand)} Support" if brand else "Thanks,<br>Support Team"
+    signature = (
+        f"Regards,<br>{html.escape(brand)} Support Team" if brand else "Regards,<br>Support Team"
+    )
     body_html = "\n".join(parts)
     return (
         "<!doctype html>"

@@ -1,7 +1,9 @@
+from collections.abc import Sequence
 from string import Formatter
 
 from app.agent import templates as v0
 from app.contracts.contracts import OrderFacts
+from app.core import timeutil
 
 T: dict[str, dict[str, str]] = {
     "confirm_order_cancel": {
@@ -142,18 +144,41 @@ T: dict[str, dict[str, str]] = {
         "hi": "आगे बढ़ने के लिए प्रोडक्ट की साफ़ फ़ोटो या वीडियो भेजना ज़रूरी है। कृपया भेजें, हमारी टीम देखकर आपको कन्फर्म करेगी।",
     },
     # Omnichannel duplicate-request guard (v1/graph.py's propose(), via state["active_claims"]):
-    # customer already has this same tool+order in flight on another conversation/channel -
-    # tell them so instead of silently starting a second one.
+    # the same customer already has this same tool+order on ANOTHER conversation. Three honest
+    # variants, chosen from that earlier action's real status: still being handled by the team,
+    # waiting for the customer's own yes/no, or already completed. The plain versions below are
+    # the voice/other-channel text; WhatsApp and email get order-details versions further down.
     "duplicate_request_ack": {
-        "hinglish": "Shukriya. Order *{order}* ke liye aapki request pehle se hamari team ke paas hai"
-        " aur uspar kaam ho raha hai - isse dobara kisi aur channel par bhejne ki zaroorat nahi."
+        "hinglish": "Shukriya. Order *{order}* ke liye aapki *{request}* request hume pehle hi mil chuki hai"
+        " aur hamari team uspar kaam kar rahi hai - dobara bhejne ki zaroorat nahi."
         " Poora hote hi hum yahin update karenge.",
-        "en": "Thanks for the update. We already have your request for order *{order}* with our"
-        " team and are working on it - no need to send it again on another channel. We will"
-        " update you here once it's done.",
-        "hi": "धन्यवाद। ऑर्डर *{order}* के लिए आपका अनुरोध पहले से ही हमारी टीम के पास है और उस पर"
-        " काम हो रहा है - इसे दोबारा किसी और चैनल पर भेजने की ज़रूरत नहीं है। पूरा होने पर हम यहीं"
+        "en": "Thank you. We have already received your *{request}* request for order *{order}* and"
+        " our team is working on it - there is no need to send it again. We will update you"
+        " here once it is done.",
+        "hi": "धन्यवाद। ऑर्डर *{order}* के लिए आपका *{request}* अनुरोध हमें पहले ही मिल चुका है और"
+        " हमारी टीम उस पर काम कर रही है - दोबारा भेजने की ज़रूरत नहीं है। पूरा होने पर हम यहीं"
         " अपडेट करेंगे।",
+    },
+    "duplicate_request_awaiting": {
+        "hinglish": "Order *{order}* ke liye aapki *{request}* request ki confirmation hum pehle hi"
+        " maang chuke hain. Kripya usi message ka jawab *haan* ya *nahi* me dein.",
+        "en": "We have already asked you to confirm your *{request}* request for order *{order}*."
+        " Please reply *yes* or *no* to that earlier message.",
+        "hi": "ऑर्डर *{order}* के लिए आपके *{request}* अनुरोध की पुष्टि हम पहले ही माँग चुके हैं।"
+        " कृपया उसी संदेश का जवाब *हाँ* या *नहीं* में दें।",
+    },
+    "duplicate_request_done": {
+        "hinglish": "Order *{order}* ke liye aapki *{request}* request pehle hi poori ho chuki hai."
+        " Naya kuch karne ki zaroorat nahi.",
+        "en": "Your *{request}* request for order *{order}* has already been completed."
+        " No further action is needed.",
+        "hi": "ऑर्डर *{order}* के लिए आपका *{request}* अनुरोध पहले ही पूरा हो चुका है।"
+        " आगे कुछ करने की ज़रूरत नहीं है।",
+    },
+    "action_failed_ack": {
+        "hinglish": "Aapki request abhi poori nahi ho payi. Hamari team ise dekhkar aapse sampark karegi.",
+        "en": "We could not complete your request yet. Our team will review it and get back to you.",
+        "hi": "आपका अनुरोध अभी पूरा नहीं हो पाया। हमारी टीम इसे देखकर आपसे संपर्क करेगी।",
     },
     "confirm_reask": {
         "hinglish": "Kripya sirf 'haan' ya 'nahi' likhein.",
@@ -220,8 +245,7 @@ WA_T: dict[str, dict[str, str]] = {
     "confirm_order_cancel": {
         "hinglish": (
             "{note}Aapne order *{order}* cancel karne ko kaha hai.\n\n"
-            "📦 {items}\n"
-            "💰 Total: *Rs {amount}*\n\n"
+            "{details}\n\n"
             "Reply karein:\n"
             "✅ *HAAN* – Order cancel karein\n"
             "❌ *NAHI* – Order rakhein\n\n"
@@ -230,8 +254,7 @@ WA_T: dict[str, dict[str, str]] = {
         ),
         "en": (
             "{note}We've received your request to cancel order *{order}*.\n\n"
-            "📦 {items}\n"
-            "💰 Total: *Rs {amount}*\n\n"
+            "{details}\n\n"
             "Please reply:\n"
             "✅ *YES* – Cancel order\n"
             "❌ *NO* – Keep order\n\n"
@@ -240,8 +263,7 @@ WA_T: dict[str, dict[str, str]] = {
         ),
         "hi": (
             "{note}आपने ऑर्डर *{order}* कैंसिल करने के लिए कहा है।\n\n"
-            "📦 {items}\n"
-            "💰 कुल: *Rs {amount}*\n\n"
+            "{details}\n\n"
             "कृपया रिप्लाई करें:\n"
             "✅ *हाँ* – ऑर्डर कैंसिल करें\n"
             "❌ *नहीं* – ऑर्डर रखें\n\n"
@@ -252,7 +274,7 @@ WA_T: dict[str, dict[str, str]] = {
     "confirm_address_update": {
         "hinglish": (
             "{note}Order *{order}* ka delivery address update karna hai?\n\n"
-            "🏠 Naya address: {address}\n\n"
+            "{details}\n\n"
             "Reply karein:\n"
             "✅ *HAAN* – Address update karein\n"
             "❌ *NAHI* – Rehne dein\n\n"
@@ -260,7 +282,7 @@ WA_T: dict[str, dict[str, str]] = {
         ),
         "en": (
             "{note}Update the delivery address for order *{order}*?\n\n"
-            "🏠 New address: {address}\n\n"
+            "{details}\n\n"
             "Please reply:\n"
             "✅ *YES* – Update address\n"
             "❌ *NO* – Leave it as is\n\n"
@@ -268,7 +290,7 @@ WA_T: dict[str, dict[str, str]] = {
         ),
         "hi": (
             "{note}ऑर्डर *{order}* का डिलीवरी पता अपडेट करें?\n\n"
-            "🏠 नया पता: {address}\n\n"
+            "{details}\n\n"
             "कृपया रिप्लाई करें:\n"
             "✅ *हाँ* – पता अपडेट करें\n"
             "❌ *नहीं* – रहने दें\n\n"
@@ -278,7 +300,7 @@ WA_T: dict[str, dict[str, str]] = {
     "confirm_exchange_request": {
         "hinglish": (
             "{note}Order *{order}* me item exchange karna hai?\n\n"
-            "🔄 {item} → *{variant}*\n\n"
+            "{details}\n\n"
             "Reply karein:\n"
             "✅ *HAAN* – Exchange shuru karein\n"
             "❌ *NAHI* – Rehne dein\n\n"
@@ -286,7 +308,7 @@ WA_T: dict[str, dict[str, str]] = {
         ),
         "en": (
             "{note}Exchange an item in order *{order}*?\n\n"
-            "🔄 {item} → *{variant}*\n\n"
+            "{details}\n\n"
             "Please reply:\n"
             "✅ *YES* – Start the exchange\n"
             "❌ *NO* – Leave it as is\n\n"
@@ -294,7 +316,7 @@ WA_T: dict[str, dict[str, str]] = {
         ),
         "hi": (
             "{note}ऑर्डर *{order}* में आइटम बदलें?\n\n"
-            "🔄 {item} → *{variant}*\n\n"
+            "{details}\n\n"
             "कृपया रिप्लाई करें:\n"
             "✅ *हाँ* – एक्सचेंज शुरू करें\n"
             "❌ *नहीं* – रहने दें\n\n"
@@ -304,7 +326,7 @@ WA_T: dict[str, dict[str, str]] = {
     "confirm_refund_create": {
         "hinglish": (
             "{note}Order *{order}* ka refund shuru karein?\n\n"
-            "💰 Refund amount: *Rs {amount}*\n\n"
+            "{details}\n\n"
             "Reply karein:\n"
             "✅ *HAAN* – Refund shuru karein\n"
             "❌ *NAHI* – Rehne dein\n\n"
@@ -312,7 +334,7 @@ WA_T: dict[str, dict[str, str]] = {
         ),
         "en": (
             "{note}Start a refund for order *{order}*?\n\n"
-            "💰 Refund amount: *Rs {amount}*\n\n"
+            "{details}\n\n"
             "Please reply:\n"
             "✅ *YES* – Start the refund\n"
             "❌ *NO* – Leave it as is\n\n"
@@ -320,7 +342,7 @@ WA_T: dict[str, dict[str, str]] = {
         ),
         "hi": (
             "{note}ऑर्डर *{order}* का रिफंड शुरू करें?\n\n"
-            "💰 रिफंड राशि: *Rs {amount}*\n\n"
+            "{details}\n\n"
             "कृपया रिप्लाई करें:\n"
             "✅ *हाँ* – रिफंड शुरू करें\n"
             "❌ *नहीं* – रहने दें\n\n"
@@ -330,6 +352,7 @@ WA_T: dict[str, dict[str, str]] = {
     "confirm_return_request": {
         "hinglish": (
             "{note}Order *{order}* ke liye return request bhejein?\n\n"
+            "{details}\n\n"
             "Reply karein:\n"
             "✅ *HAAN* – Return request bhejein\n"
             "❌ *NAHI* – Rehne dein\n\n"
@@ -337,6 +360,7 @@ WA_T: dict[str, dict[str, str]] = {
         ),
         "en": (
             "{note}Submit a return request for order *{order}*?\n\n"
+            "{details}\n\n"
             "Please reply:\n"
             "✅ *YES* – Submit the return\n"
             "❌ *NO* – Leave it as is\n\n"
@@ -344,6 +368,7 @@ WA_T: dict[str, dict[str, str]] = {
         ),
         "hi": (
             "{note}ऑर्डर *{order}* के लिए रिटर्न रिक्वेस्ट भेजें?\n\n"
+            "{details}\n\n"
             "कृपया रिप्लाई करें:\n"
             "✅ *हाँ* – रिटर्न रिक्वेस्ट भेजें\n"
             "❌ *नहीं* – रहने दें\n\n"
@@ -351,29 +376,84 @@ WA_T: dict[str, dict[str, str]] = {
         ),
     },
     "done_order_cancel": {
-        "hinglish": "✅ Order *{order}* cancel ho gaya hai.\n\n— {brand} Support",
-        "en": "✅ Order *{order}* has been cancelled.\n\n— {brand} Support",
-        "hi": "✅ ऑर्डर *{order}* कैंसिल हो गया है।\n\n— {brand} Support",
+        "hinglish": "✅ Order *{order}* cancel ho gaya hai.\n\n{details}\n\n— {brand} Support",
+        "en": "✅ Order *{order}* has been cancelled.\n\n{details}\n\n— {brand} Support",
+        "hi": "✅ ऑर्डर *{order}* कैंसिल हो गया है।\n\n{details}\n\n— {brand} Support",
     },
     "done_address_update": {
-        "hinglish": "✅ Order *{order}* ka address update ho gaya hai.\n\n— {brand} Support",
-        "en": "✅ The address for order *{order}* has been updated.\n\n— {brand} Support",
-        "hi": "✅ ऑर्डर *{order}* का पता अपडेट हो गया है।\n\n— {brand} Support",
+        "hinglish": "✅ Order *{order}* ka address update ho gaya hai.\n\n{details}\n\n— {brand} Support",
+        "en": "✅ The address for order *{order}* has been updated.\n\n{details}\n\n— {brand} Support",
+        "hi": "✅ ऑर्डर *{order}* का पता अपडेट हो गया है।\n\n{details}\n\n— {brand} Support",
     },
     "done_exchange_request": {
-        "hinglish": "✅ Order *{order}* ke liye exchange request register ho gayi hai.\n\n— {brand} Support",
-        "en": "✅ The exchange request for order *{order}* has been registered.\n\n— {brand} Support",
-        "hi": "✅ ऑर्डर *{order}* के लिए एक्सचेंज रिक्वेस्ट दर्ज हो गई है।\n\n— {brand} Support",
+        "hinglish": "✅ Order *{order}* ke liye exchange request register ho gayi hai.\n\n{details}\n\n— {brand} Support",
+        "en": "✅ The exchange request for order *{order}* has been registered.\n\n{details}\n\n— {brand} Support",
+        "hi": "✅ ऑर्डर *{order}* के लिए एक्सचेंज रिक्वेस्ट दर्ज हो गई है।\n\n{details}\n\n— {brand} Support",
     },
     "done_refund_create": {
-        "hinglish": "✅ Order *{order}* ka Rs {amount} refund shuru ho gaya hai.\n\n— {brand} Support",
-        "en": "✅ A refund of *Rs {amount}* has been started for order *{order}*.\n\n— {brand} Support",
-        "hi": "✅ ऑर्डर *{order}* का Rs {amount} रिफंड शुरू हो गया है।\n\n— {brand} Support",
+        "hinglish": "✅ Order *{order}* ka Rs {amount} refund shuru ho gaya hai.\n\n{details}\n\n— {brand} Support",
+        "en": "✅ A refund of *Rs {amount}* has been started for order *{order}*.\n\n{details}\n\n— {brand} Support",
+        "hi": "✅ ऑर्डर *{order}* का Rs {amount} रिफंड शुरू हो गया है।\n\n{details}\n\n— {brand} Support",
     },
     "done_return_request": {
-        "hinglish": "✅ Order *{order}* ke liye return request register ho gayi hai.\n\n— {brand} Support",
-        "en": "✅ The return request for order *{order}* has been registered.\n\n— {brand} Support",
-        "hi": "✅ ऑर्डर *{order}* के लिए रिटर्न रिक्वेस्ट दर्ज हो गई है।\n\n— {brand} Support",
+        "hinglish": "✅ Order *{order}* ke liye return request register ho gayi hai.\n\n{details}\n\n— {brand} Support",
+        "en": "✅ The return request for order *{order}* has been registered.\n\n{details}\n\n— {brand} Support",
+        "hi": "✅ ऑर्डर *{order}* के लिए रिटर्न रिक्वेस्ट दर्ज हो गई है।\n\n{details}\n\n— {brand} Support",
+    },
+    "awaiting_team": {
+        "hinglish": "Aapki confirmation mil gayi. Hamari team ise dekh rahi hai, update milte hi hum batayenge.\n\n{details}\n\n— {brand} Support",
+        "en": "Thanks for confirming. Our team is reviewing it and we will update you as soon as it is done.\n\n{details}\n\n— {brand} Support",
+        "hi": "आपका कन्फर्मेशन मिल गया। हमारी टीम इसे देख रही है, अपडेट मिलते ही हम बताएँगे।\n\n{details}\n\n— {brand} Support",
+    },
+    "action_failed_ack": {
+        "hinglish": "Aapki request abhi poori nahi ho payi. Hamari team ise dekhkar aapse sampark karegi.\n\n{details}\n\n— {brand} Support",
+        "en": "We could not complete your request yet. Our team will review it and get back to you.\n\n{details}\n\n— {brand} Support",
+        "hi": "आपका अनुरोध अभी पूरा नहीं हो पाया। हमारी टीम इसे देखकर आपसे संपर्क करेगी।\n\n{details}\n\n— {brand} Support",
+    },
+    "duplicate_request_ack": {
+        "hinglish": (
+            "Shukriya. Order *{order}* ke liye aapki request hume pehle hi mil chuki hai aur hamari team uspar kaam kar rahi hai - dobara bhejne ki zaroorat nahi.\n\n"
+            "{details}\n\n"
+            "Poora hote hi hum yahin update karenge.\n\n— {brand} Support"
+        ),
+        "en": (
+            "Thank you. We have already received your request for order *{order}* and our team is working on it - there is no need to send it again.\n\n"
+            "{details}\n\n"
+            "We will update you here once it is done.\n\n— {brand} Support"
+        ),
+        "hi": (
+            "धन्यवाद। ऑर्डर *{order}* के लिए आपका अनुरोध हमें पहले ही मिल चुका है और हमारी टीम उस पर काम कर रही है - दोबारा भेजने की ज़रूरत नहीं है।\n\n"
+            "{details}\n\n"
+            "पूरा होने पर हम यहीं अपडेट करेंगे।\n\n— {brand} Support"
+        ),
+    },
+    "duplicate_request_awaiting": {
+        "hinglish": (
+            "Order *{order}* ke liye aapki request ki confirmation hum pehle hi maang chuke hain. Kripya usi message ka jawab *haan* ya *nahi* me dein.\n\n"
+            "{details}\n\n— {brand} Support"
+        ),
+        "en": (
+            "We have already asked you to confirm your request for order *{order}*. Please reply *yes* or *no* to that earlier message.\n\n"
+            "{details}\n\n— {brand} Support"
+        ),
+        "hi": (
+            "ऑर्डर *{order}* के लिए आपके अनुरोध की पुष्टि हम पहले ही माँग चुके हैं। कृपया उसी संदेश का जवाब *हाँ* या *नहीं* में दें।\n\n"
+            "{details}\n\n— {brand} Support"
+        ),
+    },
+    "duplicate_request_done": {
+        "hinglish": (
+            "Order *{order}* ke liye aapki request pehle hi poori ho chuki hai. Naya kuch karne ki zaroorat nahi.\n\n"
+            "{details}\n\n— {brand} Support"
+        ),
+        "en": (
+            "Your request for order *{order}* has already been completed. No further action is needed.\n\n"
+            "{details}\n\n— {brand} Support"
+        ),
+        "hi": (
+            "ऑर्डर *{order}* के लिए आपका अनुरोध पहले ही पूरा हो चुका है। आगे कुछ करने की ज़रूरत नहीं है।\n\n"
+            "{details}\n\n— {brand} Support"
+        ),
     },
 }
 
@@ -524,6 +604,217 @@ EMAIL_T: dict[str, dict[str, str]] = {
             "- *नहीं* – रहने दें\n"
         ),
     },
+    "done_order_cancel": {
+        "hinglish": (
+            "{greeting}\n\nAapke order *{order}* ki cancellation poori ho gayi hai.\n\n"
+            "Aapki request ka saransh:\n\n{details}\n\n"
+            "Kisi bhi sawaal ke liye kripya is email ka reply karein.\n"
+        ),
+        "en": (
+            "{greeting}\n\nWe are writing to confirm that order *{order}* has been cancelled "
+            "as requested.\n\nHere is a summary of your request:\n\n{details}\n\n"
+            "If you have any questions, please reply to this email.\n"
+        ),
+        "hi": (
+            "{greeting}\n\nआपके ऑर्डर *{order}* की कैंसिलेशन पूरी हो गई है।\n\n"
+            "आपके अनुरोध का सारांश:\n\n{details}\n\n"
+            "किसी भी प्रश्न के लिए कृपया इस ईमेल का उत्तर दें।\n"
+        ),
+    },
+    "done_address_update": {
+        "hinglish": (
+            "{greeting}\n\nAapke order *{order}* ka delivery address update ho gaya hai.\n\n"
+            "Aapki request ka saransh:\n\n{details}\n\n"
+            "Kisi bhi sawaal ke liye kripya is email ka reply karein.\n"
+        ),
+        "en": (
+            "{greeting}\n\nWe are writing to confirm that the delivery address for order "
+            "*{order}* has been updated.\n\nHere is a summary of your request:\n\n{details}\n\n"
+            "If you have any questions, please reply to this email.\n"
+        ),
+        "hi": (
+            "{greeting}\n\nआपके ऑर्डर *{order}* का डिलीवरी पता अपडेट हो गया है।\n\n"
+            "आपके अनुरोध का सारांश:\n\n{details}\n\n"
+            "किसी भी प्रश्न के लिए कृपया इस ईमेल का उत्तर दें।\n"
+        ),
+    },
+    "done_exchange_request": {
+        "hinglish": (
+            "{greeting}\n\nAapke order *{order}* ke liye exchange request register ho gayi hai.\n\n"
+            "Aapki request ka saransh:\n\n{details}\n\n"
+            "Kisi bhi sawaal ke liye kripya is email ka reply karein.\n"
+        ),
+        "en": (
+            "{greeting}\n\nWe are writing to confirm that your exchange request for order "
+            "*{order}* has been registered.\n\nHere is a summary of your request:\n\n{details}\n\n"
+            "If you have any questions, please reply to this email.\n"
+        ),
+        "hi": (
+            "{greeting}\n\nआपके ऑर्डर *{order}* के लिए एक्सचेंज रिक्वेस्ट दर्ज हो गई है।\n\n"
+            "आपके अनुरोध का सारांश:\n\n{details}\n\n"
+            "किसी भी प्रश्न के लिए कृपया इस ईमेल का उत्तर दें।\n"
+        ),
+    },
+    "done_refund_create": {
+        "hinglish": (
+            "{greeting}\n\nAapke order *{order}* ka Rs {amount} ka refund shuru ho gaya hai.\n\n"
+            "Aapki request ka saransh:\n\n{details}\n\n"
+            "Kisi bhi sawaal ke liye kripya is email ka reply karein.\n"
+        ),
+        "en": (
+            "{greeting}\n\nWe are writing to confirm that a refund of *Rs {amount}* has been "
+            "started for order *{order}*.\n\nHere is a summary of your request:\n\n{details}\n\n"
+            "If you have any questions, please reply to this email.\n"
+        ),
+        "hi": (
+            "{greeting}\n\nआपके ऑर्डर *{order}* का Rs {amount} का रिफंड शुरू हो गया है।\n\n"
+            "आपके अनुरोध का सारांश:\n\n{details}\n\n"
+            "किसी भी प्रश्न के लिए कृपया इस ईमेल का उत्तर दें।\n"
+        ),
+    },
+    "done_return_request": {
+        "hinglish": (
+            "{greeting}\n\nAapke order *{order}* ke liye return request register ho gayi hai.\n\n"
+            "Aapki request ka saransh:\n\n{details}\n\n"
+            "Kisi bhi sawaal ke liye kripya is email ka reply karein.\n"
+        ),
+        "en": (
+            "{greeting}\n\nWe are writing to confirm that your return request for order "
+            "*{order}* has been registered.\n\nHere is a summary of your request:\n\n{details}\n\n"
+            "If you have any questions, please reply to this email.\n"
+        ),
+        "hi": (
+            "{greeting}\n\nआपके ऑर्डर *{order}* के लिए रिटर्न रिक्वेस्ट दर्ज हो गई है।\n\n"
+            "आपके अनुरोध का सारांश:\n\n{details}\n\n"
+            "किसी भी प्रश्न के लिए कृपया इस ईमेल का उत्तर दें।\n"
+        ),
+    },
+    "awaiting_team": {
+        "hinglish": (
+            "{greeting}\n\nAapki confirmation ke liye shukriya. Hamari team aapki request dekh rahi hai "
+            "aur poora hote hi hum aapko email se batayenge.\n\n"
+            "Aapki request ka saransh:\n\n{details}\n"
+        ),
+        "en": (
+            "{greeting}\n\nThank you for confirming. Our team is now reviewing your request and "
+            "we will email you as soon as it is completed.\n\n"
+            "Here is a summary of your request:\n\n{details}\n"
+        ),
+        "hi": (
+            "{greeting}\n\nपुष्टि के लिए धन्यवाद। हमारी टीम आपके अनुरोध की समीक्षा कर रही है और "
+            "पूरा होते ही हम आपको ईमेल से सूचित करेंगे।\n\n"
+            "आपके अनुरोध का सारांश:\n\n{details}\n"
+        ),
+    },
+    "action_failed_ack": {
+        "hinglish": (
+            "{greeting}\n\nAapki request abhi poori nahi ho payi. Hamari team ise dekhkar aapse "
+            "sampark karegi.\n\nAapki request ka saransh:\n\n{details}\n"
+        ),
+        "en": (
+            "{greeting}\n\nWe were unable to complete your request at this time. Our team will "
+            "review it and get back to you shortly.\n\n"
+            "Here is a summary of your request:\n\n{details}\n"
+        ),
+        "hi": (
+            "{greeting}\n\nआपका अनुरोध अभी पूरा नहीं हो पाया। हमारी टीम इसे देखकर आपसे जल्द संपर्क करेगी।"
+            "\n\nआपके अनुरोध का सारांश:\n\n{details}\n"
+        ),
+    },
+    "duplicate_request_ack": {
+        "hinglish": (
+            "{greeting}\n\nAapke order *{order}* ki *{request}* request hume pehle hi mil chuki hai "
+            "aur hamari team uspar kaam kar rahi hai. Dobara bhejne ki zaroorat nahi hai.\n\n"
+            "Aapke order ki details:\n\n{details}\n\n"
+            "Poora hote hi hum aapko email se update karenge.\n"
+        ),
+        "en": (
+            "{greeting}\n\nThank you for your email. We have already received your *{request}* "
+            "request for order *{order}*, and our team is working on it. There is no need to send "
+            "it again.\n\nHere are your order details:\n\n{details}\n\n"
+            "We will update you by email as soon as it is completed.\n"
+        ),
+        "hi": (
+            "{greeting}\n\nआपके ईमेल के लिए धन्यवाद। ऑर्डर *{order}* के लिए आपका *{request}* अनुरोध "
+            "हमें पहले ही मिल चुका है और हमारी टीम उस पर काम कर रही है। दोबारा भेजने की ज़रूरत नहीं है।"
+            "\n\nआपके ऑर्डर का विवरण:\n\n{details}\n\n"
+            "पूरा होते ही हम आपको ईमेल से अपडेट करेंगे।\n"
+        ),
+    },
+    "duplicate_request_awaiting": {
+        "hinglish": (
+            "{greeting}\n\nAapke order *{order}* ki *{request}* request ki confirmation hum pehle hi "
+            "maang chuke hain. Kripya usi email ka jawab *HAAN* ya *NAHI* me dein.\n\n"
+            "Aapke order ki details:\n\n{details}\n"
+        ),
+        "en": (
+            "{greeting}\n\nThank you for your email. We have already asked you to confirm your "
+            "*{request}* request for order *{order}*. Please reply *YES* or *NO* to that earlier "
+            "email and we will proceed.\n\nHere are your order details:\n\n{details}\n"
+        ),
+        "hi": (
+            "{greeting}\n\nआपके ईमेल के लिए धन्यवाद। ऑर्डर *{order}* के *{request}* अनुरोध की पुष्टि "
+            "हम पहले ही माँग चुके हैं। कृपया उसी ईमेल का जवाब *हाँ* या *नहीं* में दें।\n\n"
+            "आपके ऑर्डर का विवरण:\n\n{details}\n"
+        ),
+    },
+    "duplicate_request_done": {
+        "hinglish": (
+            "{greeting}\n\nAapke order *{order}* ki *{request}* request pehle hi poori ho chuki hai. "
+            "Aage kuch karne ki zaroorat nahi hai.\n\n"
+            "Aapke order ki details:\n\n{details}\n\n"
+            "Kisi bhi sawaal ke liye kripya is email ka reply karein.\n"
+        ),
+        "en": (
+            "{greeting}\n\nThank you for your email. Your *{request}* request for order *{order}* "
+            "has already been completed, so no further action is needed.\n\n"
+            "Here are your order details:\n\n{details}\n\n"
+            "If you have any questions, please reply to this email.\n"
+        ),
+        "hi": (
+            "{greeting}\n\nआपके ईमेल के लिए धन्यवाद। ऑर्डर *{order}* का आपका *{request}* अनुरोध "
+            "पहले ही पूरा हो चुका है, इसलिए आगे कुछ करने की ज़रूरत नहीं है।\n\n"
+            "आपके ऑर्डर का विवरण:\n\n{details}\n\n"
+            "किसी भी प्रश्न के लिए कृपया इस ईमेल का उत्तर दें।\n"
+        ),
+    },
+    "handoff_ack_order": {
+        "hinglish": (
+            "{greeting}\n\n{note}Humse sampark karne ke liye shukriya. {request_note}\n\n"
+            "Aapke order ki details:\n\n{order_block}\n\n"
+            "Maine aapki request hamari support team ko de di hai. Woh ise dekhkar aapko is email par "
+            "jawab denge.\n"
+        ),
+        "en": (
+            "{greeting}\n\n{note}Thank you for contacting us. {request_note}\n\n"
+            "Here are your order details:\n\n{order_block}\n\n"
+            "We have forwarded your request to our support team. They will review it and reply to "
+            "you by email.\n"
+        ),
+        "hi": (
+            "{greeting}\n\n{note}हमसे संपर्क करने के लिए धन्यवाद। {request_note}\n\n"
+            "आपके ऑर्डर का विवरण:\n\n{order_block}\n\n"
+            "हमने आपका अनुरोध हमारी सपोर्ट टीम को भेज दिया है। वे इसकी समीक्षा करके आपको ईमेल से "
+            "जवाब देंगे।\n"
+        ),
+    },
+    "off_hours_ack_order": {
+        "hinglish": (
+            "{greeting}\n\n{note}Humse sampark karne ke liye shukriya. {request_note}\n\n"
+            "Aapke order ki details:\n\n{order_block}\n\n"
+            "Hamari team abhi offline hai. *{opens}* par khulne ke baad hum is par follow up karenge.\n"
+        ),
+        "en": (
+            "{greeting}\n\n{note}Thank you for contacting us. {request_note}\n\n"
+            "Here are your order details:\n\n{order_block}\n\n"
+            "Our team is currently offline. We will follow up on this when we open at *{opens}*.\n"
+        ),
+        "hi": (
+            "{greeting}\n\n{note}हमसे संपर्क करने के लिए धन्यवाद। {request_note}\n\n"
+            "आपके ऑर्डर का विवरण:\n\n{order_block}\n\n"
+            "हमारी टीम अभी ऑफ़लाइन है। *{opens}* पर खुलने के बाद हम इस पर फ़ॉलो अप करेंगे।\n"
+        ),
+    },
 }
 
 
@@ -576,84 +867,232 @@ def rs(paise: int) -> str:
 
 
 _GREETING = {
-    "en": ("Hi {name},", "Hi there,"),
-    "hinglish": ("Hi {name},", "Hi there,"),
-    "hi": ("नमस्ते {name},", "नमस्ते,"),
-}
-
-# Column headers for the order-details TABLE_START/TABLE_END block each confirm_* email
-# template embeds via {items_table} (see core/html_email.py for how the markers become a
-# real HTML <table>). One row per OrderFacts.lines entry for order_cancel; the other tools
-# don't have per-line facts, so they get a single summary row instead.
-_HEADERS: dict[str, dict[str, tuple[str, ...]]] = {
-    "order_cancel": {
-        "en": ("Order ID", "Item", "Qty", "Total"),
-        "hinglish": ("Order ID", "Item", "Qty", "Total"),
-        "hi": ("ऑर्डर आईडी", "आइटम", "मात्रा", "कुल"),
-    },
-    "refund_create": {
-        "en": ("Order ID", "Refund Amount"),
-        "hinglish": ("Order ID", "Refund Amount"),
-        "hi": ("ऑर्डर आईडी", "रिफंड राशि"),
-    },
-    "address_update": {
-        "en": ("Order ID", "New Address"),
-        "hinglish": ("Order ID", "New Address"),
-        "hi": ("ऑर्डर आईडी", "नया पता"),
-    },
-    "exchange_request": {
-        "en": ("Order ID", "Item", "New Variant"),
-        "hinglish": ("Order ID", "Item", "New Variant"),
-        "hi": ("ऑर्डर आईडी", "आइटम", "नया वेरिएंट"),
-    },
-    "return_request": {
-        "en": ("Order ID",),
-        "hinglish": ("Order ID",),
-        "hi": ("ऑर्डर आईडी",),
-    },
+    "en": ("Dear {name},", "Dear Customer,"),
+    "hinglish": ("Dear {name},", "Dear Customer,"),
+    "hi": ("प्रिय {name},", "प्रिय ग्राहक,"),
 }
 
 
-def _table_row(*cols: str) -> str:
-    return "|".join(cols)
-
-
-def email_facts(
-    channel: str | None, lang: str, tool: str, order: "OrderFacts | None", facts: dict[str, object]
-) -> dict[str, object]:
-    """{greeting}/{items_table} facts for the EMAIL_T confirm_* templates above - a no-op
-    (returns {}) for any other channel, so WhatsApp/voice rendering is never affected. order
-    is None only when a template is rendered outside the normal order-verified write flow,
-    which does not happen for confirm_* in practice; guarded anyway so render() still gets a
-    usable (if order-less) table instead of a KeyError."""
-    if channel != "email":
-        return {}
+def greeting(lang: str, name: str | None = None) -> str:
+    """Formal email salutation; "Dear Customer," when no name is given (handoff acks never
+    echo the order's name - only the verified confirm/outcome flows pass one)."""
     name_tpl, no_name = _GREETING.get(lang, _GREETING["en"])
-    name = (order.customer_name if order else None) or ""
-    greeting = name_tpl.format(name=name) if name.strip() else no_name
-    headers = _HEADERS.get(tool, {}).get(lang) or _HEADERS.get(tool, {}).get("en") or ("Order ID",)
-    order_name = str(facts.get("order") or (order.order_name if order else "") or "-")
-    rows = [_table_row("TABLE_START"), _table_row(*headers)]
-    if tool == "order_cancel" and order and order.lines:
-        for line in order.lines:
-            rows.append(
-                _table_row(
-                    order_name,
-                    line.title,
-                    str(line.quantity),
-                    f"Rs {rs(line.unit_price_paise * line.quantity)}",
-                )
-            )
-    elif tool == "refund_create":
-        amount = facts.get("amount")
-        rows.append(_table_row(order_name, f"Rs {amount}" if amount else "-"))
-    elif tool == "address_update":
-        rows.append(_table_row(order_name, str(facts.get("address") or "-")))
-    elif tool == "exchange_request":
+    clean = (name or "").strip()
+    return name_tpl.format(name=clean) if clean else no_name
+
+
+_DETAIL_LABELS: dict[str, dict[str, str]] = {
+    "en": {
+        "head_key": "Detail",
+        "head_value": "Information",
+        "order": "Order ID",
+        "date": "Order date",
+        "items": "Items",
+        "total": "Order total",
+        "payment": "Payment status",
+        "delivery": "Delivery status",
+        "tracking": "Tracking",
+        "request": "Request",
+        "status": "Request status",
+        "refund_amount": "Refund amount",
+        "new_address": "New delivery address",
+        "exchange_item": "Item to exchange",
+        "new_variant": "New variant",
+    },
+    "hinglish": {
+        "head_key": "Detail",
+        "head_value": "Jaankari",
+        "order": "Order ID",
+        "date": "Order date",
+        "items": "Items",
+        "total": "Order total",
+        "payment": "Payment status",
+        "delivery": "Delivery status",
+        "tracking": "Tracking",
+        "request": "Request",
+        "status": "Request status",
+        "refund_amount": "Refund amount",
+        "new_address": "Naya delivery address",
+        "exchange_item": "Exchange ka item",
+        "new_variant": "Naya variant",
+    },
+    "hi": {
+        "head_key": "विवरण",
+        "head_value": "जानकारी",
+        "order": "ऑर्डर आईडी",
+        "date": "ऑर्डर की तारीख",
+        "items": "आइटम",
+        "total": "ऑर्डर कुल",
+        "payment": "भुगतान स्थिति",
+        "delivery": "डिलीवरी स्थिति",
+        "tracking": "ट्रैकिंग",
+        "request": "अनुरोध",
+        "status": "अनुरोध की स्थिति",
+        "refund_amount": "रिफंड राशि",
+        "new_address": "नया डिलीवरी पता",
+        "exchange_item": "बदलने वाला आइटम",
+        "new_variant": "नया वेरिएंट",
+    },
+}
+
+# The kind of request, named once for every reply (details table row + duplicate-guard text).
+REQUEST_NOUN: dict[str, dict[str, str]] = {
+    "en": {
+        "order_cancel": "Order cancellation",
+        "refund_create": "Refund",
+        "return_request": "Return request",
+        "exchange_request": "Exchange request",
+        "address_update": "Address change",
+    },
+    "hinglish": {
+        "order_cancel": "Order cancel",
+        "refund_create": "Refund",
+        "return_request": "Return request",
+        "exchange_request": "Exchange request",
+        "address_update": "Address change",
+    },
+    "hi": {
+        "order_cancel": "ऑर्डर कैंसिलेशन",
+        "refund_create": "रिफंड",
+        "return_request": "रिटर्न रिक्वेस्ट",
+        "exchange_request": "एक्सचेंज रिक्वेस्ट",
+        "address_update": "पता बदलना",
+    },
+}
+
+# Real state of the request, shown as one more details row where it is known.
+REQUEST_STATUS: dict[str, dict[str, str]] = {
+    "en": {
+        "completed": "Completed",
+        "processing": "Being processed by our team",
+        "awaiting": "Awaiting your confirmation",
+        "review": "Under review by our team",
+    },
+    "hinglish": {
+        "completed": "Poori ho chuki hai",
+        "processing": "Hamari team process kar rahi hai",
+        "awaiting": "Aapki confirmation ka intezaar hai",
+        "review": "Hamari team review kar rahi hai",
+    },
+    "hi": {
+        "completed": "पूरी हो चुकी है",
+        "processing": "हमारी टीम प्रोसेस कर रही है",
+        "awaiting": "आपकी पुष्टि की प्रतीक्षा है",
+        "review": "हमारी टीम समीक्षा कर रही है",
+    },
+}
+
+DETAIL_CHANNELS = ("email", "whatsapp")
+
+
+def _cell(value: str) -> str:
+    return " ".join(str(value).replace("|", "/").split())
+
+
+def _cap(word: str) -> str:
+    return word[:1].upper() + word[1:]
+
+
+def order_details(
+    channel: str,
+    lang: str,
+    order: OrderFacts,
+    extra: Sequence[tuple[str, str]] = (),
+    include_status: bool = True,
+    delivery_text: str | None = None,
+) -> str:
+    """Full order details block for customer replies, built only from verified order facts
+    (never from LLM text). Email gets the TABLE_START/TABLE_END markup core/html_email.py
+    turns into a real HTML table; every other channel gets "- Label: *value*" lines.
+    include_status=False drops payment/delivery for messages that can outlive the order
+    snapshot they were built from (post-confirmation outcome messages). delivery_text
+    replaces the plain delivery-status word with a richer line (shipped, expected date)."""
+    labels = _DETAIL_LABELS.get(lang, _DETAIL_LABELS["en"])
+    items = ", ".join(f"{ln.title} x{ln.quantity}" for ln in order.lines)[:200] or "-"
+    rows: list[tuple[str, str]] = [
+        (labels["order"], order.order_name),
+        (labels["date"], timeutil.to_ist(order.created_at).strftime("%d %b %Y")),
+        (labels["items"], items),
+        (labels["total"], f"Rs {rs(order.total_paise)}"),
+    ]
+    if include_status:
         rows.append(
-            _table_row(order_name, str(facts.get("item") or "-"), str(facts.get("variant") or "-"))
+            (labels["payment"], _cap(v0.status_word(v0.PAY, order.financial_status, lang))),
         )
+        rows.append(
+            (
+                labels["delivery"],
+                delivery_text or _cap(v0.status_word(v0.FULFILL, order.fulfillment_status, lang)),
+            ),
+        )
+        if order.tracking_numbers and not delivery_text:
+            carrier = f"{order.courier} " if order.courier else ""
+            rows.append((labels["tracking"], f"{carrier}{order.tracking_numbers[0]}"))
+    rows.extend(extra)
+    if channel == "email":
+        lines = ["TABLE_START", f"{_cell(labels['head_key'])}|{_cell(labels['head_value'])}"]
+        lines.extend(f"{_cell(k)}|{_cell(v)}" for k, v in rows)
+        lines.append("TABLE_END")
+        return "\n".join(lines)
+    return "\n".join(f"- {k}: *{_cell(v)}*" for k, v in rows)
+
+
+def request_rows(
+    lang: str, tool: str | None, facts: dict[str, object], status: str | None = None
+) -> list[tuple[str, str]]:
+    """Request-specific rows: what was asked, its real status (when known), and the tool's own
+    facts (refund amount, new address, exchange item/variant)."""
+    labels = _DETAIL_LABELS.get(lang, _DETAIL_LABELS["en"])
+    rows: list[tuple[str, str]] = []
+    if tool:
+        noun = REQUEST_NOUN.get(lang, REQUEST_NOUN["en"]).get(tool)
+        if noun:
+            rows.append((labels["request"], noun))
+    if status:
+        rows.append((labels["status"], REQUEST_STATUS.get(lang, REQUEST_STATUS["en"])[status]))
+    if tool == "refund_create" and facts.get("amount"):
+        rows.append((labels["refund_amount"], f"Rs {facts['amount']}"))
+    elif tool == "address_update" and facts.get("address"):
+        rows.append((labels["new_address"], str(facts["address"])))
+    elif tool == "exchange_request":
+        if facts.get("item"):
+            rows.append((labels["exchange_item"], str(facts["item"])))
+        if facts.get("variant"):
+            rows.append((labels["new_variant"], str(facts["variant"])))
+    return rows
+
+
+def detail_facts(
+    channel: str | None,
+    lang: str,
+    tool: str | None,
+    order: OrderFacts | None,
+    facts: dict[str, object],
+    status: str | None = None,
+    include_status: bool = True,
+) -> dict[str, object]:
+    """{details}/{greeting}/{items_table} facts for the email and WhatsApp reply templates
+    above - a no-op (returns {}) for any other channel (voice reads the plain T text), so
+    voice rendering is never affected. order is None only when the order snapshot is not
+    available (an old action from before snapshots existed); the block then falls back to
+    the order id and the request rows."""
+    if channel not in DETAIL_CHANNELS:
+        return {}
+    extra = request_rows(lang, tool, facts, status)
+    if order is not None:
+        details = order_details(str(channel), lang, order, extra, include_status)
     else:
-        rows.append(_table_row(order_name))
-    rows.append("TABLE_END")
-    return {"greeting": greeting, "items_table": "\n".join(rows)}
+        labels = _DETAIL_LABELS.get(lang, _DETAIL_LABELS["en"])
+        fallback = [(labels["order"], str(facts.get("order") or "-")), *extra]
+        if channel == "email":
+            lines = ["TABLE_START", f"{_cell(labels['head_key'])}|{_cell(labels['head_value'])}"]
+            lines.extend(f"{_cell(k)}|{_cell(v)}" for k, v in fallback)
+            lines.append("TABLE_END")
+            details = "\n".join(lines)
+        else:
+            details = "\n".join(f"- {k}: *{_cell(v)}*" for k, v in fallback)
+    result: dict[str, object] = {"details": details}
+    if channel == "email":
+        result["greeting"] = greeting(lang, order.customer_name if order else None)
+        result["items_table"] = details
+    return result

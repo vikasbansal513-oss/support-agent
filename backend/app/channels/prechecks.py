@@ -19,6 +19,18 @@ _OUT_OF_OFFICE = re.compile(
 )
 
 
+# Boilerplate only bulk-mail senders put in the plain-text part of an HTML newsletter
+# ("To view this content open the following URL in your browser: <tracking link>"). A real
+# customer never writes these lines, so no sender or brand list is involved.
+_BULK_BODY = re.compile(
+    r"(to view this (content|email|message)[^.\n]{0,40}(open|in)[^.\n]{0,40}(url|browser|link)"
+    r"|view (this|the) (email|message|newsletter) in (your )?(web )?browser"
+    r"|trouble (viewing|reading) this (email|message)"
+    r"|having trouble viewing)",
+    re.I,
+)
+
+
 def email_skip_reason(inbound: NormalizedInbound, own_address: str | None) -> str | None:
     headers = {k.lower(): v for k, v in inbound.email_headers.items()}
     sender = (inbound.from_email or "").strip().lower()
@@ -40,6 +52,8 @@ def email_skip_reason(inbound: NormalizedInbound, own_address: str | None) -> st
     return_path = parseaddr(headers.get("return-path", ""))[1]
     if return_path == "" and "return-path" in headers:
         return "NULL_RETURN_PATH"
+    if _BULK_BODY.search(inbound.text or ""):
+        return "BULK_MAIL_BODY"
     subject = inbound.email_subject or ""
     if _BOUNCE_SUBJECT.search(subject):
         return "BOUNCE_SUBJECT"

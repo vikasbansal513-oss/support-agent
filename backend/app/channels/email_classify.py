@@ -57,11 +57,40 @@ async def build_llm_client(
     return LlmClient(provider, LlmCallRecorder(factory))
 
 
+LLM_FALLBACK_REASON = "llm_unavailable_or_invalid"
 PROMPT_NAME = "email_filter.v1.md"
 PROMPT_VERSION = "email_filter.v1"
 
 _AUTH_TOKEN = re.compile(r"(spf|dkim|dmarc)=(\w+)", re.IGNORECASE)
 _VALID_AUTH = {"pass", "fail", "softfail", "neutral", "none"}
+
+# Categories that by their very name are never a customer writing to the brand. When the LLM
+# picks one of these AND says the mail is not customer-related, the mail is skipped even if it
+# left is_marketing/is_automated/is_spam unset (they default to false when omitted) or chose
+# MANUAL_REVIEW out of caution - e.g. a Pinterest/LinkedIn digest tagged SOCIAL_NOTIFICATION.
+_NON_CUSTOMER_CATEGORIES = frozenset(
+    {
+        "SPAM",
+        "PROMOTION",
+        "MARKETING",
+        "COLD_OUTREACH",
+        "NEWSLETTER",
+        "SOCIAL_NOTIFICATION",
+        "UNSOLICITED_ADVERTISEMENT",
+        "AFFILIATE_PITCH",
+        "VENDOR_PITCH",
+        "SURVEY_REQUEST",
+        "JOB_APPLICATION",
+        "AUTO_REPLY",
+        "OUT_OF_OFFICE",
+        "EMAIL_BOUNCE",
+        "READ_RECEIPT",
+        "OTP_NOTIFICATION",
+        "SYSTEM_NOTIFICATION",
+        "DELIVERY_NOTIFICATION",
+        "AUTOMATED_ORDER_NOTIFICATION",
+    }
+)
 
 _HIGH_RISK_EXT = frozenset({".exe", ".scr", ".bat", ".cmd", ".js", ".vbs", ".jar", ".msi", ".ps1"})
 _NEEDS_REVIEW_EXT = frozenset({".docm", ".xlsm", ".pptm", ".zip", ".rar"})
@@ -77,15 +106,18 @@ def _should_force_skip(result: EmailClassification) -> bool:
     to MANUAL_REVIEW and reached a human, even when it was clearly not about this
     brand's customers.
 
-    Force SKIP only when the LLM itself says the mail is not customer-related AND at
-    least one of marketing/automated/spam is true - i.e. two independent signals from
-    the LLM's own reading of the email agree it is noise. A genuine customer message
-    (is_customer_related=true) is never touched here, whatever else is true about it.
+    Force SKIP only when the LLM itself says the mail is not customer-related AND either
+    its category is one that can never be a customer (newsletter, social notification,
+    OTP, ...) or at least one of marketing/automated/spam is true - i.e. two independent
+    signals from the LLM's own reading of the email agree it is noise. A genuine customer
+    message (is_customer_related=true) is never touched here, whatever else is true.
     """
     if result.is_customer_related:
         return False
     if result.category in ("PHISHING", "SUSPICIOUS", "SECURITY_ALERT", "OTHER"):
         return False
+    if result.category in _NON_CUSTOMER_CATEGORIES:
+        return True
     return bool(result.is_marketing or result.is_automated or result.is_spam)
 
 
@@ -168,7 +200,7 @@ async def classify_email(
         result = EmailClassification(
             category="UNCLEAR",
             action="MANUAL_REVIEW",
-            reason="llm_unavailable_or_invalid",
+            reason=LLM_FALLBACK_REASON,
         )
 
     # Section 3/4/5: these four fields are code-computed facts. The prompt tells the

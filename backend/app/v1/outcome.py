@@ -1,11 +1,15 @@
 import uuid
+from collections.abc import Mapping
+from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.actions import engine, writes
 from app.actions.senders import Senders
 from app.agent.validate import pick_language
+from app.contracts.contracts import OrderFacts
 from app.core.db import session_scope
 from app.core.mail import Mailer
 from app.handoffs import service as handoffs
@@ -46,10 +50,81 @@ async def _context(session: AsyncSession, conversation_id: uuid.UUID) -> tuple[s
     return lang, channel, brand
 
 
-def done_text(action: writes.ActionRow, lang: str, channel: str, brand: str) -> str:
+def order_snapshot(final: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The verified order, as of the moment the customer was asked to confirm, kept in the
+    conversation's context so the later outcome message (done / waiting for the team /
+    could not complete) can show full order details without another Shopify call - that
+    message is sent from the worker or the approvals API, which have no order lookup at
+    hand. The customer's own phone/email are dropped; they are never part of a reply."""
+    raw = (final.get("tool_results") or {}).get("order")
+    if not raw:
+        return None
+    try:
+        order = OrderFacts.model_validate(raw)
+    except ValidationError:
+        return None
+    stripped = order.model_copy(update={"customer_phone": None, "customer_email": None})
+    return stripped.model_dump(mode="json")
+
+
+async def _snapshot_order(
+    session: AsyncSession, conversation_id: uuid.UUID, order_ref: str
+) -> OrderFacts | None:
+    row = (
+        await session.execute(
+            text("SELECT context FROM conversation_state WHERE conversation_id = :c"),
+            {"c": conversation_id},
+        )
+    ).first()
+    raw = (row.context or {}).get("order_snapshot") if row else None
+    if not raw:
+        return None
+    try:
+        order = OrderFacts.model_validate(raw)
+    except ValidationError:
+        return None
+    # A later request on another order overwrites the snapshot - never show the wrong one.
+    return order if order.order_name == order_ref else None
+
+
+def _address_text(address: Mapping[str, Any]) -> str:
+    parts = [address.get("line1"), address.get("line2"), address.get("city"), address.get("state")]
+    line = ", ".join(str(p) for p in parts if p)
+    return f"{line} - {address.get('pin')}"
+
+
+def outcome_facts(
+    action: writes.ActionRow,
+    lang: str,
+    channel: str,
+    brand: str,
+    order: OrderFacts | None,
+    status: str,
+) -> dict[str, object]:
     facts: dict[str, object] = {"order": action.order_ref, "brand": brand}
     if action.tool == "refund_create":
         facts["amount"] = t.rs(action.amount_paise)
+    elif action.tool == "address_update" and isinstance(action.args.get("new_address"), dict):
+        facts["address"] = _address_text(action.args["new_address"])
+    elif action.tool == "exchange_request":
+        facts["item"] = str(action.args.get("line_item") or "")
+        facts["variant"] = str(action.args.get("new_variant") or "")
+    # include_status=False: payment/delivery come from the confirm-time snapshot and would
+    # be stale next to "completed"; the request rows carry the real, current status.
+    facts.update(
+        t.detail_facts(channel, lang, action.tool, order, facts, status, include_status=False)
+    )
+    return facts
+
+
+def done_text(
+    action: writes.ActionRow,
+    lang: str,
+    channel: str,
+    brand: str,
+    order: OrderFacts | None = None,
+) -> str:
+    facts = outcome_facts(action, lang, channel, brand, order, "completed")
     return t.render(f"done_{action.tool}", lang, channel=channel, **facts)
 
 
@@ -84,19 +159,18 @@ async def notify(
         if action is None:
             return "missing"
         lang, channel, brand = await _context(session, action.conversation_id)
+        order = await _snapshot_order(session, action.conversation_id, action.order_ref)
     key = f"act-result:{action.id}:{action.status}"
     if action.status == "confirmed":
-        body = done_text(action, lang, channel, brand)
+        body = done_text(action, lang, channel, brand, order)
     elif action.status == "pending_approval":
-        body = t.render("awaiting_team", lang)
+        facts = outcome_facts(action, lang, channel, brand, order, "review")
+        body = t.render("awaiting_team", lang, channel=channel, **facts)
     elif action.status in HANDOFF_FOR:
         reason = HANDOFF_FOR[action.status]
         decision = handoff_for(action, reason, lang)
-        ack = (
-            "Aapki request abhi poori nahi ho payi. Hamari team ise dekhkar aapse sampark karegi."
-            if lang != "en"
-            else "We could not complete your request yet. Our team will review it and get back to you."
-        )
+        facts = outcome_facts(action, lang, channel, brand, order, "review")
+        ack = t.render("action_failed_ack", lang, channel=channel, **facts)
         await engine.submit_reply(
             factory,
             senders,
