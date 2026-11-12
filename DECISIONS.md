@@ -591,3 +591,4 @@ confirmation; nothing here changes the P3 (courier field shapes) or P42 (real-LL
 classification of the mixed-intent message) VERIFY items.
 
 - 2026-11-12: write intent (cancel/return/refund/exchange/address change) with no order number on email/WhatsApp now asks for the order number (email also: reply from the registered email) instead of a CONFUSED handoff; rules step skips its strict plan checks for that case and identity step asks, because a missing order number is a fact code can check, not an LLM judgment. Voice unchanged. Not executed: pytest, mypy.
+- 2026-11-12: identity_mismatch_ack no longer mentions a "customer verification process" (no such flow exists, customer got confused and was handed off); it now asks to reply from the order email, or write "talk to a human" (HUMAN keyword -> HUMAN_REQUESTED handoff). English text for all languages.
