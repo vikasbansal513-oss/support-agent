@@ -205,6 +205,24 @@ def _conv(state: State) -> dict[str, Any]:
     return dict(state.get("conv") or {})
 
 
+def _known_order_ref(state: State, plan: Plan) -> str | None:
+    ref = (
+        plan.args.order_ref
+        or keywords.extract_order_ref(state.get("incoming_text", ""))
+        or _conv(state).get("order_ref")
+        or state.get("active_order_ref")
+    )
+    return str(ref) if ref else None
+
+
+def _ask_order_ref(state: State, plan: Plan) -> dict[str, Any]:
+    if plan.intent not in WRITE_INTENT_TOOL:
+        return _v0_reply(state, "ask_order_ref")
+    if state.get("channel") == "email":
+        return _reply(state, "ask_order_ref_write", greeting=t.greeting("en"))
+    return _reply(state, "ask_order_ref_write")
+
+
 def _reply(state: State, template_id: str, **facts: object) -> dict[str, Any]:
     lang = _lang(state)
     text = t.render(template_id, lang, channel=state.get("channel"), **facts)
@@ -646,6 +664,13 @@ def build_graph_v1(deps: V1Deps) -> Any:
                 else None
             )
             return _flag(state, "SENTIMENT_NEGATIVE", **(order_facts or {}))
+        if (
+            plan.intent in WRITE_INTENT_TOOL
+            and plan.action != "handoff"
+            and state.get("channel") != "voice"
+            and _known_order_ref(state, plan) is None
+        ):
+            return {}
         if plan.intent == "unclear" or plan.confidence < deps.min_confidence:
             return _flag(state, "CONFUSED")
         if state.get("channel") == "voice" and plan.intent == "address_change":
@@ -687,12 +712,7 @@ def build_graph_v1(deps: V1Deps) -> Any:
         if plan.intent == "policy_question":
             return {}
         conv = _conv(state)
-        ref = (
-            plan.args.order_ref
-            or keywords.extract_order_ref(state.get("incoming_text", ""))
-            or conv.get("order_ref")
-            or state.get("active_order_ref")
-        )
+        ref = _known_order_ref(state, plan)
         ident = dict(state.get("identity", {}))
         attempts = int(ident.get("attempts", 0))
         ident.update({"attempts": attempts, "verified": False, "order_ref": ref})
@@ -700,7 +720,7 @@ def build_graph_v1(deps: V1Deps) -> Any:
             conv["unclear_count"] = int(conv.get("unclear_count", 0)) + 1
             if conv["unclear_count"] >= MAX_CLARIFY + 1:
                 return _flag(state, "NO_PROGRESS", identity=ident, conv=conv)
-            return {"identity": ident, "conv": conv, "v1_reply": _v0_reply(state, "ask_order_ref")}
+            return {"identity": ident, "conv": conv, "v1_reply": _ask_order_ref(state, plan)}
         policy = _policy2(state)
         enabled = set(policy.enabled_tools) if policy else set()
         if "order_lookup" not in enabled:

@@ -589,3 +589,5 @@ itself.
 alone, so confidence is high, but the real GitHub Actions run is still the final
 confirmation; nothing here changes the P3 (courier field shapes) or P42 (real-LLM
 classification of the mixed-intent message) VERIFY items.
+
+- 2026-11-12: write intent (cancel/return/refund/exchange/address change) with no order number on email/WhatsApp now asks for the order number (email also: reply from the registered email) instead of a CONFUSED handoff; rules step skips its strict plan checks for that case and identity step asks, because a missing order number is a fact code can check, not an LLM judgment. Voice unchanged. Not executed: pytest, mypy.

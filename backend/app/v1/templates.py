@@ -133,6 +133,10 @@ T: dict[str, dict[str, str]] = {
         "en": "Could you tell me a little more about what you need?",
         "hi": "कृपया थोड़ा और बताइए, आप क्या करवाना चाहते हैं?",
     },
+    "ask_order_ref_write": {
+        lang: "Happy to help with this. Please share your order number (for example *#1001*)."
+        for lang in ("en", "hinglish", "hi")
+    },
     "ask_line_item": {
         "hinglish": "Order *{order}* me kaunsa item badalna hai aur kis size ya variant me?",
         "en": "Which item in order *{order}* would you like to exchange, and for which size or variant?",
@@ -865,6 +869,15 @@ EMAIL_T: dict[str, dict[str, str]] = {
     },
 }
 
+
+_ASK_ORDER_REF_EMAIL = (
+    "{greeting}\n\n"
+    "Thank you for contacting us. To help with your request, please reply with your order "
+    "number (for example *#1001*).\n\n"
+    "If you placed the order using a different email address, please reply from that "
+    "registered email address instead."
+)
+EMAIL_T["ask_order_ref_write"] = {lang: _ASK_ORDER_REF_EMAIL for lang in ("en", "hinglish", "hi")}
 
 _DECLINE_SUMMARY = {
     "en": "Here is a summary of your order:",

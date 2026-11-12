@@ -194,6 +194,16 @@ async def test_negative_sentiment_and_low_confidence(env: AgentEnv) -> None:
     assert first[0].reason_code == "SENTIMENT_NEGATIVE" and first[0].priority == "urgent"
 
 
+async def test_write_intent_without_order_number_asks_for_it_instead_of_handoff(
+    env: AgentEnv,
+) -> None:
+    await setup(env)
+    await say(env, "please cancel my order", "n1", plan("cancel", "propose", None, ref=None))
+    assert "order number" in last_reply(env)
+    assert await env.q("SELECT reason_code FROM handoffs") == []
+    assert await actions(env) == []
+
+
 async def test_confused_plan_hands_off(env: AgentEnv) -> None:
     await setup(env)
     await say(env, "kuch", "f1", plan("unclear", "clarify", None, confidence=0.3))
