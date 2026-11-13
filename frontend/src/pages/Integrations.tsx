@@ -44,7 +44,7 @@ export function IntegrationsSettings() {
           const courier = COURIER_KINDS.some((kind) => items.some((i) => i.kind === kind && i.configured));
           const published = policies.state === "data" && policies.data.some((p) => p.status === "published");
           const steps: [string, boolean][] = [
-            [t.stepShopify, ok("shopify")],
+            [t.stepShopify, ok("shopify") || ok("woocommerce")],
             [t.stepGupshup, items.some((i) => i.kind === "gupshup" && i.configured)],
             [t.stepCourier, courier],
             [t.stepPolicy, published],

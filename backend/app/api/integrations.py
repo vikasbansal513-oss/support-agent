@@ -17,6 +17,7 @@ from app.contracts.contracts import (
     IntegrationOut,
     ProbeResultOut,
     ShopifyIn,
+    WooCommerceIn,
 )
 from app.core.config import get_settings
 from app.core.db import get_session_factory, session_scope
@@ -115,6 +116,18 @@ async def put_shopify(
         factory, tenant_id=principal.tenant_id, user_id=principal.user_id
     ) as s:
         return await service.put_shopify(s, principal, body)
+
+
+@router.put("/woocommerce")
+async def put_woocommerce(
+    body: WooCommerceIn,
+    principal: Principal = Depends(require_owner),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> IntegrationOut:
+    async with session_scope(
+        factory, tenant_id=principal.tenant_id, user_id=principal.user_id
+    ) as s:
+        return await service.put_woocommerce(s, principal, body)
 
 
 @router.put("/gupshup")

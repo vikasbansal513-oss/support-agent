@@ -550,9 +550,10 @@ async def get_writer_for_tenant(
     Returns the test override first (get_writer()'s existing behaviour, unchanged), so
     every test that calls set_writer_override() keeps working without modification. With
     no override, it loads the tenant's saved Shopify credentials the same way the read-only
-    ShopifyClient does (app.integrations.service.load_secret) and returns a RealShopifyWriter,
-    or DisabledShopifyWriter when the tenant hasn't configured Shopify - identical to today's
-    behaviour for those tenants.
+    ShopifyClient does (app.integrations.service.load_secret) and returns a RealShopifyWriter.
+    A brand runs on one store platform: when Shopify is not configured but WooCommerce is, it
+    returns a RealWooCommerceWriter (same interface). With neither configured it returns
+    DisabledShopifyWriter - identical to today's behaviour for those tenants.
     """
     if _override is not None:
         return _override
@@ -560,6 +561,20 @@ async def get_writer_for_tenant(
 
     async with session_scope(factory, tenant_id=tenant_id) as session:
         loaded = await load_secret(session, "shopify")
+        woo = await load_secret(session, "woocommerce") if loaded is None else None
+    if loaded is None and woo is not None:
+        from app.integrations.woocommerce_write import RealWooCommerceWriter
+
+        woo_config, woo_secret = woo
+        woo_http = ExternalHttp(
+            "woocommerce", recorder=DbCallRecorder(factory, tenant_id), transport=transport
+        )
+        return RealWooCommerceWriter(
+            woo_http,
+            woo_config["store_url"],
+            woo_secret["consumer_key"],
+            woo_secret["consumer_secret"],
+        )
     if loaded is None:
         return DisabledShopifyWriter()
     config, secret = loaded

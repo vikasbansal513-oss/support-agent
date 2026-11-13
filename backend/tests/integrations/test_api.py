@@ -58,6 +58,7 @@ async def test_list_empty_then_put_shopify_masks_secret(
     listed = (await api.get("/integrations", headers=headers)).json()
     assert [i["kind"] for i in listed] == [
         "shopify",
+        "woocommerce",
         "gupshup",
         "gmail",
         "shiprocket",

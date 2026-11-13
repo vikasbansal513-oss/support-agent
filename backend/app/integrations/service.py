@@ -19,6 +19,7 @@ from app.contracts.contracts import (
     IntegrationOut,
     ProbeResultOut,
     ShopifyIn,
+    WooCommerceIn,
 )
 from app.core import timeutil
 from app.core.audit import AuditEvent, record
@@ -36,6 +37,7 @@ from app.integrations.courier import (
 from app.integrations.gmail import GmailUpstreamError, HttpGmailClient
 from app.integrations.http import DbCallRecorder, ExternalHttp
 from app.integrations.shopify import ShopifyClient
+from app.integrations.woocommerce import WooCommerceClient
 from app.jobs import queue
 
 logger = logging.getLogger("app.integrations.service")
@@ -52,7 +54,14 @@ COURIER_KINDS: tuple[IntegrationKind, ...] = (
     "xpressbees",
     "shadowfax",
 )
-KINDS: tuple[IntegrationKind, ...] = ("shopify", "gupshup", "gmail", *COURIER_KINDS)
+STORE_KINDS: tuple[IntegrationKind, ...] = ("shopify", "woocommerce")
+KINDS: tuple[IntegrationKind, ...] = (
+    "shopify",
+    "woocommerce",
+    "gupshup",
+    "gmail",
+    *COURIER_KINDS,
+)
 Factory = async_sessionmaker[AsyncSession]
 
 
@@ -165,9 +174,18 @@ async def store_secret(
     )
 
 
+async def _require_single_store_platform(session: AsyncSession, kind: IntegrationKind) -> None:
+    """A brand runs on one store platform: Shopify or WooCommerce, never both. The agent reads
+    orders from whichever is connected, so a second one would be ambiguous."""
+    for other in STORE_KINDS:
+        if other != kind and await _load(session, other) is not None:
+            raise AppError("E-CONF-001", detail=f"{other} already connected")
+
+
 async def put_shopify(
     session: AsyncSession, principal: Principal, body: ShopifyIn
 ) -> IntegrationOut:
+    await _require_single_store_platform(session, "shopify")
     await store_secret(
         session,
         "shopify",
@@ -177,6 +195,21 @@ async def put_shopify(
     )
     await _audit(session, principal, "shopify", "integration.set")
     return _out("shopify", await _load(session, "shopify"), _hint(body.access_token))
+
+
+async def put_woocommerce(
+    session: AsyncSession, principal: Principal, body: WooCommerceIn
+) -> IntegrationOut:
+    await _require_single_store_platform(session, "woocommerce")
+    await store_secret(
+        session,
+        "woocommerce",
+        {"store_url": body.store_url},
+        {"consumer_key": body.consumer_key, "consumer_secret": body.consumer_secret},
+        body.consumer_secret,
+    )
+    await _audit(session, principal, "woocommerce", "integration.set")
+    return _out("woocommerce", await _load(session, "woocommerce"), _hint(body.consumer_secret))
 
 
 async def put_courier(
@@ -319,6 +352,12 @@ async def probe_integration(
         failure = await ShopifyClient(http, config["shop_domain"], secret["access_token"]).probe()
         ok = failure is None
         auth_error = failure is not None and failure.error_code == "auth_error"
+    elif kind == "woocommerce":
+        woo_failure = await WooCommerceClient(
+            http, config["store_url"], secret["consumer_key"], secret["consumer_secret"]
+        ).probe()
+        ok = woo_failure is None
+        auth_error = woo_failure is not None and woo_failure.error_code == "auth_error"
     elif kind == "gmail":
         try:
             ok = await HttpGmailClient(http, secret["refresh_token"]).probe()
@@ -475,7 +514,7 @@ async def record_health(
         )
         if auth_error and kind == "gmail":
             await _notify_gmail_reconnect(session)
-        if auth_error and kind in ("shopify", "gupshup"):
+        if auth_error and kind in ("shopify", "woocommerce", "gupshup"):
             await session.execute(
                 text("UPDATE tenants SET agent_paused = true WHERE id = :t"), {"t": tenant_id}
             )
