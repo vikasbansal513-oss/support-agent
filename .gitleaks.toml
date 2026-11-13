@@ -9,4 +9,5 @@ paths = [
   '''\.env\.example$''',
   '''constraints\.txt$''',
   '''^backend/tests/''',
+  '''^woocommerce_support/backend/tests/''',
 ]
