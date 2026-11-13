@@ -12,6 +12,7 @@ from app.contracts.contracts import RegressionOut
 from app.core import timeutil
 from app.core.audit import AuditEvent, record
 from app.core.errors import AppError
+from app.policy import simulate
 from app.policy.regression import run_regression
 from app.v1.policy import (
     AnyPolicy,
@@ -129,6 +130,7 @@ async def create_draft(
     base_version: int | None,
     *,
     admin_override: bool = False,
+    reason: str | None = None,
 ) -> PolicyOutAny:
     await session.execute(text("SELECT id FROM tenants WHERE id = app_current_tenant() FOR UPDATE"))
     if not admin_override:
@@ -156,6 +158,7 @@ async def create_draft(
             action="policy.draft_created",
             entity_type="policy",
             entity_id=str(row.id),
+            reason=reason,
             actor_user_id=principal.user_id,
             actor_role=principal.role,
         ),
@@ -169,6 +172,8 @@ async def update_draft(
     policy_id: uuid.UUID,
     content: AnyPolicy,
     base_version: int | None,
+    *,
+    reason: str | None = None,
 ) -> PolicyOutAny:
     current = await _get(session, policy_id, lock=True)
     if current.status != "draft":
@@ -195,11 +200,31 @@ async def update_draft(
             action="policy.draft_updated",
             entity_type="policy",
             entity_id=str(policy_id),
+            reason=reason,
             actor_user_id=principal.user_id,
             actor_role=principal.role,
         ),
     )
     return _out(row)
+
+
+async def get_one(session: AsyncSession, policy_id: uuid.UUID) -> PolicyOutAny:
+    return _out(await _get(session, policy_id))
+
+
+async def tenant_timezone(session: AsyncSession) -> str:
+    row = (await session.execute(text("SELECT timezone FROM tenant_settings"))).first()
+    return str(row.timezone) if row else "Asia/Kolkata"
+
+
+async def try_scenario(
+    session: AsyncSession, policy_id: uuid.UUID, body: simulate.TryIn
+) -> simulate.TryOut:
+    out = await get_one(session, policy_id)
+    if not isinstance(out.content, PolicyV2):
+        raise AppError("E-POL-002", detail="v2_required")
+    tz = await tenant_timezone(session)
+    return simulate.run(out.content, body, tz, timeutil.utc_now())
 
 
 async def _run_and_store(

@@ -14,7 +14,7 @@ from app.agent import keywords, runner
 from app.channels import identity
 from app.channels.gupshup_parse import hash_token, tokens_equal
 from app.contracts.contracts import NormalizedInbound
-from app.core import timeutil
+from app.core import officehours, timeutil
 from app.core.config import get_settings
 from app.core.db import session_scope
 from app.core.errors import new_error_id
@@ -120,10 +120,7 @@ def _eligible(view: TenantView, voice: VoiceTenant) -> str | None:
 def _in_hours(view: TenantView) -> bool:
     if view.policy is None:
         return False
-    hours = view.policy.office_hours
-    return timeutil.is_within_hours(
-        timeutil.utc_now(), hours.start, hours.end, hours.days, view.timezone
-    )
+    return officehours.is_open(view.policy, timeutil.utc_now(), view.timezone)
 
 
 @dataclass(frozen=True)

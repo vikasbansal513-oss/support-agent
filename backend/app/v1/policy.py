@@ -1,10 +1,13 @@
 import uuid
+from collections.abc import Iterable
+from datetime import date, time
 from typing import Any, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.contracts.contracts import (
     DEFAULT_DISCLOSURE,
+    HHMM_RE,
     V0_TOOLS,
     Disclosure,
     OfficeHours,
@@ -71,6 +74,39 @@ class Limits(BaseModel):
         }.get(tool)
 
 
+class Faq(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    question: str = Field(min_length=3, max_length=200)
+    answer: str = Field(min_length=3, max_length=400)
+
+    @field_validator("question", "answer")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        text = " ".join(v.split())
+        if len(text) < 3:
+            raise ValueError("too short")
+        return text
+
+
+class DayHours(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    start: str
+    end: str
+
+    @field_validator("start", "end")
+    @classmethod
+    def _hhmm(cls, v: str) -> str:
+        if not HHMM_RE.match(v):
+            raise ValueError("use HH:MM, 24 hour")
+        return v
+
+    @model_validator(mode="after")
+    def _order(self) -> "DayHours":
+        if time.fromisoformat(self.start) >= time.fromisoformat(self.end):
+            raise ValueError("start must be before end")
+        return self
+
+
 def _default_tools() -> list[ToolNameV2]:
     return ["handoff_to_human", "order_lookup", "tracking_lookup"]
 
@@ -81,6 +117,10 @@ class PolicyV2(BaseModel):
     office_hours: OfficeHours = Field(default_factory=OfficeHours)
     return_window_days: int = Field(default=7, ge=1, le=60)
     final_sale_tags: list[str] = Field(default_factory=list, max_length=50)
+    # Optional shorter/longer return window for orders carrying a given tag. When an order
+    # has several matching tags the strictest (smallest) window wins; no match means
+    # return_window_days. Empty = old single-window behaviour.
+    return_window_by_tag: dict[str, int] = Field(default_factory=dict)
     customer_daily_msg_cap: int = Field(default=30, ge=1, le=500)
     brand_daily_msg_cap: int = Field(default=2000, ge=1, le=100000)
     handoff_sla_minutes: int = Field(default=30, ge=5, le=1440)
@@ -92,6 +132,23 @@ class PolicyV2(BaseModel):
     # own choice (Dashboard -> Policy page), default "en" so existing behaviour is
     # unchanged until a brand opts in.
     reply_language: Literal["hi", "en", "hinglish"] = "en"
+    # Closed dates (YYYY-MM-DD) and per-weekday hours ("0".."6", Mon=0). Both are optional;
+    # empty means the old single office_hours rule applies unchanged.
+    holidays: list[str] = Field(default_factory=list, max_length=60)
+    day_hours: dict[str, DayHours] = Field(default_factory=dict)
+    # Brand-written answers to common store questions. The reply writer may only repeat these
+    # (they go in as facts), so the agent never invents a shipping time or payment rule.
+    faqs: list[Faq] = Field(default_factory=list, max_length=20)
+    # Extra line added to the "we are closed" acknowledgement when a customer is handed off
+    # outside office hours.
+    ooo_message: str = Field(default="", max_length=300)
+    # How Cash on Delivery orders are refunded. This is information for the customer reply only;
+    # it does not move money and the agent does not detect COD orders.
+    cod_refund_method: Literal["", "bank_transfer", "store_credit"] = ""
+    cod_refund_note: str = Field(default="", max_length=200)
+    # 0 = use the platform default. Otherwise remind by email/WhatsApp every N minutes while a
+    # handoff is past its SLA.
+    handoff_reminder_minutes: int = Field(default=0, ge=0, le=1440)
     extra_handoff_keywords: list[str] = Field(default_factory=list, max_length=100)
     # Email_Filter_v2.2.md Section 15: per-brand override of the classifier's default
     # action for a given email category (e.g. one brand auto-skips wholesale enquiries,
@@ -139,6 +196,48 @@ class PolicyV2(BaseModel):
             out.append(text)
         return sorted(set(out))
 
+    @field_validator("handoff_reminder_minutes")
+    @classmethod
+    def _reminder(cls, value: int) -> int:
+        if 0 < value < 5:
+            raise ValueError("handoff_reminder_minutes must be 0 (platform default) or at least 5")
+        return value
+
+    @field_validator("ooo_message", "cod_refund_note")
+    @classmethod
+    def _one_line(cls, value: str) -> str:
+        return " ".join(value.split())
+
+    @field_validator("return_window_by_tag")
+    @classmethod
+    def _window_tags(cls, value: dict[str, int]) -> dict[str, int]:
+        if len(value) > 50:
+            raise ValueError("at most 50 tag windows")
+        out: dict[str, int] = {}
+        for key, days in value.items():
+            tag = " ".join(key.lower().split())
+            if not tag or len(tag) > 60:
+                raise ValueError("tags must be 1..60 chars")
+            if not 1 <= days <= 60:
+                raise ValueError("tag return window must be 1..60 days")
+            out[tag] = days
+        return out
+
+    @field_validator("holidays")
+    @classmethod
+    def _holidays(cls, value: list[str]) -> list[str]:
+        try:
+            return sorted({date.fromisoformat(item).isoformat() for item in value})
+        except ValueError as exc:
+            raise ValueError("holidays must be YYYY-MM-DD dates") from exc
+
+    @field_validator("day_hours")
+    @classmethod
+    def _day_hours(cls, value: dict[str, DayHours]) -> dict[str, DayHours]:
+        if any(key not in {"0", "1", "2", "3", "4", "5", "6"} for key in value):
+            raise ValueError("day_hours keys must be 0..6 (Mon=0)")
+        return value
+
     @field_validator("enabled_tools")
     @classmethod
     def _tools(cls, value: list[str]) -> list[str]:
@@ -152,6 +251,11 @@ class PolicyV2(BaseModel):
             if self.autonomy.level(tool) != "off" and tool not in self.enabled_tools:
                 raise ValueError(f"{tool} is {self.autonomy.level(tool)} but not in enabled_tools")
         return self
+
+    def return_window_for(self, tags: Iterable[str]) -> int:
+        normalised = {" ".join(t.lower().split()) for t in tags}
+        days = [d for tag, d in self.return_window_by_tag.items() if tag in normalised]
+        return min(days) if days else self.return_window_days
 
     def write_level(self, tool: WriteTool) -> Level:
         return "off" if tool not in self.enabled_tools else self.autonomy.level(tool)
@@ -204,6 +308,7 @@ class PolicyDraftAnyIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     content: AnyPolicy
     base_version: int | None = None
+    reason: str | None = Field(default=None, max_length=300)
 
 
 def raised_levels(new: PolicyV2, published: PolicyV2 | None) -> list[str]:

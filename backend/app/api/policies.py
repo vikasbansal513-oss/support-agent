@@ -10,7 +10,7 @@ from app.auth.service import Principal
 from app.contracts.contracts import RegressionOut
 from app.core.db import get_session_factory, session_scope
 from app.core.errors import AppError
-from app.policy import service
+from app.policy import service, simulate
 from app.v1 import autonomy
 from app.v1.policy import PolicyDraftAnyIn, PolicyOutAny
 
@@ -60,7 +60,9 @@ async def create_policy(
     async with session_scope(
         factory, tenant_id=principal.tenant_id, user_id=principal.user_id
     ) as s:
-        return await service.create_draft(s, principal, parsed.content, parsed.base_version)
+        return await service.create_draft(
+            s, principal, parsed.content, parsed.base_version, reason=parsed.reason
+        )
 
 
 @router.put("/autonomy")
@@ -100,8 +102,23 @@ async def update_policy(
         factory, tenant_id=principal.tenant_id, user_id=principal.user_id
     ) as s:
         return await service.update_draft(
-            s, principal, policy_id, parsed.content, parsed.base_version
+            s, principal, policy_id, parsed.content, parsed.base_version, reason=parsed.reason
         )
+
+
+@router.post("/{policy_id}/try")
+async def try_policy(
+    policy_id: uuid.UUID,
+    body: simulate.TryIn,
+    principal: Principal = Depends(require_owner),  # noqa: B008
+    factory: Factory = Depends(get_session_factory),  # noqa: B008
+) -> simulate.TryOut:
+    """Dry run: what the write gate and office hours would do for a sample order. No LLM call,
+    nothing is stored or sent."""
+    async with session_scope(
+        factory, tenant_id=principal.tenant_id, user_id=principal.user_id
+    ) as s:
+        return await service.try_scenario(s, policy_id, body)
 
 
 @router.get("/{policy_id}/regression")

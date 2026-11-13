@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.actions.senders import Senders
 from app.contracts.contracts import DecisionOut
-from app.core import timeutil
+from app.core import officehours, timeutil
 from app.core.db import session_scope
 from app.core.mail import Mailer, send_safely
 from app.policy import service as policy_service
@@ -32,8 +32,7 @@ def sla_due(policy: AnyPolicy | None, tz: str, now: Any) -> Any:
     minutes = policy.handoff_sla_minutes if policy else 30
     if policy is None:
         return now + timedelta(minutes=minutes)
-    hours = policy.office_hours
-    opens = timeutil.next_open_utc(now, hours.start, hours.end, hours.days, tz)
+    opens = officehours.next_open(policy, now, tz)
     base = opens or now
     return base + timedelta(minutes=minutes)
 

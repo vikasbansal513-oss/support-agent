@@ -549,6 +549,14 @@ def handoff_decision(state: State, reason: str) -> DecisionV1:
         ack = _v0_reply(state, template_id)
     if template_id == "handoff_ack" and not email_order_ack:
         ack = _with_empathy(state, reason, ack)
+    if (
+        ack
+        and not email_order_ack
+        and policy is not None
+        and policy.ooo_message
+        and not state.get("within_office_hours", True)
+    ):
+        ack = {**ack, "text": f"{ack['text']}\n\n{policy.ooo_message}"}
     return DecisionV1(
         action="handoff",
         reason_code=reason,
@@ -1073,7 +1081,7 @@ def build_graph_v1(deps: V1Deps) -> Any:
             conv.update(awaiting="none", unclear_count=0, order_ref=order.order_name)
             decline_facts: dict[str, object] = {
                 "order": order.order_name,
-                "days": policy.return_window_days,
+                "days": policy.return_window_for(gate_order.tags),
             }
             decline_facts.update(
                 t.detail_facts(

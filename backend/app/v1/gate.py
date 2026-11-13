@@ -161,7 +161,7 @@ def _evaluate(policy: PolicyV2, ctx: GateContext, soft: bool = False) -> GateDec
                 fulfillment_status=order.fulfillment_status,
             ),
             ctx.now,
-            policy.return_window_days,
+            policy.return_window_for(order.tags),
             list(policy.final_sale_tags),
         )
         if eligibility.decision == "needs_human":

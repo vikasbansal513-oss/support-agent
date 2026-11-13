@@ -15,7 +15,7 @@ from app.agent.state import State
 from app.agent.tools import ToolBox
 from app.channels import identity
 from app.contracts.contracts import DecisionOut, NormalizedInbound
-from app.core import timeutil
+from app.core import officehours, timeutil
 from app.core.config import get_settings
 from app.core.db import session_scope
 from app.core.errors import new_error_id
@@ -100,12 +100,11 @@ async def _llm(
 def _label(policy: AnyPolicy | None, tz: str) -> tuple[bool, str | None]:
     if policy is None:
         return True, None
-    hours = policy.office_hours
     now = timeutil.utc_now()
-    inside = timeutil.is_within_hours(now, hours.start, hours.end, hours.days, tz)
+    inside = officehours.is_open(policy, now, tz)
     if inside:
         return True, None
-    opens = timeutil.next_open_utc(now, hours.start, hours.end, hours.days, tz)
+    opens = officehours.next_open(policy, now, tz)
     if opens is None:
         return False, None
     local = opens.astimezone(

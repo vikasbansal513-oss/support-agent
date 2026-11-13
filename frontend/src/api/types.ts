@@ -263,6 +263,29 @@ export interface PolicyContent {
   extra_handoff_keywords: string[];
   enabled_tools: string[];
   reply_language?: "hi" | "en" | "hinglish";
+  tone_notes?: string;
+  confirm_ttl_minutes?: number;
+  sentiment_min?: number;
+  fraud_cluster_window_hours?: number;
+  fraud_cluster_claim_limit?: number;
+  holidays?: string[];
+  day_hours?: Record<string, { start: string; end: string }>;
+  return_window_by_tag?: Record<string, number>;
+  faqs?: { question: string; answer: string }[];
+  ooo_message?: string;
+  cod_refund_method?: "" | "bank_transfer" | "store_credit";
+  cod_refund_note?: string;
+  handoff_reminder_minutes?: number;
+}
+
+export interface PolicyTryResult {
+  route: "auto" | "approval" | "handoff" | "decline";
+  reason: string;
+  handoff_reason: string | null;
+  amount_paise: number;
+  return_window_days: number;
+  office_open: boolean;
+  next_open: string | null;
 }
 
 export interface Policy {

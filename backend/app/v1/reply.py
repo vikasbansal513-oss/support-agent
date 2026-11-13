@@ -67,12 +67,19 @@ def tracking_facts(tracking: dict[str, Any]) -> dict[str, Any]:
 
 def policy_facts(policy: PolicyV2) -> dict[str, Any]:
     hours = policy.office_hours
-    return {
+    facts: dict[str, Any] = {
         "return_window_days": policy.return_window_days,
         "final_sale_tags": list(policy.final_sale_tags),
         "support_hours": f"{hours.start} to {hours.end}",
         "team_reply_within_minutes": policy.handoff_sla_minutes,
     }
+    if policy.faqs:
+        facts["store_faq"] = [{"question": f.question, "answer": f.answer} for f in policy.faqs]
+    if policy.cod_refund_method:
+        facts["cod_refund_method"] = policy.cod_refund_method.replace("_", " ")
+        if policy.cod_refund_note:
+            facts["cod_refund_note"] = policy.cod_refund_note
+    return facts
 
 
 def _digits(value: object) -> set[str]:

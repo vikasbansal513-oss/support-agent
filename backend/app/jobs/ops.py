@@ -13,7 +13,7 @@ from app.core import timeutil
 from app.core.audit import AuditEvent, record
 from app.core.config import get_settings
 from app.core.db import session_scope
-from app.core.mail import get_mailer
+from app.core.mail import get_mailer, send_safely
 from app.integrations.shopify_write import ShopifyWriter, get_writer_for_tenant
 from app.jobs.handlers import Handler, JobContext
 from app.policy import service as policy_service
@@ -47,9 +47,12 @@ async def notify_once(
 
 async def sla_check(ctx: JobContext) -> dict[str, Any]:
     now = timeutil.utc_now()
-    again = now - timedelta(minutes=get_settings().sla_realert_minutes)
     alerted = 0
+    reminder_to: dict[str, Any] | None = None
     async with session_scope(ctx.factory, tenant_id=ctx.job.tenant_id) as session:
+        policy, _ = await policy_service.get_published_policy(session)
+        reminder = int(getattr(policy, "handoff_reminder_minutes", 0) or 0)
+        again = now - timedelta(minutes=reminder or get_settings().sla_realert_minutes)
         rows = (
             await session.execute(
                 text(
@@ -85,7 +88,40 @@ async def sla_check(ctx: JobContext) -> dict[str, Any]:
                 ),
             )
             alerted += 1
+        if alerted and reminder > 0:
+            contact = (
+                await session.execute(
+                    text(
+                        "SELECT notify_email_enabled, notify_email, notify_whatsapp_enabled,"
+                        " alert_phone FROM tenant_settings"
+                    )
+                )
+            ).first()
+            if contact is not None:
+                reminder_to = {
+                    "email": contact.notify_email
+                    if contact.notify_email_enabled and contact.notify_email
+                    else None,
+                    "phone": contact.alert_phone
+                    if contact.notify_whatsapp_enabled and contact.alert_phone
+                    else None,
+                }
+    if reminder_to is not None:
+        await _send_sla_reminder(ctx, reminder_to, alerted)
     return {"alerted": alerted}
+
+
+async def _send_sla_reminder(ctx: JobContext, to: dict[str, Any], count: int) -> None:
+    message = f"{count} handoff(s) are still waiting for your team, past the reply time."
+    if to["email"]:
+        await send_safely(get_mailer(), to["email"], "[Support] Handoff reminder", message)
+    if to["phone"]:
+        senders = ctx.senders or await build_senders(ctx.factory, ctx.job.tenant_id, ctx.transport)
+        if senders.whatsapp is not None:
+            try:
+                await senders.whatsapp.send_text(to["phone"], f"Handoff reminder: {message}")
+            except Exception as exc:
+                logger.error("whatsapp reminder failed", extra={"error_class": type(exc).__name__})
 
 
 def p95(values: list[int]) -> int:

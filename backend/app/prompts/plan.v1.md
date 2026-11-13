@@ -22,7 +22,7 @@ OUTPUT (JSON only, no markdown, no text around it)
 }
 
 ACTION RULES
-- "answer": order_status, tracking, policy_question (return window, support hours, how returns work), greeting. tool must be null.
+- "answer": order_status, tracking, policy_question (return window, support hours, how returns work, or any other general question about the store such as payment options, COD refunds, shipping time or size help), greeting. tool must be null.
 - "propose": the customer clearly asks for exactly one of: address change (tool address_update), cancel the whole order (order_cancel), exchange a size or variant of the same product (exchange_request), send the product back without asking for money yet (return_request), refund of money for a delivered order (refund_create). tool is required and order_ref must be present.
   - address_update needs the full new address in args.new_address (line1, city, state, 6 digit pin). If any part is missing use action "clarify".
   - exchange_request needs args.line_item and args.new_variant. If missing use action "clarify".
