@@ -7,6 +7,7 @@ import { useToast } from "./Toast";
 
 const LABEL: Record<IntegrationKind, string> = {
   shopify: "Shopify",
+  woocommerce: "WooCommerce",
   gupshup: "WhatsApp (Gupshup)",
   gmail: "Gmail",
   shiprocket: "Shiprocket",
@@ -17,6 +18,8 @@ const LABEL: Record<IntegrationKind, string> = {
   xpressbees: "XpressBees",
   shadowfax: "Shadowfax",
 };
+
+export const STORE_KINDS: IntegrationKind[] = ["shopify", "woocommerce"];
 
 export const COURIER_KINDS: IntegrationKind[] = [
   "shiprocket",
@@ -41,6 +44,7 @@ const LOGO_CLASS: Partial<Record<IntegrationKind, string>> = {
 };
 const LOGO_CHAR: Record<IntegrationKind, string> = {
   shopify: "S",
+  woocommerce: "WC",
   gupshup: "W",
   gmail: "G",
   shiprocket: "SR",
@@ -66,6 +70,7 @@ function IntegrationCard({ kind, item, onChange }: { kind: IntegrationKind; item
     let path = `/integrations/${kind}`;
     let body: Record<string, string>;
     if (kind === "shopify") body = { shop_domain: a.trim(), access_token: b };
+    else if (kind === "woocommerce") body = { store_url: a.trim(), consumer_key: b.trim(), consumer_secret: c.trim() };
     else if (kind === "gupshup") body = { userid: a, password: b, source_number: c.trim(), app_name: d };
     else body = { credential: a };
     const saved = await api.put<Integration>(path, body);
@@ -150,6 +155,13 @@ function IntegrationCard({ kind, item, onChange }: { kind: IntegrationKind; item
                   <Field label={t.accessToken} type="password" value={b} onChange={setB} autoComplete="off" required />
                 </>
               )}
+              {kind === "woocommerce" && (
+                <>
+                  <Field label={t.woocommerceStoreUrl} value={a} onChange={setA} required />
+                  <Field label={t.woocommerceKey} value={b} onChange={setB} autoComplete="off" required />
+                  <Field label={t.woocommerceSecret} type="password" value={c} onChange={setC} autoComplete="off" required />
+                </>
+              )}
               {kind === "gupshup" && (
                 <>
                   <Field label={t.gupshupUser} value={a} onChange={setA} required />
@@ -214,6 +226,34 @@ function IntegrationCard({ kind, item, onChange }: { kind: IntegrationKind; item
   );
 }
 
+function StoreSection({ items, onChange }: { items: Integration[]; onChange: () => void }) {
+  const configuredFirst = STORE_KINDS.find((kind) => items.find((i) => i.kind === kind)?.configured);
+  const [selected, setSelected] = useState<IntegrationKind>(configuredFirst ?? "shopify");
+  return (
+    <div className="card pad">
+      <h2 className="card-title">{t.storeHeading}</h2>
+      <label className="field">
+        <span className="field-label">{t.storePlatform}</span>
+        <select value={selected} onChange={(event) => setSelected(event.target.value as IntegrationKind)}>
+          {STORE_KINDS.map((kind) => {
+            const configured = items.find((i) => i.kind === kind)?.configured ?? false;
+            return (
+              <option key={kind} value={kind}>
+                {LABEL[kind]}
+                {configured ? ` — ${t.storeConfigured}` : ""}
+              </option>
+            );
+          })}
+        </select>
+      </label>
+      <small>{t.storePlatformNote}</small>
+      <div className="nested-provider">
+        <IntegrationCard key={selected} kind={selected} item={items.find((i) => i.kind === selected)} onChange={onChange} />
+      </div>
+    </div>
+  );
+}
+
 function LogisticsSection({ items, onChange }: { items: Integration[]; onChange: () => void }) {
   const configuredFirst = COURIER_KINDS.find((kind) => items.find((i) => i.kind === kind)?.configured);
   const [selected, setSelected] = useState<IntegrationKind>(configuredFirst ?? "shiprocket");
@@ -244,7 +284,7 @@ function LogisticsSection({ items, onChange }: { items: Integration[]; onChange:
 export function IntegrationsPanel({ items, onChange }: { items: Integration[]; onChange: () => void }) {
   return (
     <>
-      <IntegrationCard kind="shopify" item={items.find((i) => i.kind === "shopify")} onChange={onChange} />
+      <StoreSection items={items} onChange={onChange} />
       <IntegrationCard kind="gupshup" item={items.find((i) => i.kind === "gupshup")} onChange={onChange} />
       <LogisticsSection items={items} onChange={onChange} />
       <IntegrationCard kind="gmail" item={items.find((i) => i.kind === "gmail")} onChange={onChange} />

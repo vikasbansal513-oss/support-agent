@@ -184,6 +184,7 @@ export interface AgentStatus {
 
 export type IntegrationKind =
   | "shopify"
+  | "woocommerce"
   | "gupshup"
   | "gmail"
   | "shiprocket"

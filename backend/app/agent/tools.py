@@ -6,6 +6,7 @@ from typing import Any, Literal, Protocol
 from app.contracts.contracts import ToolResult
 from app.integrations.courier import CourierClient
 from app.integrations.shopify import ShopifyClient
+from app.integrations.woocommerce import WooCommerceClient
 
 ToolFn = Callable[..., Awaitable[ToolResult]]
 
@@ -37,7 +38,8 @@ class ToolBox(Protocol):
 @dataclass
 class LiveToolBox:
     tenant_id: uuid.UUID
-    shopify: ShopifyClient | None
+    # The brand's single store-platform client (Shopify or WooCommerce); field name kept.
+    shopify: ShopifyClient | WooCommerceClient | None
     couriers: dict[str, CourierClient]
     calls: list[dict[str, Any]] = field(default_factory=list)
 

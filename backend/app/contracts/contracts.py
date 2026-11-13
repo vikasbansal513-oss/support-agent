@@ -10,6 +10,7 @@ import re
 import uuid
 from datetime import datetime, time
 from typing import Annotated, Any, Literal, TypedDict
+from urllib.parse import urlsplit
 
 from pydantic import (
     AfterValidator,
@@ -31,6 +32,7 @@ TenantStatus = Literal["pending_approval", "active", "paused", "suspended"]
 Role = Literal["owner", "agent"]
 IntegrationKind = Literal[
     "shopify",
+    "woocommerce",
     "gupshup",
     "gmail",
     "shiprocket",
@@ -382,7 +384,7 @@ class CustomerVerification(BaseModel):
     model_config = ConfigDict(extra="ignore")
     checked: bool = False
     registered_customer: bool | None = None
-    platform: Literal["shopify"] | None = None
+    platform: Literal["shopify", "woocommerce"] | None = None
     customer_match: MatchStatus = "not_checked"
 
 
@@ -1211,6 +1213,42 @@ class ShopifyIn(Strict):
     access_token: str = Field(min_length=10, max_length=300)
 
 
+class WooCommerceIn(Strict):
+    store_url: str = Field(min_length=12, max_length=200)
+    consumer_key: str = Field(pattern=r"^ck_[A-Za-z0-9]{10,100}$")
+    consumer_secret: str = Field(pattern=r"^cs_[A-Za-z0-9]{10,100}$")
+
+    @field_validator("store_url")
+    @classmethod
+    def _store_url(cls, value: str) -> str:
+        """https only, a real DNS hostname (no IP literal, localhost or internal name), no
+        credentials, query or fragment: the server fetches this URL, so it must not be able to
+        point the agent at internal addresses."""
+        parsed = urlsplit(value.strip())
+        host = (parsed.hostname or "").lower()
+        labels = host.split(".")
+        valid_host = (
+            len(labels) >= 2
+            and all(re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?", label) for label in labels)
+            and not labels[-1].isdigit()
+            and labels[-1] not in {"local", "localhost", "internal", "lan", "home", "corp"}
+        )
+        if (
+            parsed.scheme != "https"
+            or not valid_host
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or parsed.port not in (None, 443)
+        ):
+            raise ValueError("store_url must be an https store address")
+        path = parsed.path.rstrip("/")
+        if path and not re.fullmatch(r"(/[A-Za-z0-9._~-]+)+", path):
+            raise ValueError("store_url path is not valid")
+        return f"https://{host}{path}"
+
+
 class GupshupIn(Strict):
     userid: str = Field(min_length=3, max_length=100)
     password: str = Field(min_length=3, max_length=200)
@@ -1224,7 +1262,7 @@ class CourierIn(Strict):
     credential: str = Field(min_length=6, max_length=400)
 
 
-IntegrationIn = ShopifyIn | GupshupIn | CourierIn
+IntegrationIn = ShopifyIn | WooCommerceIn | GupshupIn | CourierIn
 
 
 class IntegrationOut(BaseModel):
@@ -1548,6 +1586,7 @@ ENDPOINTS: list[Endpoint] = [
     E("GET", "/admin/llm-usage", "admin", None, "list[LlmUsageRowOut]"),
     E("GET", "/integrations", "owner", None, "list[IntegrationOut]"),
     E("PUT", "/integrations/shopify", "owner", "ShopifyIn", "IntegrationOut"),
+    E("PUT", "/integrations/woocommerce", "owner", "WooCommerceIn", "IntegrationOut"),
     E("PUT", "/integrations/gupshup", "owner", "GupshupIn", "IntegrationOut"),
     E("PUT", "/integrations/{shiprocket|delhivery}", "owner", "CourierIn", "IntegrationOut"),
     E("POST", "/integrations/{kind}/test", "owner", None, "ProbeResultOut"),

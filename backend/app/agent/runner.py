@@ -61,12 +61,12 @@ def _ref_forms(ref: str) -> list[str]:
 async def _tool_box(factory: Factory, tenant_id: uuid.UUID, transport: Any) -> ToolBox:
     if overrides.tools is not None:
         return overrides.tools
-    shopify = None
+    shopify: Any = None
     couriers: dict[str, Any] = {}
     async with session_scope(factory, tenant_id=tenant_id) as session:
         loaded = {
             kind: await integrations.load_secret(session, kind)
-            for kind in ("shopify", *integrations.COURIER_KINDS)
+            for kind in ("shopify", "woocommerce", *integrations.COURIER_KINDS)
         }
     for kind, item in loaded.items():
         if item is None:
@@ -77,6 +77,17 @@ async def _tool_box(factory: Factory, tenant_id: uuid.UUID, transport: Any) -> T
             from app.integrations.shopify import ShopifyClient
 
             shopify = ShopifyClient(http, config["shop_domain"], secret["access_token"])
+        elif kind == "woocommerce":
+            from app.integrations.woocommerce import WooCommerceClient
+
+            # One store platform per brand; Shopify wins if both rows somehow exist.
+            if shopify is None:
+                shopify = WooCommerceClient(
+                    http,
+                    config["store_url"],
+                    secret["consumer_key"],
+                    secret["consumer_secret"],
+                )
         else:
             couriers[kind] = integrations.build_courier(kind, tenant_id, config, secret, http)
     return LiveV1ToolBox(tenant_id=tenant_id, shopify=shopify, couriers=couriers)
