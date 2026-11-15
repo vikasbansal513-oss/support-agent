@@ -60,6 +60,11 @@ class Settings(BaseSettings):
     service_name: str = "support-agent"
     sentry_dsn: str = ""
     grievance_email: str = ""
+    # Platform-ops notification target for core/alerts.py - deliberately separate from
+    # grievance_email (that one is the legally-facing customer grievance contact, not an
+    # internal ops inbox). Empty by default so alert delivery is a no-op until someone sets
+    # it, matching every other optional integration in this file.
+    ops_alert_email: str = ""
     notice_published: bool = False
     retention_days: int = Field(default=30, ge=1, le=3650)
     technical_retention_days: int = Field(default=14, ge=1, le=365)

@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 
 from sqlalchemy import text
@@ -5,14 +6,31 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.billing import usage as billing_usage
 from app.core.config import get_settings
+from app.core.mail import get_mailer, send_safely
 
+logger = logging.getLogger("app.alerts")
+
+# DevOps-audit fix (2026-11-15, P1): previously an alert only ever reached the `alerts`
+# table - visible if and only if someone opened the Admin > Alerts page. Nothing paged
+# anyone. `xmax = 0` is the standard Postgres idiom for "this row was INSERTed by this
+# statement, not UPDATEd" - it tells us a genuinely NEW alert just opened (as opposed to
+# scan_and_upsert() re-confirming an alert that was already open), which is the one
+# moment an email is worth sending. A re-fire of an already-open alert (same dedupe_key,
+# status still 'open') hits the UPDATE branch and sends nothing more - see "once per
+# incident" in the DevOps audit report.
 _UPSERT = text(
     "INSERT INTO alerts (tenant_id, kind, severity, message, dedupe_key, service,"
     " affected_agent, error_id, root_cause)"
     " VALUES (:t, :k, :s, :m, :d, :svc, :agent, :eid, :cause)"
     " ON CONFLICT (dedupe_key) WHERE status = 'open' DO UPDATE SET message = :m,"
     " updated_at = now()"
+    " RETURNING (xmax = 0) AS newly_inserted"
 )
+
+# Only these severities page someone by email; 'warning' stays dashboard-only so a
+# noisy-but-not-urgent condition doesn't flood an inbox. Matches the severities actually
+# used across this module ('critical', 'high', 'warning').
+_EMAIL_SEVERITIES = {"critical", "high"}
 
 
 @dataclass(frozen=True)
@@ -29,7 +47,7 @@ class Condition:
 
 
 async def _upsert(session: AsyncSession, cond: Condition) -> None:
-    await session.execute(
+    result = await session.execute(
         _UPSERT,
         {
             "t": cond.tenant_id,
@@ -43,6 +61,21 @@ async def _upsert(session: AsyncSession, cond: Condition) -> None:
             "cause": cond.root_cause,
         },
     )
+    newly_inserted = bool(result.scalar_one())
+    if newly_inserted and cond.severity in _EMAIL_SEVERITIES:
+        await _notify_ops(cond)
+
+
+async def _notify_ops(cond: Condition) -> None:
+    to = get_settings().ops_alert_email
+    if not to:
+        return
+    subject = f"[Support Agent] {cond.severity.upper()}: {cond.kind}"
+    sent = await send_safely(get_mailer(), to, subject, cond.message)
+    if not sent:
+        # send_safely() already logged the underlying error; this just makes it findable
+        # by alert kind without parsing the mail-send log line.
+        logger.error("ops alert email failed to send", extra={"alert_kind": cond.kind})
 
 
 async def _threshold(session: AsyncSession, key: str, default: float) -> float:

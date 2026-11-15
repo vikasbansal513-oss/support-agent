@@ -38,6 +38,7 @@ from app.core.db import check_rls_safety, get_session_factory, session_scope
 from app.core.errors import AppError, install_error_handlers
 from app.core.logging import configure_logging
 from app.core.monitoring import init_monitoring
+from app.core.security_headers import SecurityHeadersMiddleware
 from app.webhooks import plivo as plivo_webhook
 from app.webhooks import voice as voice_webhook
 from app.webhooks import whatsapp
@@ -70,6 +71,7 @@ def create_app() -> FastAPI:
     init_monitoring("api")
     application = FastAPI(title="support-agent")
     install_error_handlers(application)
+    application.add_middleware(SecurityHeadersMiddleware)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=get_settings().allowed_origins(),

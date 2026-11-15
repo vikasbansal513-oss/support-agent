@@ -42,14 +42,19 @@ npm ci && npm test && npx tsc --noEmit && npm run build
 ## Deploy aur ops
 `docs/RUNBOOK.md`: setup, deploy, rollback levers, emergency stop, alerts, backup, retention. Rollout ka kram aur gates: `docs/RELEASE_GATES_V1.md`.
 
+## Verify ho chuka hai (live/production par confirm, 2026-11-15)
+- Shopify write (`RealShopifyWriter`): asli connected store par cancel/refund/address-change action chal raha hai aur customer ko reply ja raha hai.
+- Gupshup WhatsApp: asli customer se WhatsApp message receive ho raha hai aur agent ka reply bhej raha hai.
+- LLM API key: production me jud gayi hai, asli jawab de rahi hai (ye sirf connectivity/basic functioning ka confirm hai — formal eval suite `--llm` se plan-accuracy/handoff-recall/reply-quality % abhi bhi nahi nikala gaya, wo alag cheez hai, neeche dekhein).
+- Google Cloud Run: GitHub Actions `deploy.yml` se code deploy ho chuka hai, live server chal raha hai.
+- Voice calling: asli telephony provider se webhook signature verify ho chuka hai.
+
 ## Abhi verify nahi hua (auto chalu karne se pehle zaroori)
-- Shopify write API shapes aur scopes (interface + `FakeShopify` hai, asli client nahi; default `DisabledShopifyWriter`).
 - Shopify read fields: delivery date, refund transactions, dispute tags.
-- Gupshup asli callback aur send API, Gmail send, Brevo mail API.
-- Asli LLM par plan accuracy, handoff recall aur reply quality (`python -m app.evals.run --llm` key ke saath).
+- Gmail send, Brevo mail API.
+- Asli LLM par formal plan accuracy, handoff recall aur reply quality ka number (`python -m app.evals.run --llm` key ke saath chala kar) — abhi sirf "LLM jawab de rahi hai" confirm hua hai, accuracy % nahi.
 - LLM provider ki data terms (docs/LLM_PROVIDER_TERMS.md), privacy notice ki legal review.
-- Staging par deploy.yml, Scheduler aur alert policies ka pehla run.
+- Scheduler aur alert policies ka pehla run (staging/production par).
 - Migrations 0023-0026 (billing speech rates, inbound processed_at, billing workspace v2, billing full reconciliation) asli Postgres par abhi tak nahi chalayi gayi.
-- Plivo calling webhook signature (V2 HMAC) aur asli telephony provider payload mapping asli account se verify nahi hua.
 - Vercel `VITE_API_BASE_URL=/api` env var dashboard me set hona chahiye (cookie-path/login-persist fix isi par depend karta hai).
 Poori list: `DECISIONS.md` me "VERIFY" lines.

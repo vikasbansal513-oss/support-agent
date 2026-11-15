@@ -42,3 +42,27 @@ conditions:
       filter: >-
         resource.type="cloud_run_revision" AND resource.labels.service_name="support-agent"
         AND severity>=CRITICAL
+---
+# DevOps-audit fix (2026-11-15, P2): CPU was the one standard Cloud Run resource metric
+# with no alert policy at all - request count/latency/5xx were covered above, CPU was
+# not. A revision pinned near 100% CPU for several minutes degrades every request on it
+# (slower LLM-call handling, slower DB queries) well before Cloud Run's own autoscaler
+# necessarily reacts, so this is worth catching on its own rather than waiting for the
+# 5xx-rate or latency symptoms it eventually causes.
+displayName: support-agent API CPU utilization high
+combiner: OR
+conditions:
+  - displayName: p99 CPU utilization above 80% for 5 minutes
+    conditionThreshold:
+      filter: >-
+        resource.type="cloud_run_revision" AND resource.labels.service_name="support-agent"
+        AND metric.type="run.googleapis.com/container/cpu/utilizations"
+      comparison: COMPARISON_GT
+      thresholdValue: 0.8
+      duration: 300s
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_PERCENTILE_99
+          crossSeriesReducer: REDUCE_MEAN
+          groupByFields:
+            - resource.labels.revision_name
