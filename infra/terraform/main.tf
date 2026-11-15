@@ -17,18 +17,18 @@ resource "google_artifact_registry_repository" "support_agent" {
 
 # --- Service accounts (RUNBOOK step 1) ---------------------------------------------
 resource "google_service_account" "runtime" {
-  account_id   = "support-agent-runtime"
+  account_id   = "support-runtime"
   display_name = "support-agent Cloud Run runtime (API + worker + migrate jobs)"
 }
 
 resource "google_service_account" "deploy" {
-  account_id   = "support-agent-deploy"
-  display_name = "support-agent GitHub Actions deploy (impersonated via Workload Identity)"
+  account_id   = "support-deployer"
+  display_name = "support-agent deployer (GitHub Actions)"
 }
 
 resource "google_service_account" "scheduler" {
-  account_id   = "support-agent-scheduler"
-  display_name = "support-agent Cloud Scheduler (invokes the worker job)"
+  account_id   = "support-scheduler"
+  display_name = "support-agent scheduler"
 }
 
 # --- IAM (RUNBOOK step 3) -----------------------------------------------------------
@@ -90,13 +90,13 @@ resource "google_service_account_iam_member" "deploy_acts_as_runtime" {
 # long-lived service account key ever leaves GCP. Matches google-github-actions/auth@v2's
 # usage in deploy.yml (workload_identity_provider + service_account inputs).
 resource "google_iam_workload_identity_pool" "github" {
-  workload_identity_pool_id = "github-actions"
+  workload_identity_pool_id = "github-pool"
   display_name              = "GitHub Actions"
 }
 
 resource "google_iam_workload_identity_pool_provider" "github" {
   workload_identity_pool_id         = google_iam_workload_identity_pool.github.workload_identity_pool_id
-  workload_identity_pool_provider_id = "github"
+  workload_identity_pool_provider_id = "github-provider"
   display_name                      = "GitHub OIDC"
 
   attribute_mapping = {
