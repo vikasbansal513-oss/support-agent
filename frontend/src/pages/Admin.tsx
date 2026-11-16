@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import type { AuditLogRow, Health, GlobalState, Job, LlmProvider, LlmSettings, LlmTestResult, LlmUsageRow, Overview, Page, SpeechProvider, SpeechSettings, Tenant } from "../api/types";
+import type { AuditLogRow, Health, GlobalState, Job, LlmProvider, LlmSettings, LlmTestResult, LlmUsageRow, Overview, Page, SpeechSettings, SpeechSettingsProvider, Tenant } from "../api/types";
 import { Async, Chip, Empty, Field, ReasonDialog, Screen, StatCard } from "../components/common";
 import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
@@ -495,7 +495,7 @@ function LlmSettingsForm({ current, onSaved }: { current: LlmSettings; onSaved: 
   );
 }
 
-const SPEECH_PROVIDERS: [SpeechProvider, string][] = [
+const SPEECH_PROVIDERS: [SpeechSettingsProvider, string][] = [
   ["google", "Google Cloud"],
   ["sarvam", "Sarvam AI"],
 ];
@@ -522,8 +522,8 @@ function SpeechSettingsPanel() {
 
 function SpeechSettingsForm({ current, onSaved }: { current: SpeechSettings; onSaved: () => void }) {
   const toast = useToast();
-  const [sttProvider, setSttProvider] = useState<SpeechProvider>(current.stt_provider);
-  const [ttsProvider, setTtsProvider] = useState<SpeechProvider>(current.tts_provider);
+  const [sttProvider, setSttProvider] = useState<SpeechSettingsProvider>(current.stt_provider);
+  const [ttsProvider, setTtsProvider] = useState<SpeechSettingsProvider>(current.tts_provider);
   const [sampleRate, setSampleRate] = useState<SpeechSettings["sample_rate_hz"]>(current.sample_rate_hz);
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
@@ -560,7 +560,7 @@ function SpeechSettingsForm({ current, onSaved }: { current: SpeechSettings; onS
       </p>
       <label className="field">
         <span>{t.speechSttProvider}</span>
-        <select aria-label={t.speechSttProvider} value={sttProvider} onChange={(event) => setSttProvider(event.target.value as SpeechProvider)}>
+        <select aria-label={t.speechSttProvider} value={sttProvider} onChange={(event) => setSttProvider(event.target.value as SpeechSettingsProvider)}>
           {SPEECH_PROVIDERS.map(([value, label]) => (
             <option key={value} value={value}>
               {label}
@@ -570,7 +570,7 @@ function SpeechSettingsForm({ current, onSaved }: { current: SpeechSettings; onS
       </label>
       <label className="field">
         <span>{t.speechTtsProvider}</span>
-        <select aria-label={t.speechTtsProvider} value={ttsProvider} onChange={(event) => setTtsProvider(event.target.value as SpeechProvider)}>
+        <select aria-label={t.speechTtsProvider} value={ttsProvider} onChange={(event) => setTtsProvider(event.target.value as SpeechSettingsProvider)}>
           {SPEECH_PROVIDERS.map(([value, label]) => (
             <option key={value} value={value}>
               {label}
