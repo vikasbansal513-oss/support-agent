@@ -85,8 +85,17 @@ class GoogleSpeechToText:
                 "sampleRateHertz": sample_rate_hz,
                 "languageCode": _google_language(language),
                 "enableAutomaticPunctuation": True,
-                "model": "phone_call",
-                "useEnhanced": True,
+                # Nov 2026: every real call so far has failed STT outright with
+                # "Invalid recognition 'config': The phone_call model is currently
+                # not supported for language: hi-IN" - Google's enhanced "phone_call"
+                # model (tuned for 8kHz telephone audio) is only available for a
+                # short, mostly-English list of languages, and the two this app
+                # actually uses (hi-IN, en-IN - see _LANG_MAP above) are not on it,
+                # so every single transcription request was rejected before Google
+                # even looked at the audio. Dropping model/useEnhanced falls back to
+                # Google's default recognition model, which has no such per-language
+                # allowlist - slightly less tuned for phone audio, but it is the
+                # difference between "never transcribes anything" and "works".
             },
             "audio": {"content": base64.b64encode(pcm16_audio).decode("ascii")},
         }
