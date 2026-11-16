@@ -129,7 +129,7 @@ async def voice_stream_webhook(
                 logger.info(
                     "voice-stream text frame #%d received: %s", frame_count, text_body[:2000]
                 )
-                outs = await _handle_text(session, text_body)
+                outs = await _handle_text(session, text_body, websocket)
             elif bytes_body is not None:
                 frame_count += 1
                 if frame_count == 1 or frame_count % 50 == 0:
@@ -173,7 +173,9 @@ async def voice_stream_webhook(
             pass  # already closed / already disconnected on the wire
 
 
-async def _handle_text(session: EdesyStreamSession, raw: str) -> list[OutMessage]:
+async def _handle_text(
+    session: EdesyStreamSession, raw: str, websocket: WebSocket
+) -> list[OutMessage]:
     try:
         frame = json.loads(raw)
     except ValueError:
@@ -186,7 +188,17 @@ async def _handle_text(session: EdesyStreamSession, raw: str) -> list[OutMessage
     # frame (callSid/from/to/direction/audio_format). Any later text frame we don't
     # recognise is ignored rather than erroring the call.
     if "from" in frame or "callSid" in frame or "call_sid" in frame:
-        return await session.handle_metadata(frame)
+        # on_early sends the filler audio (see media_stream.FILLER_TEXT) straight to
+        # the wire the moment the call is validated, instead of waiting for it to come
+        # back in this function's own return value - that return only happens after
+        # the slow LLM+TTS round trip for the real reply, which is exactly the delay
+        # the filler exists to cover. Errors mid-send still surface normally: _send
+        # raises on a closed/broken socket same as it would from the main loop below.
+        async def _send_early(batch: list[OutMessage]) -> None:
+            for out in batch:
+                await _send(websocket, out)
+
+        return await session.handle_metadata(frame, on_early=_send_early)
     logger.warning(
         "voice-stream text frame had none of from/callSid/call_sid keys: %s", sorted(frame.keys())
     )

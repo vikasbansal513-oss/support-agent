@@ -19,6 +19,7 @@ and the actions engine still own all of that, same rule as the agent graph.
 
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -28,6 +29,37 @@ from app.voice.contracts import E164, INDIAN_MOBILE, VoiceEventIn, VoiceReplyOut
 from app.voice.service import Factory, VoiceTenant
 
 logger = logging.getLogger("app.voice.media_stream")
+
+# Nov 2026: a real call showed the agent's full "start" turn (STT already skipped on
+# this leg, but the LLM call plus TTS) taking ~4.3s end to end (metadata accepted ->
+# first audio frame queued) - longer than most callers will silently wait, so the
+# caller hangs up right as the real reply becomes ready and it never gets sent (see
+# PROGRESS.md P48). Rather than try to make the LLM+TTS round trip itself fast enough
+# to feel instant (a much bigger change), we speak a short, fixed filler line the
+# instant the call connects - before the slow part even starts - so the caller hears
+# something immediately and stays on the line. The filler's own TTS audio is
+# synthesized once per (sample_rate, language) and cached in this process for every
+# later call, so after the first call it costs ~0ms, not a fresh TTS round trip.
+FILLER_TEXT = "नमस्ते, कृपया थोड़ा इंतज़ार करें।"
+_filler_cache: dict[tuple[int, str], bytes] = {}
+
+
+async def _get_filler_audio(tts: TextToSpeech, sample_rate_hz: int, language: str) -> bytes:
+    key = (sample_rate_hz, language)
+    cached = _filler_cache.get(key)
+    if cached is not None:
+        return cached
+    try:
+        pcm = await tts.synthesize(FILLER_TEXT, sample_rate_hz, language)
+    except Exception:
+        # Best-effort only: if the filler itself fails for any reason, the call
+        # continues exactly as before this change (no filler, just a slower first
+        # reply) rather than failing the whole turn over a nice-to-have.
+        logger.exception("voice-stream: filler audio synthesis failed, skipping filler")
+        return b""
+    _filler_cache[key] = pcm
+    return pcm
+
 
 # Providers whose calls arrive over this raw-audio WebSocket path rather than the
 # text-based webhook in app.webhooks.voice / app.voice.providers. Referenced by
@@ -235,7 +267,17 @@ class EdesyStreamSession:
         self._is_playing = False
         self._last_reply: VoiceReplyOut | None = None
 
-    async def handle_metadata(self, frame: dict[str, Any]) -> list[OutMessage]:
+    async def handle_metadata(
+        self,
+        frame: dict[str, Any],
+        on_early: Callable[[list[OutMessage]], Awaitable[None]] | None = None,
+    ) -> list[OutMessage]:
+        """on_early, when given, is awaited with a filler OutMessage batch the moment
+        the call is confirmed valid - before the slow LLM+TTS round trip for the real
+        reply even starts (see FILLER_TEXT above for why). It is optional and defaults
+        to None so existing callers/tests that just inspect this method's own return
+        value keep working unchanged and never pay for a filler TTS call.
+        """
         self.call_id = str(
             frame.get("callSid") or frame.get("call_sid") or frame.get("callId") or ""
         )
@@ -262,6 +304,13 @@ class EdesyStreamSession:
                 self.from_number,
                 self.to_number,
             )
+        if on_early is not None:
+            filler_language = self._last_reply.language if self._last_reply else "hi-IN"
+            filler_pcm = await _get_filler_audio(self._tts, self._rate, filler_language)
+            filler_frames = _chunk_audio(filler_pcm, self._rate)
+            if filler_frames:
+                self._is_playing = True
+                await on_early([OutMessage("audio", frame) for frame in filler_frames])
         event = VoiceEventIn(
             event="start", call_id=self.call_id, **{"from": self.from_number, "to": self.to_number}
         )
