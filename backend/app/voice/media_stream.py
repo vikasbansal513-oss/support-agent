@@ -301,7 +301,21 @@ class EdesyStreamSession:
         out: list[OutMessage] = []
         # reply.say is already run through app.voice.speech.speakable() upstream in
         # app.voice.service (same as every other provider's render()) - speak it as-is.
+        # TEMPORARY DIAGNOSTIC (Nov 2026): the earlier VoiceEventIn crash (see
+        # _normalize_e164's docstring) is fixed, but calls still produce no audible
+        # reply. This logs whether the agent actually returned text and whether TTS
+        # actually produced bytes, so the next failure points at the exact stage
+        # (empty agent reply vs. TTS returning nothing vs. a format Edesy can't play)
+        # instead of needing another guess-and-redeploy round. Remove once resolved.
+        logger.info(
+            "voice-stream reply: say_len=%d action=%s rate=%d lang=%s",
+            len(reply.say),
+            reply.action,
+            self._rate,
+            _reply_language(reply),
+        )
         pcm = await self._tts.synthesize(reply.say, self._rate, _reply_language(reply))
+        logger.info("voice-stream tts output: pcm_bytes=%d", len(pcm) if pcm else 0)
         frames = _chunk_audio(pcm, self._rate)
         if frames:
             self._is_playing = True
