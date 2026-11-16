@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 
@@ -16,6 +17,21 @@ logger = logging.getLogger("app.webhooks.voice_stream")
 router = APIRouter(tags=["webhooks"])
 Factory = async_sessionmaker[AsyncSession]
 MAX_FRAME_BYTES = 65_536
+
+# How long to wait for the *first* frame from the telephony provider after accepting
+# the socket. Added Nov 2026 after a real Edesy call connected, stayed open ~25s, and
+# disconnected (code 1006) without this app ever receiving a single text or binary
+# frame - before this fix there was no logging for that case at all (only the text-
+# frame path logged anything), so the call looked silently "stuck" with nothing in the
+# logs to explain why. This does not fix the Edesy-side cause (still unconfirmed - see
+# the TEMPORARY DIAGNOSTIC logging below); it makes that failure mode loud and
+# unambiguous instead of a bare WebSocketDisconnect trace from the cleanup code.
+FIRST_FRAME_TIMEOUT_S = 15
+# How long to wait between any two frames once streaming has started. Generous (Edesy
+# sends audio continuously once started, so a real gap this long means the call is
+# effectively dead), kept separate from FIRST_FRAME_TIMEOUT_S in case the two ever need
+# different tuning.
+INTER_FRAME_TIMEOUT_S = 30
 
 
 async def _send(websocket: WebSocket, out: OutMessage) -> bool:
@@ -45,6 +61,7 @@ async def voice_stream_webhook(
         await websocket.close(code=4500)
         return
     await websocket.accept()
+    logger.info("voice-stream accepted: tenant=%s called=%s", voice.tenant_id, voice.called_number)
     http_stt = ExternalHttp(
         f"speech_{speech_settings.stt_provider}_stt",
         recorder=DbCallRecorder(factory, voice.tenant_id),
@@ -56,20 +73,75 @@ async def voice_stream_webhook(
     stt = make_stt(speech_settings.stt_provider, http_stt, speech_settings.api_key)
     tts = make_tts(speech_settings.tts_provider, http_tts, speech_settings.api_key)
     session = EdesyStreamSession(factory, voice, stt, tts, speech_settings.sample_rate_hz)
+    frame_count = 0
     try:
         while True:
-            message = await websocket.receive()
+            timeout = FIRST_FRAME_TIMEOUT_S if frame_count == 0 else INTER_FRAME_TIMEOUT_S
+            try:
+                message = await asyncio.wait_for(websocket.receive(), timeout=timeout)
+            except TimeoutError:
+                if frame_count == 0:
+                    logger.error(
+                        "voice-stream: no frame received from provider within %ss of "
+                        "accept (tenant=%s) - connection was open but silent; nothing "
+                        "was ever sent to us to process",
+                        timeout,
+                        voice.tenant_id,
+                    )
+                else:
+                    logger.error(
+                        "voice-stream: no frame received for %ss after %d frame(s) "
+                        "(tenant=%s) - treating as dead and closing",
+                        timeout,
+                        frame_count,
+                        voice.tenant_id,
+                    )
+                break
             if message.get("type") == "websocket.disconnect":
+                logger.info(
+                    "voice-stream: provider sent websocket.disconnect after %d frame(s)",
+                    frame_count,
+                )
                 break
             text_body = message.get("text")
             bytes_body = message.get("bytes")
             if text_body is not None:
+                frame_count += 1
+                # TEMPORARY DIAGNOSTIC (Nov 2026): Edesy's Media Streams metadata frame
+                # shape was never confirmed against a real account. Logging every raw
+                # text frame here (not just the first) is the only way to see what
+                # Edesy actually sends vs. what app.voice.media_stream.EdesyStreamSession
+                # .handle_metadata expects (callSid/call_sid/callId + from + to).
+                # Remove once the real shape is confirmed and stable in production.
+                logger.info(
+                    "voice-stream text frame #%d received: %s", frame_count, text_body[:2000]
+                )
                 outs = await _handle_text(session, text_body)
             elif bytes_body is not None:
+                frame_count += 1
+                if frame_count == 1 or frame_count % 50 == 0:
+                    # Not logging every single binary frame (would flood the logs for a
+                    # whole call) - just the first one (proof that audio ever arrived at
+                    # all) and then a periodic heartbeat.
+                    logger.info(
+                        "voice-stream binary frame #%d received: %d bytes",
+                        frame_count,
+                        len(bytes_body),
+                    )
                 if len(bytes_body) > MAX_FRAME_BYTES:
+                    logger.warning(
+                        "voice-stream: dropping oversized binary frame #%d (%d bytes > %d limit)",
+                        frame_count,
+                        len(bytes_body),
+                        MAX_FRAME_BYTES,
+                    )
                     continue
                 outs = await session.handle_audio_chunk(bytes_body)
             else:
+                logger.warning(
+                    "voice-stream: received message with neither text nor bytes: %r",
+                    sorted(message.keys()),
+                )
                 continue
             keep_going = True
             for out in outs:
@@ -77,26 +149,18 @@ async def voice_stream_webhook(
             if not keep_going:
                 break
     except WebSocketDisconnect:
-        pass
+        logger.info("voice-stream: WebSocketDisconnect after %d frame(s)", frame_count)
     except Exception:
-        logger.exception("voice media stream failed")
+        logger.exception("voice media stream failed after %d frame(s)", frame_count)
     finally:
         await session.handle_disconnect()
         try:
             await websocket.close()
-        except RuntimeError:
-            pass  # already closed
+        except (RuntimeError, WebSocketDisconnect):
+            pass  # already closed / already disconnected on the wire
 
 
 async def _handle_text(session: EdesyStreamSession, raw: str) -> list[OutMessage]:
-    # TEMPORARY DIAGNOSTIC (Nov 2026): Edesy's Media Streams metadata frame shape was
-    # never confirmed against a real account - calls connect and stream audio in, but
-    # no reply goes out, with no error logged anywhere else in this path. Logging the
-    # raw text frame here is the only way to see what Edesy actually sends vs. what
-    # app.voice.media_stream.EdesyStreamSession.handle_metadata expects
-    # (callSid/call_sid/callId + from + to). Remove once the real shape is confirmed
-    # and the parsing below (and in handle_metadata) is adjusted to match it.
-    logger.info("voice-stream text frame received: %s", raw[:2000])
     try:
         frame = json.loads(raw)
     except ValueError:
