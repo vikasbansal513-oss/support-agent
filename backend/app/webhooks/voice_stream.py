@@ -110,5 +110,7 @@ async def _handle_text(session: EdesyStreamSession, raw: str) -> list[OutMessage
     # recognise is ignored rather than erroring the call.
     if "from" in frame or "callSid" in frame or "call_sid" in frame:
         return await session.handle_metadata(frame)
-    logger.warning("voice-stream text frame had none of from/callSid/call_sid keys: %s", sorted(frame.keys()))
+    logger.warning(
+        "voice-stream text frame had none of from/callSid/call_sid keys: %s", sorted(frame.keys())
+    )
     return []
