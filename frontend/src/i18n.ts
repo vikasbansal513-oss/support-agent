@@ -478,7 +478,7 @@ export const t = {
   speechSttProvider: "Speech-to-Text provider",
   speechTtsProvider: "Text-to-Speech provider",
   speechSampleRate: "Audio sample rate",
-  speechApiKey: "API key",
+  speechApiKey: "Speech API key",
   speechKeyKeep: "Leave blank to keep the existing key",
   speechKeySet: "Key is set",
   speechKeyMissing: "Key not set",
