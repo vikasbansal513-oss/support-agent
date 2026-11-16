@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import type { AuditLogRow, Health, GlobalState, Job, LlmProvider, LlmSettings, LlmTestResult, LlmUsageRow, Overview, Page, Tenant } from "../api/types";
+import type { AuditLogRow, Health, GlobalState, Job, LlmProvider, LlmSettings, LlmTestResult, LlmUsageRow, Overview, Page, SpeechProvider, SpeechSettings, Tenant } from "../api/types";
 import { Async, Chip, Empty, Field, ReasonDialog, Screen, StatCard } from "../components/common";
 import { Icon } from "../components/Icons";
 import { useToast } from "../components/Toast";
@@ -294,6 +294,7 @@ export function AdminOps() {
       <div className="grid-2">
         <GlobalPauseButton />
         <LlmSettingsPanel />
+        <SpeechSettingsPanel />
       </div>
       <section className="card pad">
         <div className="card-head">
@@ -490,6 +491,128 @@ function LlmSettingsForm({ current, onSaved }: { current: LlmSettings; onSaved: 
         </p>
       )}
       {asking && <ReasonDialog title={t.llmSave} onConfirm={(reason) => void save(reason)} onCancel={() => setAsking(false)} />}
+    </section>
+  );
+}
+
+const SPEECH_PROVIDERS: [SpeechProvider, string][] = [
+  ["google", "Google Cloud"],
+  ["sarvam", "Sarvam AI"],
+];
+
+const SAMPLE_RATES: [SpeechSettings["sample_rate_hz"], string][] = [
+  [8000, "8000 Hz"],
+  [16000, "16000 Hz"],
+];
+
+function SpeechSettingsPanel() {
+  const [state, reload] = useApi(() => api.get<SpeechSettings>("/admin/speech-settings"));
+  return (
+    <Async value={state} reload={reload}>
+      {(current) => (
+        <SpeechSettingsForm
+          key={`${current.stt_provider}-${current.tts_provider}-${current.updated_at ?? ""}`}
+          current={current}
+          onSaved={reload}
+        />
+      )}
+    </Async>
+  );
+}
+
+function SpeechSettingsForm({ current, onSaved }: { current: SpeechSettings; onSaved: () => void }) {
+  const toast = useToast();
+  const [sttProvider, setSttProvider] = useState<SpeechProvider>(current.stt_provider);
+  const [ttsProvider, setTtsProvider] = useState<SpeechProvider>(current.tts_provider);
+  const [sampleRate, setSampleRate] = useState<SpeechSettings["sample_rate_hz"]>(current.sample_rate_hz);
+  const [apiKey, setApiKey] = useState("");
+  const [showKey, setShowKey] = useState(false);
+  const [asking, setAsking] = useState(false);
+
+  const choice = () => ({
+    stt_provider: sttProvider,
+    tts_provider: ttsProvider,
+    sample_rate_hz: sampleRate,
+    ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
+  });
+
+  const save = async (reason: string) => {
+    try {
+      await api.put<SpeechSettings>("/admin/speech-settings", { ...choice(), reason });
+      setAsking(false);
+      setApiKey("");
+      toast.info(t.speechSaved);
+      onSaved();
+    } catch (err) {
+      toast.error(err);
+      setAsking(false);
+    }
+  };
+
+  return (
+    <section className="card pad">
+      <div className="card-head">
+        <h2 className="card-title">{t.speechSettingsTitle}</h2>
+      </div>
+      <p>
+        <Chip tone={current.configured ? "ok" : "warn"}>{current.configured ? t.speechConfigured : t.speechNotConfigured}</Chip>{" "}
+        <Chip tone={current.has_key ? "ok" : "warn"}>{current.has_key ? t.speechKeySet : t.speechKeyMissing}</Chip>
+      </p>
+      <label className="field">
+        <span>{t.speechSttProvider}</span>
+        <select aria-label={t.speechSttProvider} value={sttProvider} onChange={(event) => setSttProvider(event.target.value as SpeechProvider)}>
+          {SPEECH_PROVIDERS.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>{t.speechTtsProvider}</span>
+        <select aria-label={t.speechTtsProvider} value={ttsProvider} onChange={(event) => setTtsProvider(event.target.value as SpeechProvider)}>
+          {SPEECH_PROVIDERS.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span>{t.speechSampleRate}</span>
+        <select
+          aria-label={t.speechSampleRate}
+          value={sampleRate}
+          onChange={(event) => setSampleRate(Number(event.target.value) as SpeechSettings["sample_rate_hz"])}
+        >
+          {SAMPLE_RATES.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="field key-field">
+        <span className="field-label">{t.speechApiKey}</span>
+        <input
+          className="input"
+          type={showKey ? "text" : "password"}
+          value={apiKey}
+          autoComplete="off"
+          placeholder={t.speechKeyKeep}
+          aria-label={t.speechApiKey}
+          onChange={(event) => setApiKey(event.target.value)}
+        />
+        <button type="button" className="key-toggle" aria-label={showKey ? t.hidePassword : t.showPassword} onClick={() => setShowKey((v) => !v)}>
+          <Icon name={showKey ? "eye-off" : "eye"} className="sm" />
+        </button>
+      </label>
+      <div className="row">
+        <button type="button" onClick={() => setAsking(true)}>
+          {t.speechSave}
+        </button>
+      </div>
+      {asking && <ReasonDialog title={t.speechSave} onConfirm={(reason) => void save(reason)} onCancel={() => setAsking(false)} />}
     </section>
   );
 }

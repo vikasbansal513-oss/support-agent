@@ -727,6 +727,17 @@ export interface LlmTestResult {
   error: string | null;
 }
 
+export type SpeechProvider = "google" | "sarvam";
+
+export interface SpeechSettings {
+  stt_provider: SpeechProvider;
+  tts_provider: SpeechProvider;
+  sample_rate_hz: 8000 | 16000;
+  has_key: boolean;
+  configured: boolean;
+  updated_at: string | null;
+}
+
 export interface GlobalState {
   status: "paused" | "running";
 }
