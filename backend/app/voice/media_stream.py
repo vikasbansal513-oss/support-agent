@@ -18,12 +18,13 @@ and the actions engine still own all of that, same rule as the agent graph.
 """
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.speech.providers import SpeechToText, TextToSpeech
 from app.voice import service
-from app.voice.contracts import VoiceEventIn, VoiceReplyOut
+from app.voice.contracts import E164, INDIAN_MOBILE, VoiceEventIn, VoiceReplyOut
 from app.voice.service import Factory, VoiceTenant
 
 logger = logging.getLogger("app.voice.media_stream")
@@ -39,6 +40,39 @@ OUT_FRAME_MS = 20  # chunk outgoing audio into ~20ms frames; not mandated by Ede
 # related Edesy "SIP trunk for AI voice agents" product documents - safe default.
 # VERIFY against a real Edesy account whether any particular outgoing chunk size is
 # required or just "some" binary frames are acceptable.
+
+
+def _normalize_e164(raw: str) -> str:
+    """Best-effort normalization of a telephony-provider phone number into the
+    E.164 shape app.voice.contracts.VoiceEventIn requires (+91XXXXXXXXXX).
+
+    ROOT CAUSE (Nov 2026): Edesy's Media Streams metadata frame was found (via
+    the temporary diagnostic logging in app.webhooks.voice_stream._handle_text)
+    to crash VoiceEventIn's "start" event with 2 validation errors - from_number
+    and to_number both failed the strict E.164 check below, because this path
+    never normalized the raw "from"/"to" values before this fix. That crash was
+    silently caught by the generic `except Exception` in voice_stream_webhook,
+    so service.handle() - the actual agent/LLM reply logic - was never reached
+    on any call, which is why the agent never replied. Every other provider in
+    this app (WhatsApp/Gupshup) already delivers E.164 numbers, so no normalizer
+    was needed before this one.
+
+    Mirrors the existing bare-number handling in
+    app.voice.contracts.PublicNumberIn._indian_mobile (strip +91/91/leading 0,
+    then re-add +91) rather than inventing a new convention.
+    VERIFY: only covers Indian 10-digit mobile numbers, same scope as that
+    existing validator; a non-Indian "from" number would still be left as-is
+    and rejected by VoiceEventIn's own validator with a clear error.
+    """
+    cleaned = re.sub(r"[\s\-()]", "", raw or "")
+    if not cleaned:
+        return cleaned
+    if E164.match(cleaned):
+        return cleaned
+    bare = re.sub(r"^(\+91|91|0)", "", cleaned)
+    if INDIAN_MOBILE.match(bare):
+        return "+91" + bare
+    return cleaned  # leave as-is; VoiceEventIn's own validator will reject it clearly
 
 
 def _rms(frame: bytes) -> float:
@@ -205,8 +239,8 @@ class EdesyStreamSession:
         self.call_id = str(
             frame.get("callSid") or frame.get("call_sid") or frame.get("callId") or ""
         )
-        self.from_number = str(frame.get("from") or "")
-        self.to_number = str(frame.get("to") or self._voice.called_number)
+        self.from_number = _normalize_e164(str(frame.get("from") or ""))
+        self.to_number = _normalize_e164(str(frame.get("to") or self._voice.called_number))
         if not self.call_id or not self.from_number:
             # TEMPORARY DIAGNOSTIC (Nov 2026): see the matching note in
             # app.webhooks.voice_stream._handle_text - this close used to happen
@@ -219,6 +253,15 @@ class EdesyStreamSession:
                 frame,
             )
             return [OutMessage("close", None)]
+        if not E164.match(self.from_number) or not E164.match(self.to_number):
+            # Normalization in _normalize_e164 above couldn't make this E.164 (e.g. a
+            # non-Indian number, or a shape not covered yet) - log it plainly so the
+            # next call doesn't need another diagnostic-logging redeploy to see why.
+            logger.warning(
+                "voice-stream from/to still not E.164 after normalization: from=%s to=%s",
+                self.from_number,
+                self.to_number,
+            )
         event = VoiceEventIn(
             event="start", call_id=self.call_id, **{"from": self.from_number, "to": self.to_number}
         )
@@ -284,13 +327,24 @@ class EdesyStreamSession:
         leftover = self._detector.flush()
         if leftover:
             await self._on_utterance(leftover)
-        event = VoiceEventIn(
-            event="end",
-            call_id=self.call_id,
-            **{"from": self.from_number or "", "to": self.to_number or self._voice.called_number},
-            reason="caller_disconnect",
-        )
         try:
+            # BUGFIX (Nov 2026): VoiceEventIn(...) construction used to sit outside
+            # this try/except, so an invalid from_number/to_number (see
+            # _normalize_e164's docstring) raised a pydantic ValidationError straight
+            # out of the `finally: await session.handle_disconnect()` block in
+            # voice_stream_webhook - unhandled, since that's outside its own
+            # try/except, which is why it showed up as a bare traceback in the logs
+            # instead of a "voice stream end-event failed" line. Building the event is
+            # now covered by the same best-effort try as the service.handle() call.
+            event = VoiceEventIn(
+                event="end",
+                call_id=self.call_id,
+                **{
+                    "from": self.from_number or "",
+                    "to": self.to_number or self._voice.called_number,
+                },
+                reason="caller_disconnect",
+            )
             await service.handle(self._factory, self._voice, event)
         except Exception:  # pragma: no cover - best-effort cleanup, call is gone anyway
             logger.exception("voice stream end-event failed")
