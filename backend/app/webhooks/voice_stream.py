@@ -89,15 +89,26 @@ async def voice_stream_webhook(
 
 
 async def _handle_text(session: EdesyStreamSession, raw: str) -> list[OutMessage]:
+    # TEMPORARY DIAGNOSTIC (Nov 2026): Edesy's Media Streams metadata frame shape was
+    # never confirmed against a real account - calls connect and stream audio in, but
+    # no reply goes out, with no error logged anywhere else in this path. Logging the
+    # raw text frame here is the only way to see what Edesy actually sends vs. what
+    # app.voice.media_stream.EdesyStreamSession.handle_metadata expects
+    # (callSid/call_sid/callId + from + to). Remove once the real shape is confirmed
+    # and the parsing below (and in handle_metadata) is adjusted to match it.
+    logger.info("voice-stream text frame received: %s", raw[:2000])
     try:
         frame = json.loads(raw)
     except ValueError:
+        logger.warning("voice-stream text frame was not valid JSON")
         return []
     if not isinstance(frame, dict):
+        logger.warning("voice-stream text frame was valid JSON but not an object: %r", type(frame))
         return []
     # First (and only) text frame per Edesy's documented protocol is the metadata
     # frame (callSid/from/to/direction/audio_format). Any later text frame we don't
     # recognise is ignored rather than erroring the call.
     if "from" in frame or "callSid" in frame or "call_sid" in frame:
         return await session.handle_metadata(frame)
+    logger.warning("voice-stream text frame had none of from/callSid/call_sid keys: %s", sorted(frame.keys()))
     return []

@@ -208,6 +208,16 @@ class EdesyStreamSession:
         self.from_number = str(frame.get("from") or "")
         self.to_number = str(frame.get("to") or self._voice.called_number)
         if not self.call_id or not self.from_number:
+            # TEMPORARY DIAGNOSTIC (Nov 2026): see the matching note in
+            # app.webhooks.voice_stream._handle_text - this close used to happen
+            # silently with no log line anywhere, which is why a bad metadata frame
+            # shape looked like "call connects, caller talks, nothing happens" with
+            # nothing in the logs. Remove alongside that note once Edesy's real frame
+            # shape is confirmed.
+            logger.warning(
+                "voice-stream metadata frame missing call_id/from - closing. frame=%s",
+                frame,
+            )
             return [OutMessage("close", None)]
         event = VoiceEventIn(
             event="start", call_id=self.call_id, **{"from": self.from_number, "to": self.to_number}
