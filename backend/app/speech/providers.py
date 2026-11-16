@@ -101,6 +101,18 @@ class GoogleSpeechToText:
         except UpstreamError:
             return SttResult("", None)
         if response.status_code != 200:
+            # TEMPORARY DIAGNOSTIC (Nov 2026): every real call so far has gotten a 400
+            # from this endpoint with nothing logged beyond the status code, so there
+            # has been no way to tell apart a bad API key, a disabled API, or a
+            # malformed request body. Google's error JSON names the exact reason
+            # (error.message / error.status) - log it so the next failure is
+            # diagnosable from one log line instead of another guess-and-redeploy
+            # round. Remove once STT is confirmed working end-to-end.
+            logger.error(
+                "google STT non-200: status=%d body=%s",
+                response.status_code,
+                response.text[:1000],
+            )
             return SttResult("", None)
         try:
             data = response.json()
@@ -149,6 +161,14 @@ class GoogleTextToSpeech:
         except UpstreamError:
             return b""
         if response.status_code != 200:
+            # TEMPORARY DIAGNOSTIC (Nov 2026): see the matching note in
+            # GoogleSpeechToText.transcribe above - same situation, same fix. Remove
+            # once TTS is confirmed working end-to-end.
+            logger.error(
+                "google TTS non-200: status=%d body=%s",
+                response.status_code,
+                response.text[:1000],
+            )
             return b""
         try:
             data = response.json()

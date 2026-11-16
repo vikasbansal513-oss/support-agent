@@ -52,7 +52,20 @@ async def voice_stream_webhook(
     factory: Factory = Depends(get_session_factory),  # noqa: B008
 ) -> None:
     voice = await service.resolve_token(factory, token)
-    if voice is None or voice.provider != "edesy":
+    if voice is None:
+        # NOTE (Nov 2026): closing before accept() makes uvicorn's websockets
+        # implementation reject the HTTP upgrade with a plain 403 to the client,
+        # regardless of the close code passed here - that 403 alone gives no reason,
+        # so log one explicitly every time this path is hit.
+        logger.error("voice-stream: token did not resolve to any voice_numbers row")
+        await websocket.close(code=4404)
+        return
+    if voice.provider != "edesy":
+        logger.error(
+            "voice-stream: token resolved to tenant=%s but provider=%r (expected 'edesy')",
+            voice.tenant_id,
+            voice.provider,
+        )
         await websocket.close(code=4404)
         return
     speech_settings = await load_effective(factory, get_settings().encryption_key)
