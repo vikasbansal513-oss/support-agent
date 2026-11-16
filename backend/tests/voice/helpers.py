@@ -5,6 +5,8 @@ from typing import Any
 import pytest
 
 from app.core.config import get_settings
+from app.voice import service
+from app.voice.service import VoiceTenant
 from tests.agent.helpers import AgentEnv
 from tests.auth.helpers import bearer
 from tests.auth.test_admin_flow import _admin_login_with_mfa
@@ -54,18 +56,26 @@ class Voice:
         return await self.send("turn", **fields)
 
 
-async def configure(
-    env: AgentEnv, transfer: str | None = None, enabled: bool = True, provider: str = "generic"
-) -> Voice:
-    # Calling setup is admin-only now (platform admin dashboard), so tests log in as a
-    # platform admin and go through PUT /admin/tenants/{tenant_id}/voice-settings.
+def _telephony_mode(provider: str) -> str:
+    if provider == "plivo":
+        return "diy_plivo"
+    if provider == "edesy":
+        return "diy_edesy"
+    return "ready_made"
+
+
+async def _put_voice_settings(
+    env: AgentEnv, transfer: str | None, enabled: bool, provider: str
+) -> tuple[str, str]:
+    """Shared by configure() (text-webhook providers) and configure_edesy() (the
+    raw-audio Media Streams provider). Returns (called_number, webhook_url).
+    """
     called = "+9111" + "".join(str(secrets.randbelow(10)) for _ in range(8))
-    telephony_mode = "diy_plivo" if provider == "plivo" else "ready_made"
     body: dict[str, Any] = {
         "called_number": called,
         "enabled": enabled,
         "provider": provider,
-        "telephony_mode": telephony_mode,
+        "telephony_mode": _telephony_mode(provider),
     }
     if transfer:
         body["transfer_number"] = transfer
@@ -74,5 +84,28 @@ async def configure(
         f"/admin/tenants/{env.wa.tenant_id}/voice-settings", json=body, headers=bearer(verified)
     )
     assert resp.status_code == 200, resp.text
-    url = resp.json()["webhook_url"]
+    return called, resp.json()["webhook_url"]
+
+
+async def configure(
+    env: AgentEnv, transfer: str | None = None, enabled: bool = True, provider: str = "generic"
+) -> Voice:
+    # Calling setup is admin-only now (platform admin dashboard), so tests log in as a
+    # platform admin and go through PUT /admin/tenants/{tenant_id}/voice-settings.
+    called, url = await _put_voice_settings(env, transfer, enabled, provider)
     return Voice(env, url[url.index("/webhooks/voice/") :], called)
+
+
+async def configure_edesy(
+    env: AgentEnv, transfer: str | None = None, enabled: bool = True
+) -> VoiceTenant:
+    """Edesy's Media Streams is a raw-audio WebSocket, not the JSON webhook the `Voice`
+    helper above talks to - tests for it (tests/voice/test_media_stream.py) drive
+    app.voice.media_stream.EdesyStreamSession directly against this real,
+    admin-configured tenant instead of posting JSON like the other providers' tests do.
+    """
+    _, url = await _put_voice_settings(env, transfer, enabled, "edesy")
+    token = url.rsplit("/", 1)[-1]
+    voice = await service.resolve_token(env.factory, token)
+    assert voice is not None
+    return voice

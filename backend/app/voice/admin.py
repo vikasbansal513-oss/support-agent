@@ -21,7 +21,22 @@ from app.voice.contracts import (
     VoiceStatsOut,
     VoiceTurnOut,
 )
+from app.voice.media_stream import STREAM_PROVIDERS
 from app.voice.providers import provider_names
+
+
+def _all_provider_names() -> list[str]:
+    return sorted({*provider_names(), *STREAM_PROVIDERS})
+
+
+def _webhook_url(token: str, telephony_mode: str) -> str:
+    base = get_settings().public_base_url.rstrip("/")
+    if telephony_mode == "diy_edesy":
+        # Edesy Media Streams is a raw-audio WebSocket, not the JSON webhook the other
+        # providers use - swap scheme and path (app.webhooks.voice_stream).
+        ws_base = base.replace("https://", "wss://").replace("http://", "ws://")
+        return f"{ws_base}/webhooks/voice-stream/{token}"
+    return f"{base}/webhooks/voice/{token}"
 
 
 def _forwarding_codes(called_number: str | None) -> tuple[str | None, str | None]:
@@ -48,7 +63,7 @@ async def get_settings_out(session: AsyncSession, tenant_id: uuid.UUID) -> Voice
         )
     ).first()
     if row is None:
-        return VoiceSettingsOut(configured=False, providers=provider_names())
+        return VoiceSettingsOut(configured=False, providers=_all_provider_names())
     forwarding_code, forwarding_off_code = _forwarding_codes(row.called_number)
     return VoiceSettingsOut(
         configured=True,
@@ -57,7 +72,7 @@ async def get_settings_out(session: AsyncSession, tenant_id: uuid.UUID) -> Voice
         enabled=bool(row.enabled),
         provider=row.provider,
         telephony_mode=row.telephony_mode,
-        providers=provider_names(),
+        providers=_all_provider_names(),
         client_public_number=row.client_public_number,
         carrier=row.carrier,
         forwarding_confirmed=bool(row.forwarding_confirmed),
@@ -117,7 +132,7 @@ async def put_settings(
                 "fc": keep_confirmed,
             },
         )
-        webhook_url = f"{get_settings().public_base_url.rstrip('/')}/webhooks/voice/{token}"
+        webhook_url = _webhook_url(token, body.telephony_mode)
     else:
         await session.execute(
             text(

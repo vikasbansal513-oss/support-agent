@@ -788,7 +788,7 @@ export interface VoiceSettings {
   enabled: boolean;
   webhook_url: string | null;
   provider: string;
-  telephony_mode: "ready_made" | "diy_plivo";
+  telephony_mode: "ready_made" | "diy_plivo" | "diy_edesy";
   providers: string[];
   client_public_number: string | null;
   carrier: Carrier | null;

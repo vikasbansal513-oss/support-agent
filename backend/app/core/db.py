@@ -32,6 +32,7 @@ GLOBAL_TABLE_ALLOWLIST = (
     "heartbeats",
     "platform_flags",
     "platform_llm_settings",
+    "platform_speech_settings",
     "billing_settings",
     "billing_llm_rates",
     "billing_periods",

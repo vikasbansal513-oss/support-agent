@@ -9,6 +9,8 @@ import { useApi } from "../components/useApi";
 import { formatIst } from "../format";
 import { t, type Key } from "../i18n";
 
+const DIY_PROVIDER: Record<string, string> = { diy_plivo: "plivo", diy_edesy: "edesy" };
+
 function VoiceSection({ tenantId }: { tenantId: string }) {
   const [settings, reload] = useApi(
     () => api.get<VoiceSettings>(`/admin/tenants/${tenantId}/voice-settings`),
@@ -40,9 +42,14 @@ function VoiceForm({
   const [busy, setBusy] = useState(false);
   const [webhook, setWebhook] = useState<string | null>(null);
 
-  const setMode = (mode: "ready_made" | "diy_plivo") => {
+  const setMode = (mode: "ready_made" | "diy_plivo" | "diy_edesy") => {
     setTelephonyMode(mode);
-    setProvider(mode === "diy_plivo" ? "plivo" : initial.providers.find((p) => p !== "plivo") ?? "generic");
+    const diyProvider = DIY_PROVIDER[mode];
+    setProvider(
+      diyProvider ??
+        initial.providers.find((p) => !Object.values(DIY_PROVIDER).includes(p)) ??
+        "generic",
+    );
   };
 
   const save = async () => {
@@ -80,10 +87,13 @@ function VoiceForm({
           <select
             aria-label={t.voiceTelephonyMode}
             value={telephonyMode}
-            onChange={(event) => setMode(event.target.value as "ready_made" | "diy_plivo")}
+            onChange={(event) =>
+              setMode(event.target.value as "ready_made" | "diy_plivo" | "diy_edesy")
+            }
           >
             <option value="ready_made">{t.voiceModeReadyMade}</option>
             <option value="diy_plivo">{t.voiceModeDiyPlivo}</option>
+            <option value="diy_edesy">{t.voiceModeDiyEdesy}</option>
           </select>
         </label>
         <Field label={t.voiceCalledNumber} value={called} onChange={setCalled} required />
@@ -93,11 +103,15 @@ function VoiceForm({
           <select
             aria-label={t.voiceProvider}
             value={provider}
-            disabled={telephonyMode === "diy_plivo"}
+            disabled={telephonyMode === "diy_plivo" || telephonyMode === "diy_edesy"}
             onChange={(event) => setProvider(event.target.value)}
           >
             {(initial.providers.length ? initial.providers : [provider])
-              .filter((name) => (telephonyMode === "diy_plivo" ? name === "plivo" : name !== "plivo"))
+              .filter((name) =>
+                telephonyMode === "ready_made"
+                  ? !Object.values(DIY_PROVIDER).includes(name)
+                  : name === DIY_PROVIDER[telephonyMode],
+              )
               .map((name) => (
                 <option key={name} value={name}>
                   {name}

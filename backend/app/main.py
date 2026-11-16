@@ -17,6 +17,7 @@ from app.api import (
     admin_monitoring,
     admin_ops,
     admin_overview,
+    admin_speech_settings,
     admin_tenants,
     agent,
     approvals,
@@ -41,6 +42,7 @@ from app.core.monitoring import init_monitoring
 from app.core.security_headers import SecurityHeadersMiddleware
 from app.webhooks import plivo as plivo_webhook
 from app.webhooks import voice as voice_webhook
+from app.webhooks import voice_stream as voice_stream_webhook
 from app.webhooks import whatsapp
 
 system_router = APIRouter()
@@ -91,6 +93,7 @@ def create_app() -> FastAPI:
     application.include_router(admin_jobs.router)
     application.include_router(admin_llm.router)
     application.include_router(admin_llm_settings.router)
+    application.include_router(admin_speech_settings.router)
     application.include_router(admin_billing.router)
     application.include_router(conversations.router)
     application.include_router(handoffs.router)
@@ -108,6 +111,7 @@ def create_app() -> FastAPI:
     application.include_router(perf.router)
     application.include_router(whatsapp.router)
     application.include_router(voice_webhook.router)
+    application.include_router(voice_stream_webhook.router)
     application.include_router(plivo_webhook.router)
     application.include_router(system_router)
     return application

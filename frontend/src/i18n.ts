@@ -578,6 +578,7 @@ export const t = {
   voiceTelephonyMode: "Telephony setup",
   voiceModeReadyMade: "Ready-Made Telephony",
   voiceModeDiyPlivo: "DIY Voice Calling Agent Stack (Plivo)",
+  voiceModeDiyEdesy: "DIY Voice Calling Agent Stack (Edesy)",
   autonomyTitle: "Autonomy",
   autonomyIntro: "For each action, choose how your agent should handle it: disabled, approval required, or automatic.",
   autonomyIntroStaff: "For each action, choose: disabled or approval required. Automatic can only be turned on by the account owner.",

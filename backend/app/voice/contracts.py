@@ -48,14 +48,15 @@ class VoiceSettingsIn(BaseModel):
     enabled: bool = True
     rotate_webhook: bool = False
     provider: str = "generic"
-    telephony_mode: Literal["ready_made", "diy_plivo"] = "ready_made"
+    telephony_mode: Literal["ready_made", "diy_plivo", "diy_edesy"] = "ready_made"
 
     @field_validator("provider")
     @classmethod
     def _known_provider(cls, value: str) -> str:
+        from app.voice.media_stream import STREAM_PROVIDERS
         from app.voice.providers import provider_names
 
-        if value not in provider_names():
+        if value not in provider_names() and value not in STREAM_PROVIDERS:
             raise ValueError("unknown provider")
         return value
 
@@ -71,10 +72,16 @@ class VoiceSettingsIn(BaseModel):
 
     @model_validator(mode="after")
     def _telephony_mode_provider_match(self) -> "VoiceSettingsIn":
+        from app.voice.media_stream import STREAM_PROVIDERS
+
         if self.telephony_mode == "diy_plivo" and self.provider != "plivo":
             raise ValueError("diy_plivo telephony_mode requires provider='plivo'")
-        if self.telephony_mode == "ready_made" and self.provider == "plivo":
-            raise ValueError("provider='plivo' requires telephony_mode='diy_plivo'")
+        if self.telephony_mode == "diy_edesy" and self.provider not in STREAM_PROVIDERS:
+            raise ValueError("diy_edesy telephony_mode requires provider='edesy'")
+        if self.telephony_mode == "ready_made" and (
+            self.provider == "plivo" or self.provider in STREAM_PROVIDERS
+        ):
+            raise ValueError("this provider requires a DIY telephony_mode")
         return self
 
 
@@ -85,7 +92,7 @@ class VoiceSettingsOut(BaseModel):
     enabled: bool = False
     webhook_url: str | None = None
     provider: str = "generic"
-    telephony_mode: Literal["ready_made", "diy_plivo"] = "ready_made"
+    telephony_mode: Literal["ready_made", "diy_plivo", "diy_edesy"] = "ready_made"
     providers: list[str] = Field(default_factory=list)
     client_public_number: str | None = None
     carrier: Carrier | None = None
