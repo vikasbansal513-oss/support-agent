@@ -1194,9 +1194,7 @@ async def _finish_turn(
             ),
             {"r": json.dumps({"voice_reply": reply.model_dump(mode="json")}), "i": event_id},
         )
-    logger.info(
-        "finish_turn timing: done elapsed_ms=%d", int((time.monotonic() - _t0) * 1000)
-    )
+    logger.info("finish_turn timing: done elapsed_ms=%d", int((time.monotonic() - _t0) * 1000))
     return reply
 
 
@@ -1243,9 +1241,7 @@ async def _handoff_reply(
             ),
             {"s": status, "r": reason[:100], "i": call.id},
         )
-    logger.info(
-        "handoff_reply timing: done elapsed_ms=%d", int((time.monotonic() - _t0) * 1000)
-    )
+    logger.info("handoff_reply timing: done elapsed_ms=%d", int((time.monotonic() - _t0) * 1000))
     return _reply(
         line,
         lang,
