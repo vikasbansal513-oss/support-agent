@@ -140,9 +140,21 @@ class UtteranceDetector:
 
     sample_rate_hz: int
     frame_ms: int = 20
-    energy_threshold: float = 500.0
+    # REAL FIX ATTEMPT (2026-11-17): a real call's VAD-stats showed two full-sentence
+    # utterances both ending at the theoretical minimum length (start_frames +
+    # end_silence_frames, ~560-680ms) - i.e. after the opening syllable, the rest of the
+    # caller's actual speech was being read as "quiet" almost immediately, so the
+    # utterance closed before enough audio reached STT. 500.0 was never tuned against
+    # real call audio (see class docstring) and reads as too high for this telephony
+    # line's actual levels. Lowered so normal speech stays above threshold through
+    # natural dips, and end_silence_frames raised so a brief pause between words/sentences
+    # doesn't end the utterance early either. This is a reasoned best-effort adjustment,
+    # not lab-measured against this line's real audio - the VAD-stats log line added
+    # alongside this (UtteranceDetector.last_stats) will show the real max_rms/loud_frames
+    # numbers from the next call, to fine-tune further if this isn't enough.
+    energy_threshold: float = 150.0
     start_frames: int = 2  # consecutive loud frames to confirm speech started
-    end_silence_frames: int = 25  # consecutive quiet frames (~500ms @ 20ms) to end
+    end_silence_frames: int = 35  # consecutive quiet frames (~700ms @ 20ms) to end
     max_utterance_ms: int = 15_000
 
     _buffer: bytes = field(default=b"", repr=False)
@@ -150,6 +162,18 @@ class UtteranceDetector:
     _loud_run: int = field(default=0, repr=False)
     _quiet_run: int = field(default=0, repr=False)
     _speech_bytes: bytes = field(default=b"", repr=False)
+    # TEMPORARY DIAGNOSTIC (2026-11-17): energy_threshold above was never tuned against
+    # real call audio (see class docstring). A real call showed two utterances ending
+    # after only ~560-680ms - the minimum possible (start_frames + end_silence_frames),
+    # consistent with the threshold being set too high for this caller's actual mic/line
+    # level, so real speech reads as "quiet" almost immediately after the loud opening
+    # syllable and the utterance is cut short before STT gets enough audio. These counters
+    # capture the real RMS levels seen during the cut-short utterance so the threshold can
+    # be tuned from real numbers instead of guessed again. Remove once tuned.
+    _frame_count: int = field(default=0, repr=False)
+    _loud_count: int = field(default=0, repr=False)
+    _max_rms: float = field(default=0.0, repr=False)
+    last_stats: dict[str, float] | None = field(default=None, repr=False)
 
     @property
     def _frame_bytes(self) -> int:
@@ -173,7 +197,13 @@ class UtteranceDetector:
         utterance: bytes | None = None
         while len(self._buffer) >= frame_size:
             frame, self._buffer = self._buffer[:frame_size], self._buffer[frame_size:]
-            loud = self.is_loud(frame)
+            rms = _rms(frame)
+            loud = rms >= self.energy_threshold
+            self._frame_count += 1
+            if loud:
+                self._loud_count += 1
+            if rms > self._max_rms:
+                self._max_rms = rms
             if not self._speaking:
                 if loud:
                     self._loud_run += 1
@@ -195,6 +225,12 @@ class UtteranceDetector:
                 or len(self._speech_bytes) >= self._max_bytes
             ):
                 utterance = self._speech_bytes
+                self.last_stats = {
+                    "frames": self._frame_count,
+                    "loud_frames": self._loud_count,
+                    "max_rms": self._max_rms,
+                    "threshold": self.energy_threshold,
+                }
                 self._reset()
         return utterance
 
@@ -221,6 +257,9 @@ class UtteranceDetector:
         self._loud_run = 0
         self._quiet_run = 0
         self._speech_bytes = b""
+        self._frame_count = 0
+        self._loud_count = 0
+        self._max_rms = 0.0
 
 
 @dataclass
@@ -399,6 +438,18 @@ class EdesyStreamSession:
         utterance = self._detector.push(chunk)
         if utterance is None:
             return out
+        # TEMPORARY DIAGNOSTIC (2026-11-17): see UtteranceDetector.last_stats - logs the
+        # real RMS energy levels seen for this utterance so energy_threshold can be tuned
+        # from real numbers. Remove once tuned.
+        stats = self._detector.last_stats
+        if stats is not None:
+            logger.info(
+                "voice-stream vad stats: frames=%d loud_frames=%d max_rms=%.1f threshold=%.1f",
+                stats["frames"],
+                stats["loud_frames"],
+                stats["max_rms"],
+                stats["threshold"],
+            )
         out.extend(await self._on_utterance(utterance, on_chunk=on_chunk))
         return out
 
