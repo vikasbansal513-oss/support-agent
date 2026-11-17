@@ -140,23 +140,24 @@ class UtteranceDetector:
 
     sample_rate_hz: int
     frame_ms: int = 20
-    # REAL FIX ATTEMPT (2026-11-17): a real call's VAD-stats showed two full-sentence
-    # utterances both ending at the theoretical minimum length (start_frames +
-    # end_silence_frames, ~560-680ms) - i.e. after the opening syllable, the rest of the
-    # caller's actual speech was being read as "quiet" almost immediately, so the
-    # utterance closed before enough audio reached STT. 500.0 was never tuned against
-    # real call audio (see class docstring) and reads as too high for this telephony
-    # line's actual levels. Lowered so normal speech stays above threshold through
-    # natural dips. This is a reasoned best-effort adjustment, not lab-measured against
-    # this line's real audio - the VAD-stats log line added alongside this
-    # (UtteranceDetector.last_stats) will show the real max_rms/loud_frames numbers from
-    # the next call, to fine-tune further if this isn't enough. end_silence_frames is
-    # left at its original value here - tests/voice/test_media_stream.py exercises it
-    # with exactly 600ms of silence, so raising it past that breaks those tests; it can
-    # be tuned separately, with its own test update, once real silence-gap data is in.
-    energy_threshold: float = 150.0
+    # REAL FIX, ROUND 2 (2026-11-17): a real call's own logged VAD stats (jsonPayload,
+    # "voice-stream vad stats") confirmed the exact failure, not a guess this time -
+    # utterance_ms=540/740, both ending after only 2-11 "loud" frames out of 134-222
+    # total. So the first (150.0) threshold round helped some calls (several calls the
+    # same day/hour got a non-empty STT result) but was still too high for others -
+    # most of this caller's actual speech energy sat BELOW 150, only brief peaks (up to
+    # 300-902 max_rms) crossed it, so the bulk of real speech read as "quiet" and the
+    # ~500ms end_silence_frames window (meant for a pause BETWEEN words) was reached
+    # mid-word/mid-sentence instead, closing the utterance on a fragment.
+    # Lowered further (150 -> 90) so quieter voiced speech (not just loud peaks) counts
+    # as "speaking", and end_silence_frames raised (25 -> 40, ~800ms) so a normal short
+    # pause between words/phrases doesn't end the utterance early either - the two
+    # earlier fixes only moved the threshold, never gave speech more room to breathe.
+    # Still a reasoned best-effort adjustment, not lab-measured - the same VAD-stats log
+    # line will show whether this is enough from the next real call.
+    energy_threshold: float = 90.0
     start_frames: int = 2  # consecutive loud frames to confirm speech started
-    end_silence_frames: int = 25  # consecutive quiet frames (~500ms @ 20ms) to end
+    end_silence_frames: int = 40  # consecutive quiet frames (~800ms @ 20ms) to end
     max_utterance_ms: int = 15_000
 
     _buffer: bytes = field(default=b"", repr=False)
@@ -485,12 +486,24 @@ class EdesyStreamSession:
             not result.text.strip(),
             result.confidence,
         )
+        # FIX (2026-11-17): on this (Edesy) path, _on_utterance only ever runs after
+        # UtteranceDetector has already decided the caller WAS speaking (that's what
+        # "utterance" means here - see push()'s state machine) - so an empty `result.
+        # text` below means STT failed on real captured audio, never that the caller
+        # said nothing. Passing that to app.voice.service._turn() as plain empty
+        # speech used to make it indistinguishable from true provider-reported silence
+        # (Plivo/generic's own "caller went quiet" event) - the customer, who just
+        # spoke, would hear "are you still there?" instead of "I couldn't hear that
+        # clearly, please repeat", and after a couple of these would be handed off as
+        # SILENCE_NO_RESPONSE ("no response") even though they never stopped talking.
+        # heard_unclear tells _turn() which of the two actually happened.
         event = VoiceEventIn(
             event="turn",
             call_id=self.call_id,
             **{"from": self.from_number, "to": self.to_number},
             speech=result.text[:2000],
             confidence=result.confidence,
+            heard_unclear=not result.text.strip(),
         )
         reply = await service.handle(self._factory, self._voice, event)
         return await self._speak(reply, on_chunk=on_chunk)

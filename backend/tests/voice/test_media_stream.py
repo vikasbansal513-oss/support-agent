@@ -36,7 +36,14 @@ def test_utterance_detector_stays_silent_on_quiet_audio() -> None:
 def test_utterance_detector_emits_after_speech_then_silence() -> None:
     detector = UtteranceDetector(sample_rate_hz=SAMPLE_RATE)
     assert detector.push(loud_audio(500)) is None
-    utterance = detector.push(quiet_audio(600))
+    # 2026-11-17 VAD retune: end_silence_frames raised 25 -> 40 (~500ms -> ~800ms,
+    # see UtteranceDetector's own docstring-comment) so a real call's natural
+    # mid-sentence pause doesn't end the utterance early - a real call's logged VAD
+    # stats showed utterances ending after only 2-11 loud frames out of 134-222,
+    # cut short well before useful speech reached STT. This test's silence duration
+    # moves with it (900ms > the new 800ms threshold) so it still exercises the same
+    # "speech then enough silence ends the utterance" behaviour, not a shorter one.
+    utterance = detector.push(quiet_audio(900))
     assert utterance is not None
     assert len(utterance) > 0
     # back to idle: more silence should not re-emit anything
@@ -91,7 +98,9 @@ async def test_audio_turn_runs_stt_then_agent_then_tts(env: AgentEnv) -> None:
     env.provider.responses = [plan("order_status", "answer", None)]
     out: list[OutMessage] = []
     out += await session.handle_audio_chunk(loud_audio(500))
-    out += await session.handle_audio_chunk(quiet_audio(600))
+    # 900ms, not 600ms - see test_utterance_detector_emits_after_speech_then_silence's
+    # comment: end_silence_frames moved 25 -> 40 (~800ms) in the 2026-11-17 VAD retune.
+    out += await session.handle_audio_chunk(quiet_audio(900))
     assert stt.calls, "utterance should have reached the fake STT"
     assert any(o.kind == "audio" for o in out)
     assert tts.calls[-1] != tts.calls[0]  # a real, different reply was spoken

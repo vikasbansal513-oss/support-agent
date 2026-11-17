@@ -21,6 +21,15 @@ class VoiceEventIn(BaseModel):
     confidence: float | None = Field(default=None, ge=0, le=1)
     turn_id: str | None = Field(default=None, max_length=200)
     reason: str | None = Field(default=None, max_length=100)
+    # 2026-11-17: set only by app.voice.media_stream's Edesy audio path, only on a
+    # "turn" event with empty `speech` - means the VAD already confirmed the caller
+    # was speaking but STT returned no text, as opposed to true provider-reported
+    # silence (no caller audio at all). app.voice.service._turn() uses this to say
+    # "I couldn't hear that clearly" instead of "are you still there?", and to hand
+    # off as CONFUSED rather than SILENCE_NO_RESPONSE after repeated failures.
+    # Defaults False so every other provider (Plivo, generic) and every "start"/"end"
+    # event is completely unaffected.
+    heard_unclear: bool = False
 
     @field_validator("from_number", "to_number")
     @classmethod
