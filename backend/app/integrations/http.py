@@ -137,13 +137,46 @@ class ExternalHttp:
                             "rate_limited" if status == 429 else "server_error", status
                         )
                         if attempt < self._max_attempts:
-                            await self._sleep(self._delay(response, attempt))
+                            # TEMPORARY DIAGNOSTIC (2026-11-17): this retry path (and the
+                            # timeout/network branch below) previously had no logger call at
+                            # all - only the silent DB-recorded CallRecord above - so a slow
+                            # upstream (e.g. a request that exceeds `timeout` and gets
+                            # retried) produced zero visible log output for the whole time it
+                            # was stuck, which is indistinguishable from the app doing nothing.
+                            # This is the leading suspect for an observed ~45-60s silent gap
+                            # on real voice calls between STT finishing and the LLM reply.
+                            # Remove once confirmed/fixed.
+                            delay = self._delay(response, attempt)
+                            logger.warning(
+                                "external http retry: provider=%s operation=%s attempt=%d/%d "
+                                "status=%d latency_ms=%d next_delay_s=%.1f",
+                                self.provider,
+                                operation,
+                                attempt,
+                                self._max_attempts,
+                                status,
+                                latency,
+                                delay,
+                            )
+                            await self._sleep(delay)
                             continue
                         raise last_error
                     return response
                 last_error = UpstreamError(error_class or "network_error")
                 if attempt < self._max_attempts:
-                    await self._sleep(self._delay(None, attempt))
+                    delay = self._delay(None, attempt)
+                    logger.warning(
+                        "external http retry: provider=%s operation=%s attempt=%d/%d "
+                        "error_class=%s latency_ms=%d next_delay_s=%.1f",
+                        self.provider,
+                        operation,
+                        attempt,
+                        self._max_attempts,
+                        error_class or "network_error",
+                        latency,
+                        delay,
+                    )
+                    await self._sleep(delay)
         raise last_error or UpstreamError("network_error")
 
     @staticmethod
