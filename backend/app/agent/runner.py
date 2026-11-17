@@ -94,17 +94,36 @@ async def _tool_box(factory: Factory, tenant_id: uuid.UUID, transport: Any) -> T
     return LiveV1ToolBox(tenant_id=tenant_id, shopify=shopify, couriers=couriers)
 
 
+# ROOT-CAUSE FIX (2026-11-17): default ExternalHttp retry/backoff (timeout=10s,
+# max_attempts=3, backoff up to 30s - see app.integrations.http) can take up to
+# ~100s in the worst case (confirmed from a real voice call's logs: a 99.7s silent
+# gap between STT finishing and the agent's reply). That's invisible on WhatsApp/
+# email, where a slow reply just arrives late, but unacceptable on a live phone
+# call - a caller will not wait 100s of silence. These are only used when
+# NormalizedInbound.is_live_call is True (set exclusively by app.voice.service),
+# so WhatsApp/email keep the original defaults unchanged.
+LIVE_CALL_LLM_TIMEOUT_S = 6.0
+LIVE_CALL_LLM_MAX_ATTEMPTS = 1
+
+
 async def _llm(
-    factory: Factory, tenant_id: uuid.UUID, transport: httpx.AsyncBaseTransport | None
+    factory: Factory,
+    tenant_id: uuid.UUID,
+    transport: httpx.AsyncBaseTransport | None,
+    *,
+    fast: bool = False,
 ) -> LlmClient:
     if overrides.llm is not None:
         return overrides.llm
     chosen = await load_effective(factory)
-    http = ExternalHttp(
-        chosen.provider,
-        recorder=DbCallRecorder(factory, tenant_id),
-        transport=transport,
-    )
+    http_kwargs: dict[str, Any] = {
+        "recorder": DbCallRecorder(factory, tenant_id),
+        "transport": transport,
+    }
+    if fast:
+        http_kwargs["timeout"] = LIVE_CALL_LLM_TIMEOUT_S
+        http_kwargs["max_attempts"] = LIVE_CALL_LLM_MAX_ATTEMPTS
+    http = ExternalHttp(chosen.provider, **http_kwargs)
     provider = make_provider(http, chosen.provider, chosen.model, chosen.api_key, chosen.base_url)
     return LlmClient(provider, LlmRecorder(factory))
 
@@ -324,7 +343,7 @@ async def run_inbound(
             "run_inbound timing: v1_state loaded elapsed_ms=%d",
             int((time.monotonic() - _t0) * 1000),
         )
-        llm_client = await _llm(factory, tenant_id, ctx.transport)
+        llm_client = await _llm(factory, tenant_id, ctx.transport, fast=inbound.is_live_call)
         logger.info(
             "run_inbound timing: llm client ready elapsed_ms=%d",
             int((time.monotonic() - _t0) * 1000),
@@ -352,7 +371,7 @@ async def run_inbound(
             int((time.monotonic() - _t0) * 1000),
         )
         return
-    llm_client = await _llm(factory, tenant_id, ctx.transport)
+    llm_client = await _llm(factory, tenant_id, ctx.transport, fast=inbound.is_live_call)
     logger.info(
         "run_inbound timing: llm client ready elapsed_ms=%d",
         int((time.monotonic() - _t0) * 1000),

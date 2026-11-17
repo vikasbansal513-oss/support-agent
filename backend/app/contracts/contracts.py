@@ -241,6 +241,19 @@ class NormalizedInbound(BaseModel):
     email_thread_id: str | None = None
     email_attachment_names: list[str] = Field(default_factory=list, max_length=20)
     received_at: AwareDatetime
+    # ROOT-CAUSE FIX (2026-11-17): voice calls are normalized with channel="whatsapp"
+    # (see app.voice.service._run_agent) so they reuse the WhatsApp business-logic
+    # graph as-is - but that means `channel` alone can no longer tell app.agent.runner
+    # "this is a live phone call, not a message the customer can wait 60-100s for".
+    # Confirmed from a real call's logs: STT finished at 20:47:08, the agent's reply
+    # (reason=INVALID_LLM_OUTPUT) only went out at 20:48:48 - a 99.7s silent gap caused
+    # by app.integrations.http.ExternalHttp's default retry/backoff (timeout=10s,
+    # max_attempts=3, backoff up to 30s) being used for the LLM call, same as it is for
+    # WhatsApp/email where a 60-100s reply delay is invisible to the customer. This flag
+    # is False by default (WhatsApp/email behaviour is completely unchanged) and is set
+    # True only in app.voice.service, so app.agent.runner can give the LLM call a much
+    # shorter timeout and no retry-backoff specifically for live calls.
+    is_live_call: bool = False
 
     @model_validator(mode="after")
     def _one_sender(self) -> "NormalizedInbound":

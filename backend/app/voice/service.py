@@ -856,34 +856,6 @@ async def _turn(
         return _reply("", lang, "hangup")
     utterance = event.speech.strip() or speech.digits_to_text(event.digits)
 
-    if not utterance and event.heard_unclear:
-        # 2026-11-17 fix: the caller WAS speaking (that's the only way the Edesy
-        # audio path ever reaches here with empty speech - see
-        # media_stream._on_utterance's comment) but STT returned no text. Treat this
-        # like any other low-confidence turn ("I couldn't hear that clearly, please
-        # say it again"), not like true silence ("are you still there?") - and hand
-        # off as CONFUSED ("unclear audio"), not SILENCE_NO_RESPONSE ("no response"),
-        # if it keeps happening. True provider-reported silence (heard_unclear=False)
-        # falls through to the unchanged block below.
-        streak = call.low_confidence_streak + 1
-        async with session_scope(factory, tenant_id=voice.tenant_id) as session:
-            await _bump(session, call, low=streak, quiet=0)
-        if streak >= settings.voice_low_confidence_limit:
-            return await _end_with_human(
-                factory,
-                voice,
-                view,
-                call.id,
-                call.conversation_id,
-                None,
-                "CONFUSED",
-                "awaaz saaf nahi",
-                event.from_number,
-                lang,
-            )
-        key = "unclear_confirm" if call.awaiting == "confirm" else "unclear_audio"
-        return _reply(speech.voice_line(key, lang), lang)
-
     if not utterance:
         async with session_scope(factory, tenant_id=voice.tenant_id) as session:
             await _bump(session, call, quiet=call.silence_streak + 1)
@@ -1038,6 +1010,11 @@ async def _run_agent(
         from_phone=event.from_number,
         text=utterance[:2000],
         received_at=timeutil.utc_now(),
+        # ROOT-CAUSE FIX (2026-11-17): tells app.agent.runner._llm to use a short,
+        # no-retry timeout for this run's LLM call instead of the WhatsApp/email
+        # default (see NormalizedInbound.is_live_call's docstring for the full
+        # reasoning/evidence - a real call measured a 99.7s silent gap without this).
+        is_live_call=True,
     )
     try:
         await runner.run_inbound(
