@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import time
@@ -135,7 +136,16 @@ class CallContext:
 async def _context(
     factory: Factory, tenant_id: uuid.UUID, call_id: uuid.UUID, conversation_id: uuid.UUID
 ) -> CallContext:
+    # TEMPORARY DIAGNOSTIC (2026-11-17): see app.voice.service._finish_turn's matching
+    # note on the unexplained ~25s gap. This times connection acquisition separately
+    # from the 4 queries below, since a slow/cold Neon connection vs. slow queries
+    # need different fixes. Remove once the slow stage is identified.
+    _t0 = time.monotonic()
     async with session_scope(factory, tenant_id=tenant_id) as session:
+        logger.info(
+            "_context timing: session acquired elapsed_ms=%d",
+            int((time.monotonic() - _t0) * 1000),
+        )
         call = (
             await session.execute(
                 text("SELECT started_at, turn_count FROM voice_calls WHERE id = :i"), {"i": call_id}
@@ -169,6 +179,10 @@ async def _context(
                 {"c": conversation_id, "s": call.started_at},
             )
         ).all()
+    logger.info(
+        "_context timing: all 4 queries done elapsed_ms=%d",
+        int((time.monotonic() - _t0) * 1000),
+    )
     did = [f"Call par {call.turn_count} baatein hui"]
     did += [f"{a.tool_name}: {a.status}" for a in acts][:8]
     return CallContext(
@@ -220,6 +234,8 @@ WHY = {
     "POLICY_EXCEPTION": "The voice agent isn't enabled for this brand yet, or the request fell"
     " outside policy.",
     "ACTION_FAILED": "A technical issue occurred during the call.",
+    "ACTION_TIMEOUT": "The AI assistant took too long to respond and was cut off to avoid"
+    " leaving the customer in silence.",
     # Section 17.1 consent-capture (see _consent_turn):
     "HUMAN_REQUESTED": "Customer asked to speak with a human right at the start of the call.",
     "CONSENT_DECLINED": "Customer did not consent to speaking with the AI assistant / having the"
@@ -1016,9 +1032,61 @@ async def _run_agent(
         # reasoning/evidence - a real call measured a 99.7s silent gap without this).
         is_live_call=True,
     )
-    try:
+    # HARD SAFETY NET (2026-11-17): this is on top of (not instead of) the specific
+    # fixes already made for the LLM call (app.agent.runner._llm's fast/no-retry mode)
+    # and TTS (app.webhooks.voice_stream's short TTS timeout). Those targeted two
+    # confirmed slow spots, but a real call also showed a 25-33s gap with no matching
+    # LLM/TTS/STT activity at all - that gap sits *after* run_inbound returns (its
+    # last log line, "v1 run done", is right before the return), i.e. inside
+    # _finish_turn/_handoff_reply/_context below (see their "... timing" diagnostic
+    # logs), which only do DB queries - no external HTTP call to blame it on yet.
+    # There may be other slow paths (DB, a future integration call, etc.) not
+    # discovered yet either. A live phone call cannot tolerate open-ended silence
+    # while every individual cause gets hunted down one at a time - so this wraps
+    # run_inbound AND _finish_turn (the *entire* per-turn pipeline, not just the LLM
+    # part) in one hard ceiling. Whatever is slow, anywhere in that span, the caller
+    # hears SOMETHING (a graceful "connecting you" handoff) within this timeout,
+    # never silence beyond it. 12s = LLM call capped at 6s
+    # (app.agent.runner.LIVE_CALL_LLM_TIMEOUT_S) + ~6s generous headroom for every DB
+    # step across both run_inbound and _finish_turn (each measured at 1-3s on a
+    # working call) - a call behaving normally finishes well inside this; it only
+    # fires when something is genuinely stuck.
+    TURN_TIMEOUT_S = 12.0
+
+    async def _process_and_finish() -> VoiceReplyOut:
         await runner.run_inbound(
             ctx, voice.tenant_id, event_id, call.conversation_id, message_id, inbound
+        )
+        return await _finish_turn(factory, voice, view, call, event, event_id, utterance, capture)
+
+    try:
+        return await asyncio.wait_for(_process_and_finish(), timeout=TURN_TIMEOUT_S)
+    except TimeoutError:
+        error_id = new_error_id()
+        logger.error(
+            "voice turn timed out",
+            extra={"error_id": error_id, "timeout_s": TURN_TIMEOUT_S},
+        )
+        async with session_scope(factory, tenant_id=voice.tenant_id) as session:
+            await session.execute(
+                text(
+                    "UPDATE inbound_events SET status = 'skipped', skip_reason = 'VOICE_TIMEOUT'"
+                    " WHERE id = :i AND status NOT IN ('processed','skipped')"
+                ),
+                {"i": event_id},
+            )
+        return await _end_with_human(
+            factory,
+            voice,
+            view,
+            call.id,
+            call.conversation_id,
+            None,
+            "ACTION_TIMEOUT",
+            utterance,
+            event.from_number,
+            call.language,
+            spoken_override=speech.voice_line("error", call.language),
         )
     except Exception as exc:
         error_id = new_error_id()
@@ -1046,7 +1114,6 @@ async def _run_agent(
             call.language,
             spoken_override=speech.voice_line("error", call.language),
         )
-    return await _finish_turn(factory, voice, view, call, event, event_id, utterance, capture)
 
 
 async def _finish_turn(
@@ -1059,6 +1126,15 @@ async def _finish_turn(
     utterance: str,
     capture: CaptureVoiceSender,
 ) -> VoiceReplyOut:
+    # TEMPORARY DIAGNOSTIC (2026-11-17): a real call's external_calls rows showed a
+    # ~25s gap with zero HTTP activity (no groq/TTS/STT row) between run_inbound
+    # finishing and the next TTS call - i.e. the delay is somewhere in this function's
+    # own DB work (or app.voice.service._handoff_reply/_context below), not in any
+    # external API. Nothing here was timed before, so there's no way yet to tell DB
+    # query time apart from lock contention apart from a slow Neon connection. These
+    # checkpoints mirror app.agent.runner.run_inbound's existing timing-log style.
+    # Remove once the slow stage is identified.
+    _t0 = time.monotonic()
     async with session_scope(factory, tenant_id=voice.tenant_id) as session:
         lang_row = (
             await session.execute(
@@ -1075,9 +1151,17 @@ async def _finish_turn(
                 {"e": event_id},
             )
         ).first()
+    logger.info(
+        "finish_turn timing: lang/handoff lookup done elapsed_ms=%d",
+        int((time.monotonic() - _t0) * 1000),
+    )
     lang = (lang_row.language if lang_row and lang_row.language else call.language) or "hinglish"
     if handed is not None:
         reply = await _handoff_reply(factory, voice, view, call, handed.reason_code, lang, capture)
+        logger.info(
+            "finish_turn timing: handoff_reply done elapsed_ms=%d",
+            int((time.monotonic() - _t0) * 1000),
+        )
     else:
         lines = [speech.speakable(line, lang) for line in capture.lines] or [
             speech.voice_line("unclear_audio", lang)
@@ -1110,6 +1194,9 @@ async def _finish_turn(
             ),
             {"r": json.dumps({"voice_reply": reply.model_dump(mode="json")}), "i": event_id},
         )
+    logger.info(
+        "finish_turn timing: done elapsed_ms=%d", int((time.monotonic() - _t0) * 1000)
+    )
     return reply
 
 
@@ -1122,6 +1209,10 @@ async def _handoff_reply(
     lang: str,
     capture: CaptureVoiceSender,
 ) -> VoiceReplyOut:
+    # TEMPORARY DIAGNOSTIC (2026-11-17): see app.voice.service._finish_turn's matching
+    # note - this is the handoff path of the same unexplained ~25s gap, so it gets the
+    # same checkpoints. Remove once the slow stage is identified.
+    _t0 = time.monotonic()
     transfer = voice.transfer_number if voice.transfer_number and _in_hours(view) else None
     if transfer:
         line, status, action = speech.voice_line("transfer", lang), "transferred", "transfer"
@@ -1129,6 +1220,10 @@ async def _handoff_reply(
         key = "callback" if _in_hours(view) else "callback_off_hours"
         line, status, action = speech.voice_line(key, lang), "callback", "hangup"
     ctx = await _context(factory, voice.tenant_id, call.id, call.conversation_id)
+    logger.info(
+        "handoff_reply timing: _context done elapsed_ms=%d",
+        int((time.monotonic() - _t0) * 1000),
+    )
     async with session_scope(factory, tenant_id=voice.tenant_id) as session:
         phone = (
             await session.execute(
@@ -1148,6 +1243,9 @@ async def _handoff_reply(
             ),
             {"s": status, "r": reason[:100], "i": call.id},
         )
+    logger.info(
+        "handoff_reply timing: done elapsed_ms=%d", int((time.monotonic() - _t0) * 1000)
+    )
     return _reply(
         line,
         lang,

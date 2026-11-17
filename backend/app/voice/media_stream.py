@@ -42,16 +42,34 @@ logger = logging.getLogger("app.voice.media_stream")
 # synthesized once per (sample_rate, language) and cached in this process for every
 # later call, so after the first call it costs ~0ms, not a fresh TTS round trip.
 FILLER_TEXT = "नमस्ते, कृपया थोड़ा इंतज़ार करें।"
-_filler_cache: dict[tuple[int, str], bytes] = {}
+# ROOT-CAUSE FIX (2026-11-17): the call-start filler above solved the first turn's
+# wait, but every *later* turn (customer speaks -> STT -> LLM plan -> DB/handoff work,
+# now capped at 12s by app.voice.service._run_agent's TURN_TIMEOUT_S) still went
+# completely silent while that ran. Even when it finishes in a normal 2-5s, several
+# seconds of dead air after the customer stops talking reads as "this is a bot, not a
+# person" (a human agent would say "ek second, dekhti hoon" instead of going quiet) -
+# flagged directly from a real call. This is a separate, shorter, non-greeting phrase
+# reused for every turn (not just call start), so it must not repeat "नमस्ते" each
+# time.
+MIDCALL_FILLER_TEXT = "हाँ, एक सेकंड, देख रही हूँ।"
+# How long a turn's real processing is given to finish before this filler plays. Low
+# enough that the customer doesn't experience the gap as a bot having gone silent
+# (human "let me check" reactions land in under ~1.5s), but high enough that a normal
+# fast turn (Groq ~1s + DB ~1-2s, confirmed from real external_calls rows) completes
+# and speaks its real answer directly, without ever needing the filler at all.
+MIDCALL_FILLER_DELAY_S = 1.3
+_filler_cache: dict[tuple[str, int, str], bytes] = {}
 
 
-async def _get_filler_audio(tts: TextToSpeech, sample_rate_hz: int, language: str) -> bytes:
-    key = (sample_rate_hz, language)
+async def _get_filler_audio(
+    tts: TextToSpeech, sample_rate_hz: int, language: str, text: str = FILLER_TEXT
+) -> bytes:
+    key = (text, sample_rate_hz, language)
     cached = _filler_cache.get(key)
     if cached is not None:
         return cached
     try:
-        pcm = await tts.synthesize(FILLER_TEXT, sample_rate_hz, language)
+        pcm = await tts.synthesize(text, sample_rate_hz, language)
     except Exception:
         # Best-effort only: if the filler itself fails for any reason, the call
         # continues exactly as before this change (no filler, just a slower first
@@ -549,7 +567,25 @@ class EdesyStreamSession:
             confidence=result.confidence,
             heard_unclear=not result.text.strip(),
         )
-        reply = await service.handle(self._factory, self._voice, event)
+        # ROOT-CAUSE FIX (2026-11-17): see MIDCALL_FILLER_TEXT's comment above. Start
+        # the real (possibly slow, up to 12s) agent call in the background and race it
+        # against a short deadline - a normal fast turn finishes first and this never
+        # plays anything extra; a slow turn gets bridged with a brief spoken
+        # acknowledgement instead of silence, then still speaks the real answer once
+        # it's ready (the filler does not replace the reply, it only covers the wait).
+        handle_task: asyncio.Task[VoiceReplyOut] = asyncio.ensure_future(
+            service.handle(self._factory, self._voice, event)
+        )
+        done, _ = await asyncio.wait({handle_task}, timeout=MIDCALL_FILLER_DELAY_S)
+        if handle_task not in done and on_chunk is not None:
+            filler_pcm = await _get_filler_audio(
+                self._tts, self._rate, language, MIDCALL_FILLER_TEXT
+            )
+            filler_frames = _chunk_audio(filler_pcm, self._rate)
+            if filler_frames:
+                self._mute_bytes_remaining += len(filler_pcm)
+                await on_chunk([OutMessage("audio", frame) for frame in filler_frames])
+        reply = await handle_task
         return await self._speak(reply, on_chunk=on_chunk)
 
     async def _speak(

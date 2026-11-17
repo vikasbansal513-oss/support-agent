@@ -113,9 +113,29 @@ async def voice_stream_webhook(
         f"speech_{speech_settings.stt_provider}_stt",
         recorder=DbCallRecorder(factory, voice.tenant_id),
     )
+    # ROOT-CAUSE FIX (2026-11-17): a real call's external_calls rows showed Google TTS
+    # synthesize() intermittently taking 9-11s (vs its normal 185-360ms) - default
+    # ExternalHttp retry/backoff (timeout=10s, max_attempts=3) could then pile up
+    # several such calls back to back (app.voice.media_stream._speak does one
+    # synthesize() call per sentence, sequentially), which is exactly what made the
+    # agent's final reply in that call take ~20s+ of TTS alone before any audio went
+    # out - this is a different cause from the LLM-retry delay fixed earlier in
+    # app.agent.runner._llm (that one is confirmed fixed: the same call's Groq calls
+    # were ~1s each). This file only ever handles live voice calls (there is no
+    # WhatsApp/email path through this websocket), so the short timeout applies
+    # unconditionally - no is_live_call-style flag needed here. On timeout/failure,
+    # GoogleTextToSpeech.synthesize() already catches UpstreamError and returns b""
+    # (see app.speech.providers) rather than raising, and app.voice.media_stream._speak
+    # already skips sending audio for an empty chunk - so a single failed sentence is
+    # silently skipped rather than blocking the whole reply for up to 11s+ per retry.
+    # VERIFY: if a reply's *only* sentence fails TTS this way, the agent says nothing
+    # that turn (same as today, just far less likely - one short attempt instead of up
+    # to 3 long ones). Not yet given a spoken fallback for that edge case.
     http_tts = ExternalHttp(
         f"speech_{speech_settings.tts_provider}_tts",
         recorder=DbCallRecorder(factory, voice.tenant_id),
+        timeout=5.0,
+        max_attempts=1,
     )
     stt = make_stt(speech_settings.stt_provider, http_stt, speech_settings.api_key)
     tts = make_tts(speech_settings.tts_provider, http_tts, speech_settings.api_key)
