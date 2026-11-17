@@ -83,7 +83,12 @@ async def load_v1_state(
     refunded, recent, brand, recent_claims = await customer_context(
         session, conversation_id, "refund_create", day, window_hours
     )
-    killed = {tool: await writes.killed(session, tool) for tool in WRITE_TOOLS}
+    # ROOT-CAUSE FIX (2026-11-17): was `{tool: await writes.killed(session, tool) for
+    # tool in WRITE_TOOLS}` - 5 sequential DB round-trips (one per WRITE_TOOLS entry,
+    # each itself issuing 2 queries) measured as a real contributor to a ~3s pre-LLM
+    # delay on a live voice call. killed_many() gets the identical per-tool result in
+    # 2 round-trips total. See app.actions.writes.killed_many for details.
+    killed = await writes.killed_many(session, WRITE_TOOLS)
     state["gate_ctx"] = {
         "refunded_today": refunded,
         "recent_refund": recent,

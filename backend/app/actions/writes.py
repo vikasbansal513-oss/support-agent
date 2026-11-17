@@ -1,7 +1,7 @@
 import hashlib
 import secrets
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -251,6 +251,28 @@ async def killed(session: AsyncSession, tool: str) -> bool:
         )
     ).one()
     return bool(row.agent_paused) or row.killed is not None
+
+
+async def killed_many(session: AsyncSession, tools: Iterable[str]) -> dict[str, bool]:
+    """Same per-tool result as calling killed() once per tool, but in 2 DB round-trips
+    total instead of 2*len(tools). ROOT-CAUSE FIX (2026-11-17): a live voice call's logs
+    showed app.agent.runner_v1.load_v1_state's `{tool: await killed(session, tool) for
+    tool in WRITE_TOOLS}` loop (5 WRITE_TOOLS) as a real contributor to a ~3s pre-LLM
+    delay - is_globally_paused() and the tenant row are identical on every iteration,
+    only the JSON key looked up differs. Only load_v1_state's hot loop was switched to
+    this; the single-tool killed() above is untouched and still used by app.v1.regate."""
+    tools = list(tools)
+    globally_paused = await is_globally_paused(session)
+    if globally_paused:
+        return dict.fromkeys(tools, True)
+    row = (
+        await session.execute(
+            text("SELECT agent_paused, tool_kill FROM tenants WHERE id = app_current_tenant()")
+        )
+    ).one()
+    agent_paused = bool(row.agent_paused)
+    tool_kill = row.tool_kill or {}
+    return {tool: agent_paused or tool_kill.get(tool) is not None for tool in tools}
 
 
 async def customer_usage_today(

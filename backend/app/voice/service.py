@@ -1046,12 +1046,23 @@ async def _run_agent(
     # run_inbound AND _finish_turn (the *entire* per-turn pipeline, not just the LLM
     # part) in one hard ceiling. Whatever is slow, anywhere in that span, the caller
     # hears SOMETHING (a graceful "connecting you" handoff) within this timeout,
-    # never silence beyond it. 12s = LLM call capped at 6s
-    # (app.agent.runner.LIVE_CALL_LLM_TIMEOUT_S) + ~6s generous headroom for every DB
-    # step across both run_inbound and _finish_turn (each measured at 1-3s on a
-    # working call) - a call behaving normally finishes well inside this; it only
-    # fires when something is genuinely stuck.
-    TURN_TIMEOUT_S = 12.0
+    # never silence beyond it.
+    #
+    # CORRECTION (2026-11-17): the original 12s budget here assumed "~6s generous
+    # headroom for every DB step" - but a real call's diagnostic logs showed the
+    # pre-LLM DB work ALONE (load_state + _tool_box + runner_v1.load_v1_state) took
+    # 7.3s, more than that entire assumed headroom, before the LLM call even started.
+    # That meant this outer 12s ceiling could fire and hard-cancel the LLM call
+    # mid-flight, *before* its own 6s timeout (LIVE_CALL_LLM_TIMEOUT_S) got a chance
+    # to finish and fail gracefully - the worse of the two outcomes. Root cause of
+    # that DB slowness: _tool_box and load_v1_state's `killed` loop were each doing
+    # 1 DB round-trip per item (9 and 10 round-trips respectively) where 1-2 would
+    # do - now fixed (see app.integrations.service.load_secrets and
+    # app.actions.writes.killed_many). With that fixed, pre-LLM DB work should be
+    # ~1-2s on a normal call, so 16s gives the 6s LLM call room to run AND fail
+    # gracefully inside the ceiling, plus real headroom for finish_turn/
+    # handoff_reply/_context afterward - without the outer net racing the inner one.
+    TURN_TIMEOUT_S = 16.0
 
     async def _process_and_finish() -> VoiceReplyOut:
         await runner.run_inbound(

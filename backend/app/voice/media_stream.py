@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.speech.providers import SpeechToText, TextToSpeech
+
 from app.voice import service
 from app.voice.contracts import E164, INDIAN_MOBILE, VoiceEventIn, VoiceReplyOut
 from app.voice.service import Factory, VoiceTenant
@@ -58,6 +59,16 @@ MIDCALL_FILLER_TEXT = "हाँ, एक सेकंड, देख रही �
 # fast turn (Groq ~1s + DB ~1-2s, confirmed from real external_calls rows) completes
 # and speaks its real answer directly, without ever needing the filler at all.
 MIDCALL_FILLER_DELAY_S = 1.3
+# ROOT-CAUSE FIX (2026-11-17): app.voice.service.TURN_TIMEOUT_S was raised from 12s to
+# 16s (so the LLM call's own 6s timeout has room to fail gracefully instead of being
+# hard-cancelled mid-flight - see that constant's comment) - but that means a
+# genuinely stuck turn can now go up to ~15s past the first filler above with nothing
+# further said, which is exactly the "feels like a bot, customer hangs up" risk
+# already flagged from a real call. A normal call never reaches this at all (it only
+# starts once the first filler has already fired), it just bounds the longest
+# possible stretch of true silence to this many seconds instead of the full ceiling.
+MIDCALL_FILLER_REPEAT_TEXT = "बस थोड़ा और समय लगेगा।"
+MIDCALL_FILLER_REPEAT_S = 5.0
 _filler_cache: dict[tuple[str, int, str], bytes] = {}
 
 
@@ -202,7 +213,9 @@ class UtteranceDetector:
 
     @property
     def _max_bytes(self) -> int:
-        return int(self.sample_rate_hz * self.max_utterance_ms / 1000) * PCM_SAMPLE_WIDTH
+        return (
+            int(self.sample_rate_hz * self.max_utterance_ms / 1000) * PCM_SAMPLE_WIDTH
+        )
 
     def is_loud(self, frame: bytes) -> bool:
         return _rms(frame) >= self.energy_threshold
@@ -223,8 +236,7 @@ class UtteranceDetector:
             self._frame_count += 1
             if loud:
                 self._loud_count += 1
-            if rms > self._max_rms:
-                self._max_rms = rms
+            self._max_rms = max(self._max_rms, rms)
             if not self._speaking:
                 if loud:
                     self._loud_run += 1
@@ -293,7 +305,11 @@ def _chunk_audio(pcm: bytes, sample_rate_hz: int) -> list[bytes]:
     frame_bytes = int(sample_rate_hz * OUT_FRAME_MS / 1000) * PCM_SAMPLE_WIDTH
     if frame_bytes <= 0:
         return [pcm] if pcm else []
-    return [pcm[i : i + frame_bytes] for i in range(0, len(pcm), frame_bytes)] if pcm else []
+    return (
+        [pcm[i : i + frame_bytes] for i in range(0, len(pcm), frame_bytes)]
+        if pcm
+        else []
+    )
 
 
 # 2026-11 smoothness fix (user report: real Edesy calls sounded "ruk ruk kar" -
@@ -410,7 +426,9 @@ class EdesyStreamSession:
             frame.get("callSid") or frame.get("call_sid") or frame.get("callId") or ""
         )
         self.from_number = _normalize_e164(str(frame.get("from") or ""))
-        self.to_number = _normalize_e164(str(frame.get("to") or self._voice.called_number))
+        self.to_number = _normalize_e164(
+            str(frame.get("to") or self._voice.called_number)
+        )
         if not self.call_id or not self.from_number:
             # TEMPORARY DIAGNOSTIC (Nov 2026): see the matching note in
             # app.webhooks.voice_stream._handle_text - this close used to happen
@@ -440,7 +458,9 @@ class EdesyStreamSession:
                 self._mute_bytes_remaining += len(filler_pcm)
                 await on_early([OutMessage("audio", frame) for frame in filler_frames])
         event = VoiceEventIn(
-            event="start", call_id=self.call_id, **{"from": self.from_number, "to": self.to_number}
+            event="start",
+            call_id=self.call_id,
+            **{"from": self.from_number, "to": self.to_number},
         )
         reply = await service.handle(self._factory, self._voice, event)
         return await self._speak(reply, on_chunk=on_chunk)
@@ -585,6 +605,23 @@ class EdesyStreamSession:
             if filler_frames:
                 self._mute_bytes_remaining += len(filler_pcm)
                 await on_chunk([OutMessage("audio", frame) for frame in filler_frames])
+            # See MIDCALL_FILLER_REPEAT_S above: bounds how long true silence can run
+            # if the turn is still not done after the first filler.
+            while handle_task not in done:
+                done, _ = await asyncio.wait(
+                    {handle_task}, timeout=MIDCALL_FILLER_REPEAT_S
+                )
+                if handle_task in done:
+                    break
+                repeat_pcm = await _get_filler_audio(
+                    self._tts, self._rate, language, MIDCALL_FILLER_REPEAT_TEXT
+                )
+                repeat_frames = _chunk_audio(repeat_pcm, self._rate)
+                if repeat_frames:
+                    self._mute_bytes_remaining += len(repeat_pcm)
+                    await on_chunk(
+                        [OutMessage("audio", frame) for frame in repeat_frames]
+                    )
         reply = await handle_task
         return await self._speak(reply, on_chunk=on_chunk)
 
@@ -636,7 +673,9 @@ class EdesyStreamSession:
             _reply_language(reply),
         )
         lang = _reply_language(reply)
-        chunks = _chunk_sentences(reply.say)  # _chunk_sentences always returns >=1 chunk
+        chunks = _chunk_sentences(
+            reply.say
+        )  # _chunk_sentences always returns >=1 chunk
         total_pcm_bytes = 0
         next_task: asyncio.Task[bytes] = asyncio.create_task(
             self._tts.synthesize(chunks[0], self._rate, lang)

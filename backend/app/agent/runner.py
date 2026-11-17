@@ -64,11 +64,15 @@ async def _tool_box(factory: Factory, tenant_id: uuid.UUID, transport: Any) -> T
         return overrides.tools
     shopify: Any = None
     couriers: dict[str, Any] = {}
+    # ROOT-CAUSE FIX (2026-11-17): was a sequential per-kind
+    # `{kind: await integrations.load_secret(session, kind) for kind in (...)}` loop -
+    # 9 DB round-trips (shopify, woocommerce + 7 courier kinds) measured as a real
+    # contributor to a ~1.6s pre-LLM delay on a live voice call. load_secrets() fetches
+    # all of them in a single round-trip. See app.integrations.service.load_secrets.
     async with session_scope(factory, tenant_id=tenant_id) as session:
-        loaded = {
-            kind: await integrations.load_secret(session, kind)
-            for kind in ("shopify", "woocommerce", *integrations.COURIER_KINDS)
-        }
+        loaded = await integrations.load_secrets(
+            session, ("shopify", "woocommerce", *integrations.COURIER_KINDS)
+        )
     for kind, item in loaded.items():
         if item is None:
             continue

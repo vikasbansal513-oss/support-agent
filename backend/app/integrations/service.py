@@ -2,6 +2,7 @@ import json
 import logging
 import secrets
 import uuid
+from collections.abc import Iterable
 from datetime import timedelta
 from typing import Any
 
@@ -292,6 +293,28 @@ async def load_secret(
     data = json.loads(crypto().decrypt(row.secret_enc))
     data.pop("hint_source", None)
     return dict(row.config or {}), {str(k): str(v) for k, v in data.items()}
+
+
+async def load_secrets(
+    session: AsyncSession, kinds: Iterable[IntegrationKind]
+) -> dict[IntegrationKind, tuple[dict[str, str], dict[str, str]] | None]:
+    """Same per-kind result as calling load_secret() once per kind, in ONE DB round-trip
+    instead of len(kinds). ROOT-CAUSE FIX (2026-11-17): app.agent.runner._tool_box's
+    `{kind: await load_secret(session, kind) for kind in (...)}` loop (shopify,
+    woocommerce + 7 courier kinds = 9 round-trips) was measured as a real contributor
+    to a ~1.6s pre-LLM delay on a live voice call. list_integrations() below already
+    solved this identical N-query pattern for the admin API; this reuses the same fix
+    for the hot per-turn path."""
+    wanted = set(kinds)
+    rows = (await session.execute(_SELECT_ALL)).all()
+    out: dict[IntegrationKind, tuple[dict[str, str], dict[str, str]] | None] = dict.fromkeys(wanted)
+    for row in rows:
+        if row.kind not in wanted or not row.secret_enc:
+            continue
+        data = json.loads(crypto().decrypt(row.secret_enc))
+        data.pop("hint_source", None)
+        out[row.kind] = (dict(row.config or {}), {str(k): str(v) for k, v in data.items()})
+    return out
 
 
 def build_courier(
