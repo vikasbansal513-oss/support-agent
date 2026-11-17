@@ -486,12 +486,24 @@ class EdesyStreamSession:
             not result.text.strip(),
             result.confidence,
         )
+        # FIX (2026-11-17): on this (Edesy) path, _on_utterance only ever runs after
+        # UtteranceDetector has already decided the caller WAS speaking (that's what
+        # "utterance" means here - see push()'s state machine) - so an empty `result.
+        # text` below means STT failed on real captured audio, never that the caller
+        # said nothing. Passing that to app.voice.service._turn() as plain empty
+        # speech used to make it indistinguishable from true provider-reported silence
+        # (Plivo/generic's own "caller went quiet" event) - the customer, who just
+        # spoke, would hear "are you still there?" instead of "I couldn't hear that
+        # clearly, please repeat", and after a couple of these would be handed off as
+        # SILENCE_NO_RESPONSE ("no response") even though they never stopped talking.
+        # heard_unclear tells _turn() which of the two actually happened.
         event = VoiceEventIn(
             event="turn",
             call_id=self.call_id,
             **{"from": self.from_number, "to": self.to_number},
             speech=result.text[:2000],
             confidence=result.confidence,
+            heard_unclear=not result.text.strip(),
         )
         reply = await service.handle(self._factory, self._voice, event)
         return await self._speak(reply, on_chunk=on_chunk)
