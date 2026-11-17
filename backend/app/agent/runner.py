@@ -1,4 +1,5 @@
 import logging
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -266,6 +267,14 @@ async def run_inbound(
 ) -> None:
     factory = ctx.factory
     settings = get_settings()
+    # TEMPORARY DIAGNOSTIC (2026-11-17): a real voice call's SECOND turn (first turn that
+    # reaches this function - the first turn is often consumed by voice consent-capture)
+    # has shown a reproducible ~45-60s gap between STT finishing and this turn's reply LLM
+    # call completing, on two separate real calls, with no existing log line inside that
+    # gap to say which stage it's in. These timings bracket every stage of this function
+    # (DB state load, tool/secrets setup, LLM client setup, actual graph/agent execution)
+    # so the next call's logs show exactly which one is slow. Remove once identified.
+    _t0 = time.monotonic()
     async with session_scope(factory, tenant_id=tenant_id) as session:
         mode_row = (
             await session.execute(text("SELECT mode FROM tenants WHERE id = :t"), {"t": tenant_id})
@@ -293,9 +302,17 @@ async def run_inbound(
         state, mode, policy_version = await _load_state(
             session, tenant_id, event_id, conversation_id, message_id, inbound, run_id
         )
+    logger.info(
+        "run_inbound timing: load_state done elapsed_ms=%d",
+        int((time.monotonic() - _t0) * 1000),
+    )
     state["attempt"] = ctx.job.attempts
     state["max_attempts"] = ctx.job.max_attempts
     toolbox = await _tool_box(factory, tenant_id, ctx.transport)
+    logger.info(
+        "run_inbound timing: tool_box done elapsed_ms=%d",
+        int((time.monotonic() - _t0) * 1000),
+    )
     raw_policy = state.get("policy")
     parsed = parse_any(raw_policy) if raw_policy else None
     if isinstance(parsed, PolicyV2):
@@ -303,6 +320,15 @@ async def run_inbound(
 
         async with session_scope(factory, tenant_id=tenant_id) as session:
             await runner_v1.load_v1_state(session, state, tenant_id, conversation_id, parsed)
+        logger.info(
+            "run_inbound timing: v1_state loaded elapsed_ms=%d",
+            int((time.monotonic() - _t0) * 1000),
+        )
+        llm_client = await _llm(factory, tenant_id, ctx.transport)
+        logger.info(
+            "run_inbound timing: llm client ready elapsed_ms=%d",
+            int((time.monotonic() - _t0) * 1000),
+        )
         await runner_v1.run(
             ctx,
             tenant_id=tenant_id,
@@ -313,7 +339,7 @@ async def run_inbound(
             policy=parsed,
             policy_version=policy_version,
             mode=mode,
-            llm=await _llm(factory, tenant_id, ctx.transport),
+            llm=llm_client,
             toolbox=toolbox,
             senders=ctx.senders
             or overrides.senders
@@ -321,10 +347,19 @@ async def run_inbound(
             mailer=overrides.mailer or get_mailer(),
             fail=_fail_run,
         )
+        logger.info(
+            "run_inbound timing: v1 run done elapsed_ms=%d",
+            int((time.monotonic() - _t0) * 1000),
+        )
         return
+    llm_client = await _llm(factory, tenant_id, ctx.transport)
+    logger.info(
+        "run_inbound timing: llm client ready elapsed_ms=%d",
+        int((time.monotonic() - _t0) * 1000),
+    )
     graph = build_graph(
         GraphDeps(
-            llm=await _llm(factory, tenant_id, ctx.transport),
+            llm=llm_client,
             tools=toolbox,
             classify_min_confidence=settings.classify_min_confidence,
         )
@@ -336,6 +371,10 @@ async def run_inbound(
     except Exception as exc:
         await _fail_run(factory, tenant_id, run_id, exc)
         raise
+    logger.info(
+        "run_inbound timing: graph.ainvoke done elapsed_ms=%d",
+        int((time.monotonic() - _t0) * 1000),
+    )
     decision = DecisionOut.model_validate(final["decision"])
     if decision.reason_code in ("LLM_UNAVAILABLE",) and ctx.job.attempts < ctx.job.max_attempts:
         await _fail_run(factory, tenant_id, run_id, RetryLater("llm unavailable"))
