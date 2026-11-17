@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -11,7 +12,7 @@ from app.integrations.http import DbCallRecorder, ExternalHttp
 from app.speech.providers import make_stt, make_tts
 from app.speech.runtime import load_effective
 from app.voice import service
-from app.voice.media_stream import EdesyStreamSession, OutMessage
+from app.voice.media_stream import PCM_SAMPLE_WIDTH, EdesyStreamSession, OutMessage
 
 logger = logging.getLogger("app.webhooks.voice_stream")
 router = APIRouter(tags=["webhooks"])
@@ -34,10 +35,33 @@ FIRST_FRAME_TIMEOUT_S = 15
 INTER_FRAME_TIMEOUT_S = 30
 
 
-async def _send(websocket: WebSocket, out: OutMessage) -> bool:
-    """Returns False if the session should close."""
+async def _send(websocket: WebSocket, out: OutMessage, sample_rate_hz: int) -> bool:
+    """Returns False if the session should close.
+
+    2026-11 smoothness fix (user report: real Edesy calls sounded "ruk ruk kar" -
+    halting/stop-start). Previously this just wrote bytes/text with no pacing at all,
+    so every frame of a TTS reply (app.voice.media_stream._chunk_audio's 20ms frames)
+    went out back-to-back as fast as the socket would accept them - a whole reply's
+    worth of audio delivered far faster than real playback time. A telephony Media
+    Streams receiver generally expects audio arriving at roughly real-time pace (like
+    a live call), not in a burst, so sleeping for each audio frame's own real-time
+    duration right after sending it is what actually fixes the pacing side of the
+    choppiness (the other half - not waiting for the *whole* reply's TTS before
+    sending anything - is fixed in app.voice.media_stream._speak's sentence-by-
+    sentence streaming).
+
+    Sleeping on the frame's own byte length (not a fixed OUT_FRAME_MS) keeps a short
+    final frame of a chunk from being held for a full 20ms it doesn't need.
+    VERIFY: this paces by wall-clock sleep in this one request's own coroutine, which
+    is the standard approach for a per-connection WebSocket sender, but it was never
+    checked against a real Edesy call (sandbox network here is pip/npm/GitHub only) -
+    confirm call audio sounds continuous/smooth end to end.
+    """
     if out.kind == "audio":
         await websocket.send_bytes(out.data)
+        duration_s = len(out.data) / (sample_rate_hz * PCM_SAMPLE_WIDTH)
+        if duration_s > 0:
+            await asyncio.sleep(duration_s)
     elif out.kind == "control":
         await websocket.send_text(json.dumps(out.data))
     elif out.kind == "close":
@@ -86,6 +110,16 @@ async def voice_stream_webhook(
     stt = make_stt(speech_settings.stt_provider, http_stt, speech_settings.api_key)
     tts = make_tts(speech_settings.tts_provider, http_tts, speech_settings.api_key)
     session = EdesyStreamSession(factory, voice, stt, tts, speech_settings.sample_rate_hz)
+
+    async def _send_batch(batch: list[OutMessage]) -> None:
+        """Passed into the session as both on_early (filler) and on_chunk (each
+        sentence of a real reply) - see app.voice.media_stream._speak and
+        handle_metadata. Streams a batch straight to the wire, paced, the moment it's
+        ready, instead of waiting for the whole turn's return value.
+        """
+        for out in batch:
+            await _send(websocket, out, speech_settings.sample_rate_hz)
+
     frame_count = 0
     try:
         while True:
@@ -129,7 +163,7 @@ async def voice_stream_webhook(
                 logger.info(
                     "voice-stream text frame #%d received: %s", frame_count, text_body[:2000]
                 )
-                outs = await _handle_text(session, text_body, websocket)
+                outs = await _handle_text(session, text_body, _send_batch)
             elif bytes_body is not None:
                 frame_count += 1
                 if frame_count == 1 or frame_count % 50 == 0:
@@ -149,7 +183,7 @@ async def voice_stream_webhook(
                         MAX_FRAME_BYTES,
                     )
                     continue
-                outs = await session.handle_audio_chunk(bytes_body)
+                outs = await session.handle_audio_chunk(bytes_body, on_chunk=_send_batch)
             else:
                 logger.warning(
                     "voice-stream: received message with neither text nor bytes: %r",
@@ -158,7 +192,8 @@ async def voice_stream_webhook(
                 continue
             keep_going = True
             for out in outs:
-                keep_going = await _send(websocket, out) and keep_going
+                sent = await _send(websocket, out, speech_settings.sample_rate_hz)
+                keep_going = sent and keep_going
             if not keep_going:
                 break
     except WebSocketDisconnect:
@@ -174,7 +209,9 @@ async def voice_stream_webhook(
 
 
 async def _handle_text(
-    session: EdesyStreamSession, raw: str, websocket: WebSocket
+    session: EdesyStreamSession,
+    raw: str,
+    send_batch: Callable[[list[OutMessage]], Awaitable[None]],
 ) -> list[OutMessage]:
     try:
         frame = json.loads(raw)
@@ -188,17 +225,14 @@ async def _handle_text(
     # frame (callSid/from/to/direction/audio_format). Any later text frame we don't
     # recognise is ignored rather than erroring the call.
     if "from" in frame or "callSid" in frame or "call_sid" in frame:
-        # on_early sends the filler audio (see media_stream.FILLER_TEXT) straight to
-        # the wire the moment the call is validated, instead of waiting for it to come
-        # back in this function's own return value - that return only happens after
-        # the slow LLM+TTS round trip for the real reply, which is exactly the delay
-        # the filler exists to cover. Errors mid-send still surface normally: _send
-        # raises on a closed/broken socket same as it would from the main loop below.
-        async def _send_early(batch: list[OutMessage]) -> None:
-            for out in batch:
-                await _send(websocket, out)
-
-        return await session.handle_metadata(frame, on_early=_send_early)
+        # send_batch streams the early filler batch (see media_stream.FILLER_TEXT) and,
+        # now, each sentence of the main reply (media_stream._speak's on_chunk)
+        # straight to the wire, paced, the instant each is ready - instead of waiting
+        # for handle_metadata's full return value, which only comes back after the
+        # slow LLM+TTS round trip for the real reply. Errors mid-send still surface
+        # normally: _send raises on a closed/broken socket same as it would from the
+        # main loop below.
+        return await session.handle_metadata(frame, on_early=send_batch, on_chunk=send_batch)
     logger.warning(
         "voice-stream text frame had none of from/callSid/call_sid keys: %s", sorted(frame.keys())
     )

@@ -17,6 +17,7 @@ No DB commit, no LLM call, no send happens directly in this module - app.voice.s
 and the actions engine still own all of that, same rule as the agent graph.
 """
 
+import asyncio
 import logging
 import re
 from collections.abc import Awaitable, Callable
@@ -235,6 +236,54 @@ def _chunk_audio(pcm: bytes, sample_rate_hz: int) -> list[bytes]:
     return [pcm[i : i + frame_bytes] for i in range(0, len(pcm), frame_bytes)] if pcm else []
 
 
+# 2026-11 smoothness fix (user report: real Edesy calls sounded "ruk ruk kar" -
+# halting/stop-start). Two separate causes, fixed together:
+#   1. The whole reply was synthesized in one synthesize() call, so nothing played
+#      until the *entire* reply's audio was ready - on a multi-sentence reply that is
+#      a long silent wait, then everything at once.
+#   2. Every frame of that one big reply was then sent back-to-back with no pacing
+#      (fixed in app.webhooks.voice_stream._send) - a burst, not a steady stream.
+# _split_sentences/_chunk_sentences below break a reply into TTS-call-sized pieces so
+# _speak() can synthesize and stream them one at a time, prefetching the next piece
+# while the current one plays, instead of one big synthesize-then-send-all-at-once.
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?।])\s+")
+MIN_CHUNK_CHARS = 40  # group short sentences together before each TTS call, so a tiny
+# interjection like "Namaste!" doesn't cost its own synthesize() round trip, while a
+# longer reply still starts playing well before the whole thing is done.
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Break speakable()-processed text on a sentence-ending mark (., !, ? or the
+    Hindi "।" danda) followed by whitespace. A bare "." with nothing after it (e.g.
+    inside a number like "4.3") is left alone, since the split only fires on
+    punctuation-then-space - and speakable()'s own _money()/_ref() substitutions never
+    leave a literal "." in a spoken amount or order reference anyway."""
+    if not text:
+        return []
+    return [part for part in _SENTENCE_SPLIT.split(text.strip()) if part]
+
+
+def _chunk_sentences(text: str) -> list[str]:
+    """Group _split_sentences()'s output into TTS-call-sized chunks of at least
+    MIN_CHUNK_CHARS characters (the last chunk may be shorter). Always returns at
+    least one chunk (even [""] for empty text), so callers get exactly the same
+    synthesize()-call-count behaviour as before this change when there's nothing to
+    split (a one-sentence or punctuation-free reply)."""
+    sentences = _split_sentences(text)
+    if not sentences:
+        return [text]
+    chunks: list[str] = []
+    current = ""
+    for sentence in sentences:
+        current = f"{current} {sentence}".strip() if current else sentence
+        if len(current) >= MIN_CHUNK_CHARS:
+            chunks.append(current)
+            current = ""
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def _reply_language(reply: VoiceReplyOut) -> str:
     return reply.language
 
@@ -271,12 +320,17 @@ class EdesyStreamSession:
         self,
         frame: dict[str, Any],
         on_early: Callable[[list[OutMessage]], Awaitable[None]] | None = None,
+        on_chunk: Callable[[list[OutMessage]], Awaitable[None]] | None = None,
     ) -> list[OutMessage]:
         """on_early, when given, is awaited with a filler OutMessage batch the moment
         the call is confirmed valid - before the slow LLM+TTS round trip for the real
         reply even starts (see FILLER_TEXT above for why). It is optional and defaults
         to None so existing callers/tests that just inspect this method's own return
         value keep working unchanged and never pay for a filler TTS call.
+
+        on_chunk, when given, is forwarded to _speak() for the real reply so each
+        sentence's audio streams out as soon as it's ready instead of waiting for the
+        whole reply (see _speak's docstring). Also optional/None for the same reason.
         """
         self.call_id = str(
             frame.get("callSid") or frame.get("call_sid") or frame.get("callId") or ""
@@ -315,22 +369,44 @@ class EdesyStreamSession:
             event="start", call_id=self.call_id, **{"from": self.from_number, "to": self.to_number}
         )
         reply = await service.handle(self._factory, self._voice, event)
-        return await self._speak(reply)
+        return await self._speak(reply, on_chunk=on_chunk)
 
-    async def handle_audio_chunk(self, chunk: bytes) -> list[OutMessage]:
+    async def handle_audio_chunk(
+        self,
+        chunk: bytes,
+        on_chunk: Callable[[list[OutMessage]], Awaitable[None]] | None = None,
+    ) -> list[OutMessage]:
         if self._ended or not self.call_id:
             return []
         out: list[OutMessage] = []
+
+        async def _emit(batch: list[OutMessage]) -> None:
+            if on_chunk is not None:
+                await on_chunk(batch)
+            else:
+                out.extend(batch)
+
         if self._is_playing and self._last_reply is not None and self._last_reply.barge_in:
             if self._detector.caller_is_speaking(chunk):
-                out.append(OutMessage("control", {"type": "killAudio"}))
+                # Sent via _emit (immediately, through on_chunk when streaming) rather
+                # than just appended to `out`, so the provider actually stops playing
+                # the old reply's audio before this turn's new reply starts going out -
+                # see _speak()'s streaming/prefetch change for why that ordering
+                # matters now (previously everything for one reply left together in
+                # one batch, so ordering here didn't matter as much).
+                await _emit([OutMessage("control", {"type": "killAudio"})])
                 self._is_playing = False
         utterance = self._detector.push(chunk)
         if utterance is None:
             return out
-        return out + await self._on_utterance(utterance)
+        out.extend(await self._on_utterance(utterance, on_chunk=on_chunk))
+        return out
 
-    async def _on_utterance(self, pcm: bytes) -> list[OutMessage]:
+    async def _on_utterance(
+        self,
+        pcm: bytes,
+        on_chunk: Callable[[list[OutMessage]], Awaitable[None]] | None = None,
+    ) -> list[OutMessage]:
         if not self.call_id or not self.from_number or not self.to_number:
             return []  # metadata frame never arrived; nothing sane to do
         language = self._last_reply.language if self._last_reply else "hi-IN"
@@ -343,11 +419,40 @@ class EdesyStreamSession:
             confidence=result.confidence,
         )
         reply = await service.handle(self._factory, self._voice, event)
-        return await self._speak(reply)
+        return await self._speak(reply, on_chunk=on_chunk)
 
-    async def _speak(self, reply: VoiceReplyOut) -> list[OutMessage]:
+    async def _speak(
+        self,
+        reply: VoiceReplyOut,
+        on_chunk: Callable[[list[OutMessage]], Awaitable[None]] | None = None,
+    ) -> list[OutMessage]:
+        """Synthesize and (optionally) stream reply.say's audio, sentence by sentence.
+
+        2026-11 smoothness fix: previously this made one synthesize() call for the
+        *entire* reply, then returned every resulting frame in one batch - meaning
+        nothing played until the whole reply's TTS was done, and (once
+        app.webhooks.voice_stream._send paces frames) a multi-sentence reply would
+        have gone out as one long first-sentence-sized wait followed by everything at
+        once. Now each chunk from _chunk_sentences() is synthesized and handed to
+        on_chunk - and therefore sent, paced, by the websocket layer - as soon as it's
+        ready, while the *next* chunk's synthesize() call already runs in the
+        background (the on-the-fly `next_task` below) so there's no dead-air gap
+        between chunks waiting on the next TTS network round trip.
+
+        When on_chunk is None (unit tests exercising this method directly, as before
+        this change), every frame is instead collected into the returned list - no
+        behaviour change for existing callers/tests, just no streaming/pacing benefit
+        (there's no real socket to stream to in that case anyway).
+        """
         self._last_reply = reply
         out: list[OutMessage] = []
+
+        async def _emit(batch: list[OutMessage]) -> None:
+            if on_chunk is not None:
+                await on_chunk(batch)
+            else:
+                out.extend(batch)
+
         # reply.say is already run through app.voice.speech.speakable() upstream in
         # app.voice.service (same as every other provider's render()) - speak it as-is.
         # TEMPORARY DIAGNOSTIC (Nov 2026): the earlier VoiceEventIn crash (see
@@ -363,15 +468,27 @@ class EdesyStreamSession:
             self._rate,
             _reply_language(reply),
         )
-        pcm = await self._tts.synthesize(reply.say, self._rate, _reply_language(reply))
-        logger.info("voice-stream tts output: pcm_bytes=%d", len(pcm) if pcm else 0)
-        frames = _chunk_audio(pcm, self._rate)
-        if frames:
-            self._is_playing = True
-            out.extend(OutMessage("audio", frame) for frame in frames)
+        lang = _reply_language(reply)
+        chunks = _chunk_sentences(reply.say)  # _chunk_sentences always returns >=1 chunk
+        total_pcm_bytes = 0
+        next_task: asyncio.Task[bytes] = asyncio.create_task(
+            self._tts.synthesize(chunks[0], self._rate, lang)
+        )
+        for i in range(len(chunks)):
+            pcm = await next_task
+            if i + 1 < len(chunks):
+                next_task = asyncio.create_task(
+                    self._tts.synthesize(chunks[i + 1], self._rate, lang)
+                )
+            total_pcm_bytes += len(pcm) if pcm else 0
+            frames = _chunk_audio(pcm, self._rate)
+            if frames:
+                self._is_playing = True
+                await _emit([OutMessage("audio", frame) for frame in frames])
+        logger.info("voice-stream tts output: pcm_bytes=%d", total_pcm_bytes)
         if reply.action == "hangup":
             self._ended = True
-            out.append(OutMessage("control", {"type": "disconnect"}))
+            await _emit([OutMessage("control", {"type": "disconnect"})])
         elif reply.action == "transfer":
             # Edesy's Media Streams protocol (as documented) has no bot->platform
             # "bridge this call to another number" control message - only killAudio
@@ -381,7 +498,7 @@ class EdesyStreamSession:
             # and disconnect, same as the "callback" outcome on the text-based path.
             # VERIFY: confirm with Edesy whether Media Streams supports live transfer.
             self._ended = True
-            out.append(OutMessage("control", {"type": "disconnect"}))
+            await _emit([OutMessage("control", {"type": "disconnect"})])
         return out
 
     async def handle_disconnect(self) -> None:
