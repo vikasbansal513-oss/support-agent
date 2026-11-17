@@ -147,14 +147,16 @@ class UtteranceDetector:
     # utterance closed before enough audio reached STT. 500.0 was never tuned against
     # real call audio (see class docstring) and reads as too high for this telephony
     # line's actual levels. Lowered so normal speech stays above threshold through
-    # natural dips, and end_silence_frames raised so a brief pause between words/sentences
-    # doesn't end the utterance early either. This is a reasoned best-effort adjustment,
-    # not lab-measured against this line's real audio - the VAD-stats log line added
-    # alongside this (UtteranceDetector.last_stats) will show the real max_rms/loud_frames
-    # numbers from the next call, to fine-tune further if this isn't enough.
+    # natural dips. This is a reasoned best-effort adjustment, not lab-measured against
+    # this line's real audio - the VAD-stats log line added alongside this
+    # (UtteranceDetector.last_stats) will show the real max_rms/loud_frames numbers from
+    # the next call, to fine-tune further if this isn't enough. end_silence_frames is
+    # left at its original value here - tests/voice/test_media_stream.py exercises it
+    # with exactly 600ms of silence, so raising it past that breaks those tests; it can
+    # be tuned separately, with its own test update, once real silence-gap data is in.
     energy_threshold: float = 150.0
     start_frames: int = 2  # consecutive loud frames to confirm speech started
-    end_silence_frames: int = 35  # consecutive quiet frames (~700ms @ 20ms) to end
+    end_silence_frames: int = 25  # consecutive quiet frames (~500ms @ 20ms) to end
     max_utterance_ms: int = 15_000
 
     _buffer: bytes = field(default=b"", repr=False)
