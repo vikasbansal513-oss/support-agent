@@ -410,7 +410,28 @@ class EdesyStreamSession:
         if not self.call_id or not self.from_number or not self.to_number:
             return []  # metadata frame never arrived; nothing sane to do
         language = self._last_reply.language if self._last_reply else "hi-IN"
+        utterance_ms = int(len(pcm) / (self._rate * PCM_SAMPLE_WIDTH) * 1000)
         result = await self._stt.transcribe(pcm, self._rate, language)
+        # TEMPORARY DIAGNOSTIC (2026-11-17): user report - customer sometimes gets no
+        # reply at all on a real call, and the dashboard later shows a
+        # SILENCE_NO_RESPONSE handoff even though the customer insists they were
+        # talking. app.voice.service._turn() only counts a turn as "silence" when
+        # event.speech is empty - which happens here whenever Google STT returns an
+        # empty transcript for whatever audio the VAD (UtteranceDetector) decided was
+        # one utterance. Neither the audio length the VAD captured nor what STT
+        # actually returned was ever logged before this, so there was no way to tell
+        # "VAD never heard anything" apart from "VAD heard something but STT failed on
+        # it" apart from "STT worked but something later dropped it". Logging length +
+        # confidence only (never the transcript text itself - that's customer data,
+        # kept out of logs per this app's own redaction rules) narrows that down from
+        # the next real call. Remove once the real cause is confirmed and fixed.
+        logger.info(
+            "voice-stream stt result: utterance_ms=%d pcm_bytes=%d text_empty=%s confidence=%s",
+            utterance_ms,
+            len(pcm),
+            not result.text.strip(),
+            result.confidence,
+        )
         event = VoiceEventIn(
             event="turn",
             call_id=self.call_id,
