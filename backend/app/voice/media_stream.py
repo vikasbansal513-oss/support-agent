@@ -355,7 +355,21 @@ class EdesyStreamSession:
         self.from_number: str | None = None
         self.to_number: str | None = None
         self._ended = False
-        self._is_playing = False
+        # ROOT-CAUSE FIX (2026-11-17), v2: was a plain `_is_playing` bool. Replaced
+        # because the receive loop in app.webhooks.voice_stream is a single sequential
+        # `while True: await websocket.receive()` - it never reads the socket again
+        # until our own handler (and everything it awaits: TTS synthesis, sending our
+        # reply) has fully returned. A bool set True-then-False around that one call
+        # would already be back to False by the time any audio Edesy sent *during*
+        # that window is actually delivered to us - confirmed by this file's own
+        # MAX_FRAME_BYTES comment in app.webhooks.voice_stream, which found a real
+        # call's frame #2 arriving as one ~3-second buffered chunk, not steady 20ms
+        # frames, until Edesy "caught up". A byte count survives that delay correctly:
+        # it tracks how many bytes of OUR audio are still "in flight" (being delivered
+        # to the line) regardless of when Edesy's matching backlog actually reaches us,
+        # and both directions use the same sample_rate_hz/PCM width, so bytes map onto
+        # real time 1:1. Decremented in handle_audio_chunk as incoming audio drains it.
+        self._mute_bytes_remaining = 0
         self._last_reply: VoiceReplyOut | None = None
 
     async def handle_metadata(
@@ -405,7 +419,7 @@ class EdesyStreamSession:
             filler_pcm = await _get_filler_audio(self._tts, self._rate, filler_language)
             filler_frames = _chunk_audio(filler_pcm, self._rate)
             if filler_frames:
-                self._is_playing = True
+                self._mute_bytes_remaining += len(filler_pcm)
                 await on_early([OutMessage("audio", frame) for frame in filler_frames])
         event = VoiceEventIn(
             event="start", call_id=self.call_id, **{"from": self.from_number, "to": self.to_number}
@@ -428,8 +442,12 @@ class EdesyStreamSession:
             else:
                 out.extend(batch)
 
-        if self._is_playing and self._last_reply is not None and self._last_reply.barge_in:
-            if self._detector.caller_is_speaking(chunk):
+        if self._mute_bytes_remaining > 0:
+            if (
+                self._last_reply is not None
+                and self._last_reply.barge_in
+                and self._detector.caller_is_speaking(chunk)
+            ):
                 # Sent via _emit (immediately, through on_chunk when streaming) rather
                 # than just appended to `out`, so the provider actually stops playing
                 # the old reply's audio before this turn's new reply starts going out -
@@ -437,7 +455,33 @@ class EdesyStreamSession:
                 # matters now (previously everything for one reply left together in
                 # one batch, so ordering here didn't matter as much).
                 await _emit([OutMessage("control", {"type": "killAudio"})])
-                self._is_playing = False
+                # Caller is genuinely talking already - stop muting and let this same
+                # chunk fall through to the detector below instead of discarding it,
+                # so the start of their speech isn't lost.
+                self._mute_bytes_remaining = 0
+            else:
+                # ROOT-CAUSE FIX (2026-11-17), v2: see _mute_bytes_remaining's
+                # docstring-comment in __init__ for why this is a byte budget, not a
+                # bool. Whatever Edesy sends back on the inbound side while our own
+                # reply/greeting audio is still being delivered to the line (echo or
+                # leakage of it, without proper echo cancellation, is common on
+                # VoIP/PSTN gateways) was being read as "the caller is speaking" -
+                # that matches the repeated real-call evidence in UtteranceDetector's
+                # docstring below: a brief "loud" burst right as our own audio stops,
+                # then near-total silence, closing the utterance at (or just past)
+                # the theoretical minimum length, regardless of what
+                # energy_threshold was tuned to, because the detector was never
+                # really evaluating the caller's own speech in the first place.
+                # Drain the budget from the front of this chunk and discard that
+                # part; if this chunk is bigger than what's left owed (e.g. Edesy's
+                # own buffering caught up and handed us one combined chunk that also
+                # contains genuinely new audio past our own playback), push the
+                # leftover tail through to the detector below instead of losing it.
+                discard = min(len(chunk), self._mute_bytes_remaining)
+                self._mute_bytes_remaining -= discard
+                chunk = chunk[discard:]
+                if not chunk:
+                    return out
         utterance = self._detector.push(chunk)
         if utterance is None:
             return out
@@ -570,8 +614,14 @@ class EdesyStreamSession:
             total_pcm_bytes += len(pcm) if pcm else 0
             frames = _chunk_audio(pcm, self._rate)
             if frames:
-                self._is_playing = True
                 await _emit([OutMessage("audio", frame) for frame in frames])
+        # ROOT-CAUSE FIX (2026-11-17), v2: add this reply's bytes to the mute budget
+        # (see _mute_bytes_remaining's docstring-comment in __init__) rather than
+        # toggling a bool - handle_audio_chunk's gate drains it as real inbound audio
+        # (whenever it actually arrives, backlog or not) comes in, so real listening
+        # resumes exactly after roughly this much time's worth of audio has passed,
+        # not at the (unreliable) moment this coroutine happens to return.
+        self._mute_bytes_remaining += total_pcm_bytes
         logger.info("voice-stream tts output: pcm_bytes=%d", total_pcm_bytes)
         if reply.action == "hangup":
             self._ended = True

@@ -108,6 +108,45 @@ async def test_audio_turn_runs_stt_then_agent_then_tts(env: AgentEnv) -> None:
     assert await env.q("SELECT 1 FROM agent_actions WHERE action_type = 'reply_customer'")
 
 
+async def test_audio_is_muted_for_our_own_reply_duration_even_if_delivered_late(
+    env: AgentEnv,
+) -> None:
+    # ROOT-CAUSE FIX (2026-11-17), v2: real-call evidence (repeated empty STT results,
+    # utterances always ending at ~the theoretical minimum length regardless of the
+    # VAD energy_threshold used) pointed to handle_audio_chunk's old unconditional
+    # self._detector.push(chunk) - every inbound chunk was fed to the VAD even while
+    # we were still sending our own reply/greeting audio, so echo/leakage of our own
+    # voice on the line could be misread as the caller speaking and close the
+    # utterance before the caller had a real chance to reply. A plain before/after
+    # bool isn't enough to test (or fix) this: app.webhooks.voice_stream's receive
+    # loop is strictly sequential, so audio Edesy sent *during* our reply is only
+    # ever delivered to handle_audio_chunk *after* our reply has fully finished
+    # sending (confirmed by that module's own MAX_FRAME_BYTES comment, where a real
+    # call's first post-greeting frame arrived as one ~3-second buffered chunk, not
+    # steady 20ms frames) - a bool would already be back to False by then. This pins
+    # down the byte-budget fix instead: audio delivered while _mute_bytes_remaining is
+    # still owed (set from this reply's own total_pcm_bytes, regardless of when that
+    # audio is actually handed to us) must be discarded, and audio delivered once the
+    # budget is fully drained must still reach STT exactly as before.
+    await setup(env, "auto")
+    voice = await configure_edesy(env)
+    session, stt, _tts = _session(env, voice)
+    await session.handle_metadata(metadata_frame(to_number=voice.called_number))
+    stt.scripted.append(SttResult("mera order #1001 kahan hai", 0.95))
+    env.provider.responses = [plan("order_status", "answer", None)]
+    # Simulate Edesy handing us a large late-arriving backlog chunk covering (and
+    # exceeding) the two chunks below, as if it had buffered them during our reply.
+    session._mute_bytes_remaining = len(loud_audio(500)) + len(quiet_audio(900)) + 1
+    await session.handle_audio_chunk(loud_audio(500))
+    await session.handle_audio_chunk(quiet_audio(900))
+    assert not stt.calls, "audio owed to our own reply's playback must not reach STT"
+    assert session._mute_bytes_remaining == 1, "budget should drain exactly by bytes seen"
+    session._mute_bytes_remaining = 0
+    await session.handle_audio_chunk(loud_audio(500))
+    await session.handle_audio_chunk(quiet_audio(900))
+    assert stt.calls, "audio received once the mute budget is drained should reach STT"
+
+
 async def test_hangup_action_sends_disconnect_control(env: AgentEnv) -> None:
     await setup(env, "auto")
     voice = await configure_edesy(env, enabled=False)
