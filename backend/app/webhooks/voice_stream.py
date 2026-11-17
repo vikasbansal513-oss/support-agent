@@ -17,7 +17,17 @@ from app.voice.media_stream import PCM_SAMPLE_WIDTH, EdesyStreamSession, OutMess
 logger = logging.getLogger("app.webhooks.voice_stream")
 router = APIRouter(tags=["webhooks"])
 Factory = async_sessionmaker[AsyncSession]
-MAX_FRAME_BYTES = 65_536
+# ROOT CAUSE (2026-11-17): a real Edesy call's logs showed frame #2 silently dropped at
+# the old 65_536-byte limit - it was 96_000 bytes (16kHz 16-bit mono = ~3s of audio),
+# almost certainly the caller's first spoken reply arriving as one buffered chunk before
+# Edesy settled into steady ~20ms-per-frame streaming. Dropping it meant that utterance
+# never reached the VAD/STT, so the agent genuinely never "heard" it - this is the
+# concrete cause of calls where the agent seemed to ignore the caller after the
+# greeting. Raised generously (10s of 16kHz 16-bit mono audio = 320_000 bytes, rounded
+# up) rather than removing the cap outright, so one clearly-bad frame still can't exhaust
+# memory. VERIFY: confirmed from one real call's logs, not yet re-tested after this
+# change - watch for the same "dropping oversized binary frame" warning on the next call.
+MAX_FRAME_BYTES = 400_000
 
 # How long to wait for the *first* frame from the telephony provider after accepting
 # the socket. Added Nov 2026 after a real Edesy call connected, stayed open ~25s, and
