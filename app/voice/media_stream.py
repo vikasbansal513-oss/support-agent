@@ -18,6 +18,7 @@ and the actions engine still own all of that, same rule as the agent graph.
 """
 
 import asyncio
+import base64
 import logging
 import re
 from collections.abc import Awaitable, Callable
@@ -31,6 +32,12 @@ from app.voice.service import Factory, VoiceTenant
 
 logger = logging.getLogger("app.voice.media_stream")
 
+# TEMPORARY DIAGNOSTIC (2026-11-18): counts how many empty-STT-result utterances this
+# container instance has dumped raw audio for - see the matching comment in
+# _on_utterance below. Per-process, not per-call, on purpose: caps total log volume
+# across every call this instance handles, not just one.
+_EMPTY_UTTERANCE_DUMPS = 0
+
 # Nov 2026: a real call showed the agent's full "start" turn (STT already skipped on
 # this leg, but the LLM call plus TTS) taking ~4.3s end to end (metadata accepted ->
 # first audio frame queued) - longer than most callers will silently wait, so the
@@ -42,16 +49,44 @@ logger = logging.getLogger("app.voice.media_stream")
 # synthesized once per (sample_rate, language) and cached in this process for every
 # later call, so after the first call it costs ~0ms, not a fresh TTS round trip.
 FILLER_TEXT = "नमस्ते, कृपया थोड़ा इंतज़ार करें।"
-_filler_cache: dict[tuple[int, str], bytes] = {}
+# ROOT-CAUSE FIX (2026-11-17): the call-start filler above solved the first turn's
+# wait, but every *later* turn (customer speaks -> STT -> LLM plan -> DB/handoff work,
+# now capped at 12s by app.voice.service._run_agent's TURN_TIMEOUT_S) still went
+# completely silent while that ran. Even when it finishes in a normal 2-5s, several
+# seconds of dead air after the customer stops talking reads as "this is a bot, not a
+# person" (a human agent would say "ek second, dekhti hoon" instead of going quiet) -
+# flagged directly from a real call. This is a separate, shorter, non-greeting phrase
+# reused for every turn (not just call start), so it must not repeat "नमस्ते" each
+# time.
+MIDCALL_FILLER_TEXT = "हाँ, एक सेकंड, देख रही हूँ।"
+# How long a turn's real processing is given to finish before this filler plays. Low
+# enough that the customer doesn't experience the gap as a bot having gone silent
+# (human "let me check" reactions land in under ~1.5s), but high enough that a normal
+# fast turn (Groq ~1s + DB ~1-2s, confirmed from real external_calls rows) completes
+# and speaks its real answer directly, without ever needing the filler at all.
+MIDCALL_FILLER_DELAY_S = 1.3
+# ROOT-CAUSE FIX (2026-11-17): app.voice.service.TURN_TIMEOUT_S was raised from 12s to
+# 16s (so the LLM call's own 6s timeout has room to fail gracefully instead of being
+# hard-cancelled mid-flight - see that constant's comment) - but that means a
+# genuinely stuck turn can now go up to ~15s past the first filler above with nothing
+# further said, which is exactly the "feels like a bot, customer hangs up" risk
+# already flagged from a real call. A normal call never reaches this at all (it only
+# starts once the first filler has already fired), it just bounds the longest
+# possible stretch of true silence to this many seconds instead of the full ceiling.
+MIDCALL_FILLER_REPEAT_TEXT = "बस थोड़ा और समय लगेगा।"
+MIDCALL_FILLER_REPEAT_S = 5.0
+_filler_cache: dict[tuple[str, int, str], bytes] = {}
 
 
-async def _get_filler_audio(tts: TextToSpeech, sample_rate_hz: int, language: str) -> bytes:
-    key = (sample_rate_hz, language)
+async def _get_filler_audio(
+    tts: TextToSpeech, sample_rate_hz: int, language: str, text: str = FILLER_TEXT
+) -> bytes:
+    key = (text, sample_rate_hz, language)
     cached = _filler_cache.get(key)
     if cached is not None:
         return cached
     try:
-        pcm = await tts.synthesize(FILLER_TEXT, sample_rate_hz, language)
+        pcm = await tts.synthesize(text, sample_rate_hz, language)
     except Exception:
         # Best-effort only: if the filler itself fails for any reason, the call
         # continues exactly as before this change (no filler, just a slower first
@@ -159,6 +194,30 @@ class UtteranceDetector:
     start_frames: int = 2  # consecutive loud frames to confirm speech started
     end_silence_frames: int = 40  # consecutive quiet frames (~800ms @ 20ms) to end
     max_utterance_ms: int = 15_000
+    # ROOT-CAUSE FIX (2026-11-18): a real empty-STT utterance's raw audio (dumped via
+    # the TEMPORARY DIAGNOSTIC in EdesyStreamSession._on_utterance and decoded offline)
+    # showed exactly 5 loud frames (rms 121-320, just above energy_threshold) in the
+    # first ~100ms, then 40 consecutive near-silent frames (rms ~8, the line's own
+    # noise floor) for the rest of the utterance - frames=45, loud_frames=5
+    # (loud_ratio=0.11), closing almost exactly at the theoretical minimum length
+    # (start_frames + end_silence_frames = 42 frames). That shape - a brief
+    # above-threshold edge immediately followed by real silence for the whole
+    # end_silence_frames window - matches the exact failure this file's own
+    # _mute_bytes_remaining docstring already describes (a short burst of our own
+    # TTS/echo tail or a line click crossing the threshold, not the caller actually
+    # talking) rather than genuine speech, which keeps producing loud frames through
+    # more of the utterance even with natural pauses. Both Google and Sarvam STT
+    # correctly returned empty for this audio - there was nothing to transcribe. This
+    # cannot distinguish every case perfectly (a genuinely very short, very quiet
+    # "haan"/"नहीं" could in principle also score low), so it is a ratio with a
+    # deliberately low cutoff, not a hard "must be loud" rule - see
+    # EdesyStreamSession.handle_audio_chunk's use of this value. VERIFY: tune this
+    # ratio from more real-call dumps once available (same spirit as
+    # energy_threshold/end_silence_frames above) - 0.25 is reasoned from this one
+    # confirmed case, not lab-measured; the two existing tests that build a
+    # continuous-tone "utterance" in tests/voice/test_media_stream.py score ~0.36 and
+    # 1.0 respectively, both comfortably above this cutoff, so they are unaffected.
+    min_loud_ratio: float = 0.25
 
     _buffer: bytes = field(default=b"", repr=False)
     _speaking: bool = field(default=False, repr=False)
@@ -205,8 +264,7 @@ class UtteranceDetector:
             self._frame_count += 1
             if loud:
                 self._loud_count += 1
-            if rms > self._max_rms:
-                self._max_rms = rms
+            self._max_rms = max(self._max_rms, rms)
             if not self._speaking:
                 if loud:
                     self._loud_run += 1
@@ -233,6 +291,14 @@ class UtteranceDetector:
                     "loud_frames": self._loud_count,
                     "max_rms": self._max_rms,
                     "threshold": self.energy_threshold,
+                    # ROOT-CAUSE FIX (2026-11-18): see min_loud_ratio's own comment
+                    # above - the fraction of this utterance's frames that were ever
+                    # above energy_threshold, used by EdesyStreamSession to tell a
+                    # short noise/echo blip apart from genuine (if quiet or pausing)
+                    # speech before bothering STT with it.
+                    "loud_ratio": (
+                        self._loud_count / self._frame_count if self._frame_count else 0.0
+                    ),
                 }
                 self._reset()
         return utterance
@@ -355,7 +421,21 @@ class EdesyStreamSession:
         self.from_number: str | None = None
         self.to_number: str | None = None
         self._ended = False
-        self._is_playing = False
+        # ROOT-CAUSE FIX (2026-11-17), v2: was a plain `_is_playing` bool. Replaced
+        # because the receive loop in app.webhooks.voice_stream is a single sequential
+        # `while True: await websocket.receive()` - it never reads the socket again
+        # until our own handler (and everything it awaits: TTS synthesis, sending our
+        # reply) has fully returned. A bool set True-then-False around that one call
+        # would already be back to False by the time any audio Edesy sent *during*
+        # that window is actually delivered to us - confirmed by this file's own
+        # MAX_FRAME_BYTES comment in app.webhooks.voice_stream, which found a real
+        # call's frame #2 arriving as one ~3-second buffered chunk, not steady 20ms
+        # frames, until Edesy "caught up". A byte count survives that delay correctly:
+        # it tracks how many bytes of OUR audio are still "in flight" (being delivered
+        # to the line) regardless of when Edesy's matching backlog actually reaches us,
+        # and both directions use the same sample_rate_hz/PCM width, so bytes map onto
+        # real time 1:1. Decremented in handle_audio_chunk as incoming audio drains it.
+        self._mute_bytes_remaining = 0
         self._last_reply: VoiceReplyOut | None = None
 
     async def handle_metadata(
@@ -405,10 +485,12 @@ class EdesyStreamSession:
             filler_pcm = await _get_filler_audio(self._tts, self._rate, filler_language)
             filler_frames = _chunk_audio(filler_pcm, self._rate)
             if filler_frames:
-                self._is_playing = True
+                self._mute_bytes_remaining += len(filler_pcm)
                 await on_early([OutMessage("audio", frame) for frame in filler_frames])
         event = VoiceEventIn(
-            event="start", call_id=self.call_id, **{"from": self.from_number, "to": self.to_number}
+            event="start",
+            call_id=self.call_id,
+            **{"from": self.from_number, "to": self.to_number},
         )
         reply = await service.handle(self._factory, self._voice, event)
         return await self._speak(reply, on_chunk=on_chunk)
@@ -428,8 +510,12 @@ class EdesyStreamSession:
             else:
                 out.extend(batch)
 
-        if self._is_playing and self._last_reply is not None and self._last_reply.barge_in:
-            if self._detector.caller_is_speaking(chunk):
+        if self._mute_bytes_remaining > 0:
+            if (
+                self._last_reply is not None
+                and self._last_reply.barge_in
+                and self._detector.caller_is_speaking(chunk)
+            ):
                 # Sent via _emit (immediately, through on_chunk when streaming) rather
                 # than just appended to `out`, so the provider actually stops playing
                 # the old reply's audio before this turn's new reply starts going out -
@@ -437,7 +523,33 @@ class EdesyStreamSession:
                 # matters now (previously everything for one reply left together in
                 # one batch, so ordering here didn't matter as much).
                 await _emit([OutMessage("control", {"type": "killAudio"})])
-                self._is_playing = False
+                # Caller is genuinely talking already - stop muting and let this same
+                # chunk fall through to the detector below instead of discarding it,
+                # so the start of their speech isn't lost.
+                self._mute_bytes_remaining = 0
+            else:
+                # ROOT-CAUSE FIX (2026-11-17), v2: see _mute_bytes_remaining's
+                # docstring-comment in __init__ for why this is a byte budget, not a
+                # bool. Whatever Edesy sends back on the inbound side while our own
+                # reply/greeting audio is still being delivered to the line (echo or
+                # leakage of it, without proper echo cancellation, is common on
+                # VoIP/PSTN gateways) was being read as "the caller is speaking" -
+                # that matches the repeated real-call evidence in UtteranceDetector's
+                # docstring below: a brief "loud" burst right as our own audio stops,
+                # then near-total silence, closing the utterance at (or just past)
+                # the theoretical minimum length, regardless of what
+                # energy_threshold was tuned to, because the detector was never
+                # really evaluating the caller's own speech in the first place.
+                # Drain the budget from the front of this chunk and discard that
+                # part; if this chunk is bigger than what's left owed (e.g. Edesy's
+                # own buffering caught up and handed us one combined chunk that also
+                # contains genuinely new audio past our own playback), push the
+                # leftover tail through to the detector below instead of losing it.
+                discard = min(len(chunk), self._mute_bytes_remaining)
+                self._mute_bytes_remaining -= discard
+                chunk = chunk[discard:]
+                if not chunk:
+                    return out
         utterance = self._detector.push(chunk)
         if utterance is None:
             return out
@@ -447,12 +559,34 @@ class EdesyStreamSession:
         stats = self._detector.last_stats
         if stats is not None:
             logger.info(
-                "voice-stream vad stats: frames=%d loud_frames=%d max_rms=%.1f threshold=%.1f",
+                "voice-stream vad stats: frames=%d loud_frames=%d max_rms=%.1f threshold=%.1f "
+                "loud_ratio=%.2f",
                 stats["frames"],
                 stats["loud_frames"],
                 stats["max_rms"],
                 stats["threshold"],
+                stats["loud_ratio"],
             )
+            # ROOT-CAUSE FIX (2026-11-18): see UtteranceDetector.min_loud_ratio's own
+            # comment for the real-call evidence this is based on - a short above-
+            # threshold edge (our own TTS/echo tail, a line click) immediately
+            # followed by real silence for the rest of the utterance was being sent to
+            # STT and correctly coming back empty every time, with nothing to fix on
+            # the STT/provider side because there was never any speech in that audio.
+            # Dropping it here instead (before paying for an STT call at all) also
+            # means the detector keeps listening for the caller's actual reply in the
+            # same turn, rather than closing this non-speech blip as "the turn" and
+            # only then discovering STT has nothing to say about it.
+            if stats["loud_ratio"] < self._detector.min_loud_ratio:
+                logger.info(
+                    "voice-stream vad discarded as noise/echo blip (not sent to STT): "
+                    "frames=%d loud_frames=%d loud_ratio=%.2f min_loud_ratio=%.2f",
+                    stats["frames"],
+                    stats["loud_frames"],
+                    stats["loud_ratio"],
+                    self._detector.min_loud_ratio,
+                )
+                return out
         out.extend(await self._on_utterance(utterance, on_chunk=on_chunk))
         return out
 
@@ -486,6 +620,27 @@ class EdesyStreamSession:
             not result.text.strip(),
             result.confidence,
         )
+        # TEMPORARY DIAGNOSTIC (2026-11-18): two independent STT providers (Google,
+        # then Sarvam) both return an empty transcript on audio the VAD measured as
+        # genuinely loud (see UtteranceDetector's vad-stats log) - ruling out a
+        # single provider's bug. The one thing not yet ruled out is whether the
+        # "loud" audio UtteranceDetector is capturing is the caller's real speech at
+        # all, versus line noise/ring-back/echo of our own TTS leaking back in
+        # (flagged as a real risk in _mute_bytes_remaining's own docstring above) -
+        # a purely energy-based VAD cannot tell those apart, only an STT or a human
+        # listening to the actual bytes can. Logging the raw audio as base64 (NOT the
+        # transcript - there isn't one) for the first 3 empty-result utterances per
+        # container instance only, so it can be decoded and inspected/played back
+        # once to settle this, instead of guessing again. Remove once confirmed.
+        global _EMPTY_UTTERANCE_DUMPS
+        if not result.text.strip() and _EMPTY_UTTERANCE_DUMPS < 3:
+            _EMPTY_UTTERANCE_DUMPS += 1
+            logger.info(
+                "voice-stream empty-utterance audio dump #%d: rate=%d pcm_b64=%s",
+                _EMPTY_UTTERANCE_DUMPS,
+                self._rate,
+                base64.b64encode(pcm).decode("ascii"),
+            )
         # FIX (2026-11-17): on this (Edesy) path, _on_utterance only ever runs after
         # UtteranceDetector has already decided the caller WAS speaking (that's what
         # "utterance" means here - see push()'s state machine) - so an empty `result.
@@ -505,7 +660,38 @@ class EdesyStreamSession:
             confidence=result.confidence,
             heard_unclear=not result.text.strip(),
         )
-        reply = await service.handle(self._factory, self._voice, event)
+        # ROOT-CAUSE FIX (2026-11-17): see MIDCALL_FILLER_TEXT's comment above. Start
+        # the real (possibly slow, up to 12s) agent call in the background and race it
+        # against a short deadline - a normal fast turn finishes first and this never
+        # plays anything extra; a slow turn gets bridged with a brief spoken
+        # acknowledgement instead of silence, then still speaks the real answer once
+        # it's ready (the filler does not replace the reply, it only covers the wait).
+        handle_task: asyncio.Task[VoiceReplyOut] = asyncio.ensure_future(
+            service.handle(self._factory, self._voice, event)
+        )
+        done, _ = await asyncio.wait({handle_task}, timeout=MIDCALL_FILLER_DELAY_S)
+        if handle_task not in done and on_chunk is not None:
+            filler_pcm = await _get_filler_audio(
+                self._tts, self._rate, language, MIDCALL_FILLER_TEXT
+            )
+            filler_frames = _chunk_audio(filler_pcm, self._rate)
+            if filler_frames:
+                self._mute_bytes_remaining += len(filler_pcm)
+                await on_chunk([OutMessage("audio", frame) for frame in filler_frames])
+            # See MIDCALL_FILLER_REPEAT_S above: bounds how long true silence can run
+            # if the turn is still not done after the first filler.
+            while handle_task not in done:
+                done, _ = await asyncio.wait({handle_task}, timeout=MIDCALL_FILLER_REPEAT_S)
+                if handle_task in done:
+                    break
+                repeat_pcm = await _get_filler_audio(
+                    self._tts, self._rate, language, MIDCALL_FILLER_REPEAT_TEXT
+                )
+                repeat_frames = _chunk_audio(repeat_pcm, self._rate)
+                if repeat_frames:
+                    self._mute_bytes_remaining += len(repeat_pcm)
+                    await on_chunk([OutMessage("audio", frame) for frame in repeat_frames])
+        reply = await handle_task
         return await self._speak(reply, on_chunk=on_chunk)
 
     async def _speak(
@@ -520,11 +706,35 @@ class EdesyStreamSession:
         nothing played until the whole reply's TTS was done, and (once
         app.webhooks.voice_stream._send paces frames) a multi-sentence reply would
         have gone out as one long first-sentence-sized wait followed by everything at
-        once. Now each chunk from _chunk_sentences() is synthesized and handed to
+        once. Each chunk from _chunk_sentences() is synthesized and handed to
         on_chunk - and therefore sent, paced, by the websocket layer - as soon as it's
-        ready, while the *next* chunk's synthesize() call already runs in the
-        background (the on-the-fly `next_task` below) so there's no dead-air gap
-        between chunks waiting on the next TTS network round trip.
+        ready.
+
+        ROOT-CAUSE FIX (2026-11-18): the previous version of this streaming change
+        only started the *next* chunk's synthesize() call while the *current* chunk's
+        audio was being emitted (one chunk's head start at a time) - which only hides
+        TTS latency when a chunk's own playback time is longer than the next chunk's
+        synthesize() call. Real call logs (Cloud Run, support-agent service,
+        2026-11-17/18) showed each google TTS synthesize() call for a short chunk of
+        this app's own Hindi replies taking ~4-5s (vs Google's normal 185-360ms,
+        already flagged as an open issue in app.webhooks.voice_stream's
+        http_tts/ExternalHttp comment) - far longer than that same short chunk's own
+        playback time, so the one-chunk head start was never enough: a 3-chunk, 182-
+        character greeting measurably took ~13s of real end-to-end silence (reply
+        logged at 02:27:16, tts output not logged until 02:27:29 the same call),
+        because each chunk's synthesize() call only started after the previous one
+        had already returned - the chunks' slow network latencies summed instead of
+        overlapping.
+
+        Fired every chunk's synthesize() call at once instead (all `tasks` below start
+        together, before any audio is sent), so their latencies run concurrently and
+        the total wait for the *first* chunk to be ready is roughly the slowest single
+        chunk's latency, not the sum of all of them - cutting the measured ~13s greeting
+        gap to roughly one chunk's worth (~4-5s going by the same real-call numbers).
+        This does not make any individual Google TTS call faster (that latency is on
+        Google's side, outside this app's control) - it only stops this app's own code
+        from needlessly serializing calls that could run in parallel. Chunks are still
+        emitted (and therefore paced/played) strictly in reply order, same as before.
 
         When on_chunk is None (unit tests exercising this method directly, as before
         this change), every frame is instead collected into the returned list - no
@@ -558,20 +768,27 @@ class EdesyStreamSession:
         lang = _reply_language(reply)
         chunks = _chunk_sentences(reply.say)  # _chunk_sentences always returns >=1 chunk
         total_pcm_bytes = 0
-        next_task: asyncio.Task[bytes] = asyncio.create_task(
-            self._tts.synthesize(chunks[0], self._rate, lang)
-        )
-        for i in range(len(chunks)):
-            pcm = await next_task
-            if i + 1 < len(chunks):
-                next_task = asyncio.create_task(
-                    self._tts.synthesize(chunks[i + 1], self._rate, lang)
-                )
+        # ROOT-CAUSE FIX (2026-11-18): start every chunk's synthesize() call
+        # concurrently up front (instead of only the next one, one at a time - see this
+        # method's docstring) so their network latencies overlap rather than sum.
+        # Awaited below strictly in order so chunks are still emitted/paced in reply
+        # order even though they may finish out of order.
+        tasks: list[asyncio.Task[bytes]] = [
+            asyncio.create_task(self._tts.synthesize(chunk, self._rate, lang)) for chunk in chunks
+        ]
+        for task in tasks:
+            pcm = await task
             total_pcm_bytes += len(pcm) if pcm else 0
             frames = _chunk_audio(pcm, self._rate)
             if frames:
-                self._is_playing = True
                 await _emit([OutMessage("audio", frame) for frame in frames])
+        # ROOT-CAUSE FIX (2026-11-17), v2: add this reply's bytes to the mute budget
+        # (see _mute_bytes_remaining's docstring-comment in __init__) rather than
+        # toggling a bool - handle_audio_chunk's gate drains it as real inbound audio
+        # (whenever it actually arrives, backlog or not) comes in, so real listening
+        # resumes exactly after roughly this much time's worth of audio has passed,
+        # not at the (unreliable) moment this coroutine happens to return.
+        self._mute_bytes_remaining += total_pcm_bytes
         logger.info("voice-stream tts output: pcm_bytes=%d", total_pcm_bytes)
         if reply.action == "hangup":
             self._ended = True
