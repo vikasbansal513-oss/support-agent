@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 import uuid
@@ -331,25 +332,33 @@ async def run_inbound(
     )
     state["attempt"] = ctx.job.attempts
     state["max_attempts"] = ctx.job.max_attempts
-    toolbox = await _tool_box(factory, tenant_id, ctx.transport)
-    logger.info(
-        "run_inbound timing: tool_box done elapsed_ms=%d",
-        int((time.monotonic() - _t0) * 1000),
-    )
     raw_policy = state.get("policy")
     parsed = parse_any(raw_policy) if raw_policy else None
     if isinstance(parsed, PolicyV2):
         from app.agent import runner_v1
 
-        async with session_scope(factory, tenant_id=tenant_id) as session:
-            await runner_v1.load_v1_state(session, state, tenant_id, conversation_id, parsed)
-        logger.info(
-            "run_inbound timing: v1_state loaded elapsed_ms=%d",
-            int((time.monotonic() - _t0) * 1000),
+        async def _load_v1_state_task() -> None:
+            async with session_scope(factory, tenant_id=tenant_id) as session:
+                await runner_v1.load_v1_state(session, state, tenant_id, conversation_id, parsed)
+
+        # PERFORMANCE FIX (2026-11-18): tool_box, v1 state load, and LLM-client creation
+        # each only need factory/tenant_id/transport (or an independent DB session) - none
+        # of them depends on either of the other two's result - but were previously awaited
+        # one after another, so their times added up. A real voice call's logs
+        # (cpu_boost_test.txt, 2026-11-18) showed tool_box=638ms + v1_state=2043ms +
+        # llm_client=654ms = ~3.3s spent in sequence here, inside an 11.4s total turn that
+        # ran long enough for the caller to hang up before the reply's TTS audio could be
+        # sent. Running these three concurrently with asyncio.gather cuts that ~3.3s to
+        # roughly the slowest of the three (~2s), saving ~1.3s of pure silence on every
+        # live call, at zero infra cost. This only touches the V1 (PolicyV2) path, which is
+        # the path real voice calls use - the V0 branch below is untouched.
+        toolbox, _, llm_client = await asyncio.gather(
+            _tool_box(factory, tenant_id, ctx.transport),
+            _load_v1_state_task(),
+            _llm(factory, tenant_id, ctx.transport, fast=inbound.is_live_call),
         )
-        llm_client = await _llm(factory, tenant_id, ctx.transport, fast=inbound.is_live_call)
         logger.info(
-            "run_inbound timing: llm client ready elapsed_ms=%d",
+            "run_inbound timing: parallel tool_box/v1_state/llm_client done elapsed_ms=%d",
             int((time.monotonic() - _t0) * 1000),
         )
         await runner_v1.run(
@@ -375,6 +384,11 @@ async def run_inbound(
             int((time.monotonic() - _t0) * 1000),
         )
         return
+    toolbox = await _tool_box(factory, tenant_id, ctx.transport)
+    logger.info(
+        "run_inbound timing: tool_box done elapsed_ms=%d",
+        int((time.monotonic() - _t0) * 1000),
+    )
     llm_client = await _llm(factory, tenant_id, ctx.transport, fast=inbound.is_live_call)
     logger.info(
         "run_inbound timing: llm client ready elapsed_ms=%d",
