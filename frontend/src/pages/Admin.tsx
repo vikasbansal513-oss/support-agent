@@ -527,6 +527,11 @@ function SpeechSettingsForm({ current, onSaved }: { current: SpeechSettings; onS
   const [sampleRate, setSampleRate] = useState<SpeechSettings["sample_rate_hz"]>(current.sample_rate_hz);
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
+  // 2026-11-18: separate Speech-to-Text key, for when stt_provider is a different
+  // account than tts_provider (e.g. Sarvam STT + Google TTS) - left blank, STT just
+  // keeps using the api_key above, same as every setup before this field existed.
+  const [sttApiKey, setSttApiKey] = useState("");
+  const [showSttKey, setShowSttKey] = useState(false);
   const [asking, setAsking] = useState(false);
 
   const choice = () => ({
@@ -534,6 +539,7 @@ function SpeechSettingsForm({ current, onSaved }: { current: SpeechSettings; onS
     tts_provider: ttsProvider,
     sample_rate_hz: sampleRate,
     ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
+    ...(sttApiKey.trim() ? { stt_api_key: sttApiKey.trim() } : {}),
   });
 
   const save = async (reason: string) => {
@@ -541,6 +547,7 @@ function SpeechSettingsForm({ current, onSaved }: { current: SpeechSettings; onS
       await api.put<SpeechSettings>("/admin/speech-settings", { ...choice(), reason });
       setAsking(false);
       setApiKey("");
+      setSttApiKey("");
       toast.info(t.speechSaved);
       onSaved();
     } catch (err) {
@@ -605,6 +612,29 @@ function SpeechSettingsForm({ current, onSaved }: { current: SpeechSettings; onS
         />
         <button type="button" className="key-toggle" aria-label={showKey ? t.hidePassword : t.showPassword} onClick={() => setShowKey((v) => !v)}>
           <Icon name={showKey ? "eye-off" : "eye"} className="sm" />
+        </button>
+      </label>
+      <p>
+        <Chip tone={current.has_stt_key ? "ok" : "warn"}>{current.has_stt_key ? t.speechSttKeySet : t.speechSttKeyMissing}</Chip>
+      </p>
+      <label className="field key-field">
+        <span className="field-label">{t.speechSttApiKey}</span>
+        <input
+          className="input"
+          type={showSttKey ? "text" : "password"}
+          value={sttApiKey}
+          autoComplete="off"
+          placeholder={t.speechSttKeyKeep}
+          aria-label={t.speechSttApiKey}
+          onChange={(event) => setSttApiKey(event.target.value)}
+        />
+        <button
+          type="button"
+          className="key-toggle"
+          aria-label={showSttKey ? t.hidePassword : t.showPassword}
+          onClick={() => setShowSttKey((v) => !v)}
+        >
+          <Icon name={showSttKey ? "eye-off" : "eye"} className="sm" />
         </button>
       </label>
       <div className="row">

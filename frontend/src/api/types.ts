@@ -734,6 +734,11 @@ export interface SpeechSettings {
   tts_provider: SpeechSettingsProvider;
   sample_rate_hz: 8000 | 16000;
   has_key: boolean;
+  // 2026-11-18: whether a *separate* STT key is saved (backend migration 0041) -
+  // only meaningful once stt_provider and tts_provider can differ (e.g. Sarvam STT +
+  // Google TTS). False means STT is still sharing the one key above, same as every
+  // setup before this field existed.
+  has_stt_key: boolean;
   configured: boolean;
   updated_at: string | null;
 }
