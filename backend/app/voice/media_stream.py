@@ -18,6 +18,7 @@ and the actions engine still own all of that, same rule as the agent graph.
 """
 
 import asyncio
+import base64
 import logging
 import re
 from collections.abc import Awaitable, Callable
@@ -30,6 +31,12 @@ from app.voice.contracts import E164, INDIAN_MOBILE, VoiceEventIn, VoiceReplyOut
 from app.voice.service import Factory, VoiceTenant
 
 logger = logging.getLogger("app.voice.media_stream")
+
+# TEMPORARY DIAGNOSTIC (2026-11-18): counts how many empty-STT-result utterances this
+# container instance has dumped raw audio for - see the matching comment in
+# _on_utterance below. Per-process, not per-call, on purpose: caps total log volume
+# across every call this instance handles, not just one.
+_EMPTY_UTTERANCE_DUMPS = 0
 
 # Nov 2026: a real call showed the agent's full "start" turn (STT already skipped on
 # this leg, but the LLM call plus TTS) taking ~4.3s end to end (metadata accepted ->
@@ -559,6 +566,27 @@ class EdesyStreamSession:
             not result.text.strip(),
             result.confidence,
         )
+        # TEMPORARY DIAGNOSTIC (2026-11-18): two independent STT providers (Google,
+        # then Sarvam) both return an empty transcript on audio the VAD measured as
+        # genuinely loud (see UtteranceDetector's vad-stats log) - ruling out a
+        # single provider's bug. The one thing not yet ruled out is whether the
+        # "loud" audio UtteranceDetector is capturing is the caller's real speech at
+        # all, versus line noise/ring-back/echo of our own TTS leaking back in
+        # (flagged as a real risk in _mute_bytes_remaining's own docstring above) -
+        # a purely energy-based VAD cannot tell those apart, only an STT or a human
+        # listening to the actual bytes can. Logging the raw audio as base64 (NOT the
+        # transcript - there isn't one) for the first 3 empty-result utterances per
+        # container instance only, so it can be decoded and inspected/played back
+        # once to settle this, instead of guessing again. Remove once confirmed.
+        global _EMPTY_UTTERANCE_DUMPS
+        if not result.text.strip() and _EMPTY_UTTERANCE_DUMPS < 3:
+            _EMPTY_UTTERANCE_DUMPS += 1
+            logger.info(
+                "voice-stream empty-utterance audio dump #%d: rate=%d pcm_b64=%s",
+                _EMPTY_UTTERANCE_DUMPS,
+                self._rate,
+                base64.b64encode(pcm).decode("ascii"),
+            )
         # FIX (2026-11-17): on this (Edesy) path, _on_utterance only ever runs after
         # UtteranceDetector has already decided the caller WAS speaking (that's what
         # "utterance" means here - see push()'s state machine) - so an empty `result.
