@@ -140,9 +140,7 @@ async def test_sarvam_stt_with_separate_key_keeps_google_tts_key_untouched(
     assert body["stt_provider"] == "sarvam" and body["tts_provider"] == "google"
     assert body["has_key"] is True and body["has_stt_key"] is True
 
-    stored = await sq(
-        env, "SELECT api_key_enc, stt_api_key_enc FROM platform_speech_settings"
-    )
+    stored = await sq(env, "SELECT api_key_enc, stt_api_key_enc FROM platform_speech_settings")
     assert stored[0].api_key_enc and stored[0].stt_api_key_enc
     assert stored[0].api_key_enc != stored[0].stt_api_key_enc
 

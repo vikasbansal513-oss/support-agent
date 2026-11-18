@@ -172,7 +172,12 @@ async def test_sarvam_stt_parses_transcript() -> None:
         # multipart/form-data with a `file` part, not a JSON body like Google's).
         assert request.headers["content-type"].startswith("multipart/form-data")
         return httpx.Response(
-            200, json={"request_id": "r-1", "transcript": "mera order kaha hai", "language_code": "hi-IN"}
+            200,
+            json={
+                "request_id": "r-1",
+                "transcript": "mera order kaha hai",
+                "language_code": "hi-IN",
+            },
         )
 
     stt = SarvamSpeechToText(make_http(handler), "k-456")
