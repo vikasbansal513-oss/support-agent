@@ -59,16 +59,26 @@ def _out(current: EffectiveSpeech | None, updated_at: datetime | None) -> Speech
     )
 
 
-async def _stored(session: AsyncSession) -> tuple[str, str | None, str | None, datetime] | None:
+async def _stored(
+    session: AsyncSession,
+) -> tuple[str, str, str | None, str | None, datetime] | None:
     row = (
         await session.execute(
             text(
-                "SELECT stt_provider, api_key_enc, stt_api_key_enc, updated_at"
+                "SELECT stt_provider, tts_provider, api_key_enc, stt_api_key_enc, updated_at"
                 " FROM platform_speech_settings WHERE id = 1"
             )
         )
     ).first()
-    return (row.stt_provider, row.api_key_enc, row.stt_api_key_enc, row.updated_at) if row else None
+    if row is None:
+        return None
+    return (
+        row.stt_provider,
+        row.tts_provider,
+        row.api_key_enc,
+        row.stt_api_key_enc,
+        row.updated_at,
+    )
 
 
 @router.get("")
@@ -80,7 +90,7 @@ async def read_settings(
     current = await load_effective(factory, enc_key)
     async with session_scope(factory, super_admin=True, user_id=admin.user_id) as session:
         stored = await _stored(session)
-    return _out(current, stored[3] if stored else None)
+    return _out(current, stored[4] if stored else None)
 
 
 @router.put("")
@@ -98,11 +108,19 @@ async def save_settings(
         key_enc: str | None
         if body.api_key:
             key_enc = encrypt_key(body.api_key, enc_key)
-        elif stored and stored[0] == body.stt_provider and stored[1]:
-            key_enc = stored[1]
+        # BUGFIX (2026-11-18): this used to compare stored[0] (stt_provider) here,
+        # which was only ever correct back when stt_provider and tts_provider were
+        # effectively always the same value. Confirmed from a real CI failure
+        # (tests/v1/test_speech_settings_admin.py::...mixed... got 422 "api_key is
+        # required") the moment the two genuinely differ (e.g. switching
+        # stt_provider "google" -> "sarvam" while tts_provider stays "google" and
+        # the TTS key isn't resubmitted): api_key_enc is the TTS key, so whether it
+        # can be kept depends on whether tts_provider changed, not stt_provider.
+        elif stored and stored[1] == body.tts_provider and stored[2]:
+            key_enc = stored[2]
         else:
             raise AppError("E-VAL-001", detail="api_key is required")
-        # 2026-11-18: stt_api_key_enc (migration 0041) mirrors api_key_enc's own
+        # stt_api_key_enc (migration 0041) mirrors api_key_enc's own
         # keep-existing-on-unchanged-provider logic above, but is allowed to stay
         # unset (None) rather than requiring a value - an admin who never sets a
         # separate STT key just keeps STT on the same key as TTS, same as before
@@ -113,7 +131,7 @@ async def save_settings(
         if body.stt_api_key:
             stt_key_enc = encrypt_key(body.stt_api_key, enc_key)
         elif stored and stored[0] == body.stt_provider:
-            stt_key_enc = stored[2]
+            stt_key_enc = stored[3]
         else:
             stt_key_enc = None
         row = (
@@ -144,7 +162,7 @@ async def save_settings(
                 action="admin.speech_settings_changed",
                 entity_type="platform",
                 entity_id="speech_settings",
-                old_value={"stt_provider": stored[0]} if stored else {},
+                old_value={"stt_provider": stored[0], "tts_provider": stored[1]} if stored else {},
                 new_value={
                     "stt_provider": body.stt_provider,
                     "tts_provider": body.tts_provider,
