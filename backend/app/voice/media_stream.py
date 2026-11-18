@@ -194,31 +194,6 @@ class UtteranceDetector:
     start_frames: int = 2  # consecutive loud frames to confirm speech started
     end_silence_frames: int = 40  # consecutive quiet frames (~800ms @ 20ms) to end
     max_utterance_ms: int = 15_000
-    # ROOT-CAUSE FIX (2026-11-18): a real empty-STT utterance's raw audio (dumped via
-    # the TEMPORARY DIAGNOSTIC in EdesyStreamSession._on_utterance and decoded offline)
-    # showed exactly 5 loud frames (rms 121-320, just above energy_threshold) in the
-    # first ~100ms, then 40 consecutive near-silent frames (rms ~8, the line's own
-    # noise floor) for the rest of the utterance - frames=45, loud_frames=5
-    # (loud_ratio=0.11), closing almost exactly at the theoretical minimum length
-    # (start_frames + end_silence_frames = 42 frames). That shape - a brief
-    # above-threshold edge immediately followed by real silence for the whole
-    # end_silence_frames window - matches the exact failure this file's own
-    # _mute_bytes_remaining docstring already describes (a short burst of our own
-    # TTS/echo tail or a line click crossing the threshold, not the caller actually
-    # talking) rather than genuine speech, which keeps producing loud frames through
-    # more of the utterance even with natural pauses. Both Google and Sarvam STT
-    # correctly returned empty for this audio - there was nothing to transcribe. This
-    # cannot distinguish every case perfectly (a genuinely very short, very quiet
-    # "haan"/"नहीं" could in principle also score low), so it is a ratio with a
-    # deliberately low cutoff, not a hard "must be loud" rule - see
-    # EdesyStreamSession.handle_audio_chunk's use of this value. VERIFY: tune this
-    # ratio from more real-call dumps once available (same spirit as
-    # energy_threshold/end_silence_frames above) - 0.25 is reasoned from this one
-    # confirmed case, not lab-measured; the two existing tests that build a
-    # continuous-tone "utterance" in tests/voice/test_media_stream.py score ~0.36 and
-    # 1.0 respectively, both comfortably above this cutoff, so they are unaffected.
-    min_loud_ratio: float = 0.25
-
     _buffer: bytes = field(default=b"", repr=False)
     _speaking: bool = field(default=False, repr=False)
     _loud_run: int = field(default=0, repr=False)
@@ -291,11 +266,13 @@ class UtteranceDetector:
                     "loud_frames": self._loud_count,
                     "max_rms": self._max_rms,
                     "threshold": self.energy_threshold,
-                    # ROOT-CAUSE FIX (2026-11-18): see min_loud_ratio's own comment
-                    # above - the fraction of this utterance's frames that were ever
-                    # above energy_threshold, used by EdesyStreamSession to tell a
-                    # short noise/echo blip apart from genuine (if quiet or pausing)
-                    # speech before bothering STT with it.
+                    # TEMPORARY DIAGNOSTIC (2026-11-18): the fraction of this
+                    # utterance's frames that were ever above energy_threshold - logged
+                    # (not enforced) by EdesyStreamSession.handle_audio_chunk below, to
+                    # collect real numbers before trying to tell a noise/echo blip
+                    # apart from genuine speech. A previous attempt to enforce a cutoff
+                    # here was reverted (see handle_audio_chunk) because it also
+                    # discarded genuine speech arriving right after our own TTS reply.
                     "loud_ratio": (
                         self._loud_count / self._frame_count if self._frame_count else 0.0
                     ),
@@ -567,26 +544,20 @@ class EdesyStreamSession:
                 stats["threshold"],
                 stats["loud_ratio"],
             )
-            # ROOT-CAUSE FIX (2026-11-18): see UtteranceDetector.min_loud_ratio's own
-            # comment for the real-call evidence this is based on - a short above-
-            # threshold edge (our own TTS/echo tail, a line click) immediately
-            # followed by real silence for the rest of the utterance was being sent to
-            # STT and correctly coming back empty every time, with nothing to fix on
-            # the STT/provider side because there was never any speech in that audio.
-            # Dropping it here instead (before paying for an STT call at all) also
-            # means the detector keeps listening for the caller's actual reply in the
-            # same turn, rather than closing this non-speech blip as "the turn" and
-            # only then discovering STT has nothing to say about it.
-            if stats["loud_ratio"] < self._detector.min_loud_ratio:
-                logger.info(
-                    "voice-stream vad discarded as noise/echo blip (not sent to STT): "
-                    "frames=%d loud_frames=%d loud_ratio=%.2f min_loud_ratio=%.2f",
-                    stats["frames"],
-                    stats["loud_frames"],
-                    stats["loud_ratio"],
-                    self._detector.min_loud_ratio,
-                )
-                return out
+            # REVERTED (2026-11-18): an earlier version of this block skipped STT below
+            # min_loud_ratio, based on one real-call dump that looked like a brief
+            # noise/echo edge followed by silence. A local run of
+            # tests/voice/test_media_stream.py::test_audio_turn_runs_stt_then_agent_then_tts
+            # proved that signature is NOT specific to noise/echo: genuine caller speech
+            # arriving right after our own TTS reply gets its leading portion eaten by
+            # the _mute_bytes_remaining drain above (by design, to reject our own
+            # echo/leakage), so only a short tail of real speech reaches this detector -
+            # same low loud_ratio shape as an actual blip. Skipping STT here would have
+            # silently dropped genuine replies spoken right after the agent talks, so the
+            # skip was removed; loud_ratio is still logged above for tuning, it just no
+            # longer blocks anything. VERIFY: a real fix needs real-call evidence that
+            # separates "truly no speech" from "speech partly eaten by our own mute
+            # budget" - don't reintroduce a skip here without that.
         out.extend(await self._on_utterance(utterance, on_chunk=on_chunk))
         return out
 
