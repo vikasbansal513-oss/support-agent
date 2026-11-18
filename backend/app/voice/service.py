@@ -133,52 +133,93 @@ class CallContext:
     did: list[str]
 
 
-async def _context(
-    factory: Factory, tenant_id: uuid.UUID, call_id: uuid.UUID, conversation_id: uuid.UUID
-) -> CallContext:
-    # TEMPORARY DIAGNOSTIC (2026-11-17): see app.voice.service._finish_turn's matching
-    # note on the unexplained ~25s gap. This times connection acquisition separately
-    # from the 4 queries below, since a slow/cold Neon connection vs. slow queries
-    # need different fixes. Remove once the slow stage is identified.
+async def _ctx_fetch_call(factory: Factory, tenant_id: uuid.UUID, call_id: uuid.UUID):
     _t0 = time.monotonic()
     async with session_scope(factory, tenant_id=tenant_id) as session:
         logger.info(
-            "_context timing: session acquired elapsed_ms=%d",
+            "_context timing: call-row session acquired elapsed_ms=%d",
             int((time.monotonic() - _t0) * 1000),
         )
-        call = (
+        return (
             await session.execute(
                 text("SELECT started_at, turn_count FROM voice_calls WHERE id = :i"), {"i": call_id}
             )
         ).one()
-        order_ref = (
+
+
+async def _ctx_fetch_order_ref(factory: Factory, tenant_id: uuid.UUID, conversation_id: uuid.UUID):
+    async with session_scope(factory, tenant_id=tenant_id) as session:
+        return (
             await session.execute(
                 text("SELECT active_order_ref FROM conversations WHERE id = :c"),
                 {"c": conversation_id},
             )
         ).scalar_one_or_none()
-        said = (
+
+
+async def _ctx_fetch_said(
+    factory: Factory, tenant_id: uuid.UUID, conversation_id: uuid.UUID, started_at
+) -> list[str]:
+    async with session_scope(factory, tenant_id=tenant_id) as session:
+        return (
             (
                 await session.execute(
                     text(
                         "SELECT content FROM messages WHERE conversation_id = :c AND channel = 'voice'"
                         " AND direction = 'in' AND created_at >= :s ORDER BY created_at"
                     ),
-                    {"c": conversation_id, "s": call.started_at},
+                    {"c": conversation_id, "s": started_at},
                 )
             )
             .scalars()
             .all()
         )
-        acts = (
+
+
+async def _ctx_fetch_acts(
+    factory: Factory, tenant_id: uuid.UUID, conversation_id: uuid.UUID, started_at
+):
+    async with session_scope(factory, tenant_id=tenant_id) as session:
+        return (
             await session.execute(
                 text(
                     "SELECT tool_name, status FROM agent_actions WHERE conversation_id = :c"
                     " AND tool_name IS NOT NULL AND created_at >= :s ORDER BY created_at"
                 ),
-                {"c": conversation_id, "s": call.started_at},
+                {"c": conversation_id, "s": started_at},
             )
         ).all()
+
+
+async def _context(
+    factory: Factory, tenant_id: uuid.UUID, call_id: uuid.UUID, conversation_id: uuid.UUID
+) -> CallContext:
+    # PERFORMANCE FIX (2026-11-18): see app.agent.runner._load_state's matching
+    # comment - same pattern, same reasoning. Of these 4 reads, only `said` and `acts`
+    # depend on another read's result (call.started_at); `order_ref` is independent of
+    # everything. Previously all 4 ran one after another on a single shared session -
+    # a real call's own "_context timing: all 4 queries done" log showed this taking
+    # ~9.8s (with ~4.2s of that just acquiring the first connection - see the
+    # elapsed_ms on the "call-row session acquired" log below). Running `call` and
+    # `order_ref` concurrently, then `said` and `acts` concurrently once
+    # `call.started_at` is known, turns 4 sequential round trips into 2.
+    # VERIFY: not run against a live DB from here (no pytest/app execution per this
+    # change's own constraints) - only checked with `python -m py_compile`/ruff. If
+    # the real bottleneck turns out to be Neon only accepting one new connection at a
+    # time while waking up (rather than per-query latency), this change's benefit
+    # will be smaller than app.agent.runner._load_state's - the next real call's
+    # "_context timing" numbers will show which it is. Either way this does not fix a
+    # slow DB connection itself, only this app's own serialization of independent
+    # reads.
+    _t0 = time.monotonic()
+    call, order_ref = await asyncio.gather(
+        _ctx_fetch_call(factory, tenant_id, call_id),
+        _ctx_fetch_order_ref(factory, tenant_id, conversation_id),
+    )
+    said, acts = await asyncio.gather(
+        _ctx_fetch_said(factory, tenant_id, conversation_id, call.started_at),
+        _ctx_fetch_acts(factory, tenant_id, conversation_id, call.started_at),
+    )
     logger.info(
         "_context timing: all 4 queries done elapsed_ms=%d",
         int((time.monotonic() - _t0) * 1000),
