@@ -128,6 +128,17 @@ VOICE_NEW_REASONS = (
     "HUMAN_REQUESTED",
     "CONSENT_DECLINED",
     "SILENCE_NO_RESPONSE",
+    # BUGFIX (2026-11-18): app.voice.service._process_and_finish has passed
+    # "ACTION_TIMEOUT" to _handoff_decision() (and WHY above already has copy for it)
+    # ever since the 16s voice-turn timeout was added, but this code was never listed
+    # here - so every real-call timeout crashed HandoffSummaryV1's own validation
+    # (reason_code is this VOICE_NEW_REASONS-derived Literal) with a pydantic
+    # ValidationError, silently (an orphaned asyncio Task - "Task exception was never
+    # retrieved" in the logs), which meant no handoff record was ever created for a
+    # timed-out call. Confirmed from a real Cloud Run log: "voice turn timed out" at
+    # 11:54:03Z immediately followed by that exact ValidationError at 11:54:23Z,
+    # naming 'ACTION_TIMEOUT' as the invalid literal.
+    "ACTION_TIMEOUT",
 )
 # Decision Framework Section 3 (app.policy.tracking + app.v1.graph's answer()), additive
 # for the same reason as VOICE_NEW_REASONS above - kept out of V1_NEW_REASONS/
@@ -163,6 +174,8 @@ ReasonCodeV1 = (
         "HUMAN_REQUESTED",
         "CONSENT_DECLINED",
         "SILENCE_NO_RESPONSE",
+        # BUGFIX (2026-11-18): see VOICE_NEW_REASONS' matching comment above.
+        "ACTION_TIMEOUT",
     ]
     | Literal[
         "DELIVERY_STUCK",
