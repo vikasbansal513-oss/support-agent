@@ -4,6 +4,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, replace
+from typing import Any
 
 import httpx
 from sqlalchemy import text
@@ -133,7 +134,7 @@ class CallContext:
     did: list[str]
 
 
-async def _ctx_fetch_call(factory: Factory, tenant_id: uuid.UUID, call_id: uuid.UUID):
+async def _ctx_fetch_call(factory: Factory, tenant_id: uuid.UUID, call_id: uuid.UUID) -> Any:
     _t0 = time.monotonic()
     async with session_scope(factory, tenant_id=tenant_id) as session:
         logger.info(
@@ -147,7 +148,9 @@ async def _ctx_fetch_call(factory: Factory, tenant_id: uuid.UUID, call_id: uuid.
         ).one()
 
 
-async def _ctx_fetch_order_ref(factory: Factory, tenant_id: uuid.UUID, conversation_id: uuid.UUID):
+async def _ctx_fetch_order_ref(
+    factory: Factory, tenant_id: uuid.UUID, conversation_id: uuid.UUID
+) -> Any:
     async with session_scope(factory, tenant_id=tenant_id) as session:
         return (
             await session.execute(
@@ -158,8 +161,8 @@ async def _ctx_fetch_order_ref(factory: Factory, tenant_id: uuid.UUID, conversat
 
 
 async def _ctx_fetch_said(
-    factory: Factory, tenant_id: uuid.UUID, conversation_id: uuid.UUID, started_at
-) -> list[str]:
+    factory: Factory, tenant_id: uuid.UUID, conversation_id: uuid.UUID, started_at: Any
+) -> Any:
     async with session_scope(factory, tenant_id=tenant_id) as session:
         return (
             (
@@ -177,8 +180,8 @@ async def _ctx_fetch_said(
 
 
 async def _ctx_fetch_acts(
-    factory: Factory, tenant_id: uuid.UUID, conversation_id: uuid.UUID, started_at
-):
+    factory: Factory, tenant_id: uuid.UUID, conversation_id: uuid.UUID, started_at: Any
+) -> Any:
     async with session_scope(factory, tenant_id=tenant_id) as session:
         return (
             await session.execute(
