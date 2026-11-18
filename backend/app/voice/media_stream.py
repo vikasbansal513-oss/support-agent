@@ -624,11 +624,35 @@ class EdesyStreamSession:
         nothing played until the whole reply's TTS was done, and (once
         app.webhooks.voice_stream._send paces frames) a multi-sentence reply would
         have gone out as one long first-sentence-sized wait followed by everything at
-        once. Now each chunk from _chunk_sentences() is synthesized and handed to
+        once. Each chunk from _chunk_sentences() is synthesized and handed to
         on_chunk - and therefore sent, paced, by the websocket layer - as soon as it's
-        ready, while the *next* chunk's synthesize() call already runs in the
-        background (the on-the-fly `next_task` below) so there's no dead-air gap
-        between chunks waiting on the next TTS network round trip.
+        ready.
+
+        ROOT-CAUSE FIX (2026-11-18): the previous version of this streaming change
+        only started the *next* chunk's synthesize() call while the *current* chunk's
+        audio was being emitted (one chunk's head start at a time) - which only hides
+        TTS latency when a chunk's own playback time is longer than the next chunk's
+        synthesize() call. Real call logs (Cloud Run, support-agent service,
+        2026-11-17/18) showed each google TTS synthesize() call for a short chunk of
+        this app's own Hindi replies taking ~4-5s (vs Google's normal 185-360ms,
+        already flagged as an open issue in app.webhooks.voice_stream's
+        http_tts/ExternalHttp comment) - far longer than that same short chunk's own
+        playback time, so the one-chunk head start was never enough: a 3-chunk, 182-
+        character greeting measurably took ~13s of real end-to-end silence (reply
+        logged at 02:27:16, tts output not logged until 02:27:29 the same call),
+        because each chunk's synthesize() call only started after the previous one
+        had already returned - the chunks' slow network latencies summed instead of
+        overlapping.
+
+        Fired every chunk's synthesize() call at once instead (all `tasks` below start
+        together, before any audio is sent), so their latencies run concurrently and
+        the total wait for the *first* chunk to be ready is roughly the slowest single
+        chunk's latency, not the sum of all of them - cutting the measured ~13s greeting
+        gap to roughly one chunk's worth (~4-5s going by the same real-call numbers).
+        This does not make any individual Google TTS call faster (that latency is on
+        Google's side, outside this app's control) - it only stops this app's own code
+        from needlessly serializing calls that could run in parallel. Chunks are still
+        emitted (and therefore paced/played) strictly in reply order, same as before.
 
         When on_chunk is None (unit tests exercising this method directly, as before
         this change), every frame is instead collected into the returned list - no
@@ -662,15 +686,16 @@ class EdesyStreamSession:
         lang = _reply_language(reply)
         chunks = _chunk_sentences(reply.say)  # _chunk_sentences always returns >=1 chunk
         total_pcm_bytes = 0
-        next_task: asyncio.Task[bytes] = asyncio.create_task(
-            self._tts.synthesize(chunks[0], self._rate, lang)
-        )
-        for i in range(len(chunks)):
-            pcm = await next_task
-            if i + 1 < len(chunks):
-                next_task = asyncio.create_task(
-                    self._tts.synthesize(chunks[i + 1], self._rate, lang)
-                )
+        # ROOT-CAUSE FIX (2026-11-18): start every chunk's synthesize() call
+        # concurrently up front (instead of only the next one, one at a time - see this
+        # method's docstring) so their network latencies overlap rather than sum.
+        # Awaited below strictly in order so chunks are still emitted/paced in reply
+        # order even though they may finish out of order.
+        tasks: list[asyncio.Task[bytes]] = [
+            asyncio.create_task(self._tts.synthesize(chunk, self._rate, lang)) for chunk in chunks
+        ]
+        for task in tasks:
+            pcm = await task
             total_pcm_bytes += len(pcm) if pcm else 0
             frames = _chunk_audio(pcm, self._rate)
             if frames:

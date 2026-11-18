@@ -346,7 +346,20 @@ async def page_performance(
                 " AND p.load_ms IS NOT NULL"
                 " GROUP BY p.tenant_id, t.name, p.route"
             ),
-            {"days": days, "tenant": str(tenant_id) if tenant_id else None},
+            # BUGFIX (2026-11-18): the SQL above does `(:days || ' days')::interval` -
+            # Postgres's `||` string-concatenation operator needs a text operand on
+            # both sides. asyncpg infers each bind parameter's wire type from the
+            # Python value passed in, and `days` was passed as a plain int (7) - with
+            # no string anywhere for asyncpg to infer "text" from, it bound $1 as an
+            # integer, which Postgres then rejected for `||` ("invalid input for query
+            # argument $1: 7 (expected str, got int)" - confirmed from this exact
+            # query/parameters pair in a real Cloud Run error log for
+            # GET /admin/monitoring/page-performance, repeated on every call to this
+            # function). Passing str(days) instead keeps the same query text (still
+            # `'7' || ' days'` -> `'7 days'`, same as before this bug was hit) but now
+            # gives asyncpg a string value to bind as text, matching what the SQL
+            # actually needs.
+            {"days": str(days), "tenant": str(tenant_id) if tenant_id else None},
         )
     ).all()
     out_rows = [
