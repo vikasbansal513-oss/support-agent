@@ -114,6 +114,57 @@ async def test_invalid_choices_are_rejected(env: AgentEnv, change: dict[str, Any
     assert await sq(env, "SELECT 1 FROM platform_speech_settings") == []
 
 
+async def test_sarvam_stt_with_separate_key_keeps_google_tts_key_untouched(
+    env: AgentEnv,
+) -> None:
+    # 2026-11-18: stt_provider and tts_provider can now be different providers with
+    # different accounts/keys (migration 0041) - Sarvam STT + Google TTS is the
+    # concrete case this was built for.
+    from app.core.config import get_settings
+
+    admin = await admin_headers(env)
+    await env.client.put(URL, json=GOOGLE, headers=admin)  # google for both, first
+    mixed = await env.client.put(
+        URL,
+        json={
+            "stt_provider": "sarvam",
+            "tts_provider": "google",
+            "sample_rate_hz": 16000,
+            "stt_api_key": "sarvam-test-key-98765",
+            "reason": "stt ko sarvam pe shift kar rahe, tts google hi rahega",
+        },
+        headers=admin,
+    )
+    assert mixed.status_code == 200
+    body = mixed.json()
+    assert body["stt_provider"] == "sarvam" and body["tts_provider"] == "google"
+    assert body["has_key"] is True and body["has_stt_key"] is True
+
+    stored = await sq(
+        env, "SELECT api_key_enc, stt_api_key_enc FROM platform_speech_settings"
+    )
+    assert stored[0].api_key_enc and stored[0].stt_api_key_enc
+    assert stored[0].api_key_enc != stored[0].stt_api_key_enc
+
+    effective = await load_effective(env.factory, get_settings().encryption_key)
+    assert effective is not None
+    assert effective.api_key == "AIzaSyTestKey123456"  # unchanged TTS/google key
+    assert effective.stt_api_key == "sarvam-test-key-98765"
+
+
+async def test_stt_key_not_set_falls_back_to_shared_key(env: AgentEnv) -> None:
+    from app.core.config import get_settings
+
+    admin = await admin_headers(env)
+    await env.client.put(URL, json=GOOGLE, headers=admin)
+    out = await env.client.get(URL, headers=admin)
+    assert out.json()["has_stt_key"] is False
+
+    effective = await load_effective(env.factory, get_settings().encryption_key)
+    assert effective is not None
+    assert effective.stt_api_key == effective.api_key == "AIzaSyTestKey123456"
+
+
 async def test_owner_cannot_read_or_change(env: AgentEnv) -> None:
     assert (await env.client.get(URL, headers=env.wa.headers)).status_code == 403
     assert (await env.client.put(URL, json=GOOGLE, headers=env.wa.headers)).status_code == 403

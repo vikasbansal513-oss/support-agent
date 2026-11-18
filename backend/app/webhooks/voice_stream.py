@@ -137,7 +137,12 @@ async def voice_stream_webhook(
         timeout=5.0,
         max_attempts=1,
     )
-    stt = make_stt(speech_settings.stt_provider, http_stt, speech_settings.api_key)
+    # 2026-11-18: stt_api_key is a separate key from the TTS api_key (migration 0041 /
+    # app.speech.runtime.EffectiveSpeech) - needed now that STT and TTS can be
+    # different provider accounts (e.g. Sarvam STT + Google TTS). It falls back to
+    # the same api_key as before when no separate STT key has been saved, so this is
+    # a no-op change for any tenant still using one shared Google key for both.
+    stt = make_stt(speech_settings.stt_provider, http_stt, speech_settings.stt_api_key)
     tts = make_tts(speech_settings.tts_provider, http_tts, speech_settings.api_key)
     session = EdesyStreamSession(factory, voice, stt, tts, speech_settings.sample_rate_hz)
 

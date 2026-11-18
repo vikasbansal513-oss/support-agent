@@ -111,6 +111,12 @@ class ExternalHttp:
         params: dict[str, str] | None = None,
         json: Any = None,
         data: dict[str, str] | None = None,
+        # 2026-11-18: added for app.speech.providers.SarvamSpeechToText - Sarvam's
+        # /speech-to-text endpoint takes the audio as a multipart file part (per its
+        # REST API docs: Content-Type multipart/form-data, `file` field), not JSON -
+        # none of the existing callers (Google STT/TTS, both JSON-body) pass this, so
+        # it defaults to None and changes nothing for them.
+        files: dict[str, tuple[str, bytes, str]] | None = None,
     ) -> httpx.Response:
         parts = urlsplit(url)
         summary = {"method": method, "host": parts.netloc, "path": parts.path}
@@ -122,7 +128,13 @@ class ExternalHttp:
                 error_class: str | None = None
                 try:
                     response = await client.request(
-                        method, url, headers=headers, params=params, json=json, data=data
+                        method,
+                        url,
+                        headers=headers,
+                        params=params,
+                        json=json,
+                        data=data,
+                        files=files,
                     )
                 except httpx.TimeoutException:
                     error_class = "timeout"

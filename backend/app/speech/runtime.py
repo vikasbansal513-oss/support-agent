@@ -19,6 +19,14 @@ class EffectiveSpeech:
     stt_provider: str
     tts_provider: str
     api_key: str
+    # 2026-11-18: STT and TTS can now be different providers (e.g. stt_provider=
+    # "sarvam", tts_provider="google") that need different API keys - api_key above
+    # is kept as the TTS key (unchanged name/meaning for backward compatibility with
+    # existing callers that only ever read .api_key for the single-provider case).
+    # stt_api_key is the STT-specific key; load_effective() below falls back to
+    # api_key when no separate STT key has been saved, so nothing changes for an
+    # existing row/admin that never sets one.
+    stt_api_key: str
     sample_rate_hz: int
     source: str
 
@@ -49,8 +57,8 @@ async def load_effective(factory: Factory, encryption_key: str) -> EffectiveSpee
             row = (
                 await session.execute(
                     text(
-                        "SELECT stt_provider, tts_provider, sample_rate_hz, api_key_enc"
-                        " FROM platform_speech_settings WHERE id = 1"
+                        "SELECT stt_provider, tts_provider, sample_rate_hz, api_key_enc,"
+                        " stt_api_key_enc FROM platform_speech_settings WHERE id = 1"
                     )
                 )
             ).first()
@@ -65,6 +73,18 @@ async def load_effective(factory: Factory, encryption_key: str) -> EffectiveSpee
             api_key = Crypto(encryption_key).decrypt(row.api_key_enc)
         except CryptoError:
             logger.error("speech settings key decrypt failed")
+    # 2026-11-18: stt_api_key_enc is a new, nullable column (migration 0041) - every
+    # row saved before this change, and any row saved since without the admin
+    # explicitly setting a separate STT key, has it NULL. Falling back to the
+    # already-decrypted api_key in that case keeps STT and TTS sharing one key
+    # exactly as before - only a dashboard save that sets a distinct STT key changes
+    # this.
+    stt_api_key = api_key
+    if row.stt_api_key_enc:
+        try:
+            stt_api_key = Crypto(encryption_key).decrypt(row.stt_api_key_enc)
+        except CryptoError:
+            logger.error("speech settings stt key decrypt failed")
     return EffectiveSpeech(
-        row.stt_provider, row.tts_provider, api_key, row.sample_rate_hz, "dashboard"
+        row.stt_provider, row.tts_provider, api_key, stt_api_key, row.sample_rate_hz, "dashboard"
     )

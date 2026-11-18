@@ -7,12 +7,12 @@ import pytest
 
 from app.integrations.http import ExternalHttp
 from app.speech.providers import (
-    DisabledSpeechToText,
     DisabledTextToSpeech,
     FakeSpeechToText,
     FakeTextToSpeech,
     GoogleSpeechToText,
     GoogleTextToSpeech,
+    SarvamSpeechToText,
     SttResult,
     _strip_wav_header,
     make_stt,
@@ -150,14 +150,57 @@ async def test_fake_providers_are_deterministic_for_tests() -> None:
     assert await tts.synthesize("", 16000, "en-IN") == b""
 
 
-async def test_sarvam_choice_is_an_honest_disabled_stub_not_invented() -> None:
+async def test_sarvam_stt_is_real_but_sarvam_tts_is_still_an_honest_disabled_stub() -> None:
+    # 2026-11-18: sarvam STT was built (SarvamSpeechToText below) after real calls
+    # showed Google STT returning empty transcripts on genuinely loud, VAD-confirmed
+    # speech - but sarvam TTS was explicitly out of scope for that change (Google TTS
+    # was not shown broken), so it stays the same honest disabled stub as before
+    # (same pattern as app.integrations.shopify_write's DisabledShopifyWriter) rather
+    # than inventing an untested TTS integration.
     http = make_http(lambda _r: httpx.Response(500))
     stt = make_stt("sarvam", http, "k")
     tts = make_tts("sarvam", http, "k")
-    assert isinstance(stt, DisabledSpeechToText)
+    assert isinstance(stt, SarvamSpeechToText)
     assert isinstance(tts, DisabledTextToSpeech)
-    assert (await stt.transcribe(b"x", 16000, "hi-IN")).text == ""
     assert await tts.synthesize("x", 16000, "hi-IN") == b""
+
+
+async def test_sarvam_stt_parses_transcript() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["api-subscription-key"] == "k-456"
+        # multipart body - just confirm it's not JSON (Sarvam's docs require
+        # multipart/form-data with a `file` part, not a JSON body like Google's).
+        assert request.headers["content-type"].startswith("multipart/form-data")
+        return httpx.Response(
+            200, json={"request_id": "r-1", "transcript": "mera order kaha hai", "language_code": "hi-IN"}
+        )
+
+    stt = SarvamSpeechToText(make_http(handler), "k-456")
+    result = await stt.transcribe(b"\x00\x01" * 100, 16000, "hi-IN")
+    assert result.text == "mera order kaha hai"
+    assert result.confidence is None
+
+
+async def test_sarvam_stt_empty_audio_skips_the_call() -> None:
+    called = False
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal called
+        called = True
+        return httpx.Response(200, json={"transcript": ""})
+
+    stt = SarvamSpeechToText(make_http(handler), "k-456")
+    result = await stt.transcribe(b"", 16000, "hi-IN")
+    assert result.text == "" and not called
+
+
+async def test_sarvam_stt_http_error_is_empty_not_raised() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"error": "bad key"})
+
+    stt = SarvamSpeechToText(make_http(handler), "bad-key")
+    result = await stt.transcribe(b"\x00\x01" * 100, 16000, "hi-IN")
+    assert result.text == "" and result.confidence is None
 
 
 def test_make_stt_tts_select_google_by_name() -> None:

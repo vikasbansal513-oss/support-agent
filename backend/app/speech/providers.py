@@ -33,6 +33,34 @@ def _strip_wav_header(wav_bytes: bytes) -> bytes:
     return wav_bytes[marker + 8 :]
 
 
+# 2026-11-18: the reverse of _strip_wav_header above - app.voice.media_stream's VAD
+# hands us raw 16-bit PCM (no container), but Sarvam's /speech-to-text REST endpoint
+# (confirmed from Sarvam's own API docs, docs.sarvam.ai) takes a multipart audio
+# *file* and documents WAV (16-bit PCM) as the preferred/most-accurate format - so
+# the raw PCM needs a standard WAV header wrapped around it before upload. This is a
+# plain, canonical 44-byte PCM WAV header (no extra sub-chunks), the same shape
+# Google's own TTS response already uses (see _strip_wav_header above).
+def _make_wav_header(pcm_bytes: bytes, sample_rate_hz: int) -> bytes:
+    channels = 1
+    bits_per_sample = 16
+    byte_rate = sample_rate_hz * channels * bits_per_sample // 8
+    block_align = channels * bits_per_sample // 8
+    data_size = len(pcm_bytes)
+    header = b"RIFF"
+    header += (36 + data_size).to_bytes(4, "little")
+    header += b"WAVEfmt "
+    header += (16).to_bytes(4, "little")  # fmt chunk size
+    header += (1).to_bytes(2, "little")  # audio format: PCM
+    header += channels.to_bytes(2, "little")
+    header += sample_rate_hz.to_bytes(4, "little")
+    header += byte_rate.to_bytes(4, "little")
+    header += block_align.to_bytes(2, "little")
+    header += bits_per_sample.to_bytes(2, "little")
+    header += b"data"
+    header += data_size.to_bytes(4, "little")
+    return header + pcm_bytes
+
+
 class SttResult:
     def __init__(self, text: str, confidence: float | None) -> None:
         self.text = text
@@ -193,18 +221,78 @@ class GoogleTextToSpeech:
         return _strip_wav_header(wav_bytes)
 
 
-class DisabledSpeechToText:
-    """Sarvam STT is chosen in platform settings but not yet built - same
-    interface+disabled-stub pattern as app.integrations.shopify_write's
-    DisabledShopifyWriter, so the admin choice is honest (no invented API shape) and
-    nothing silently no-ops as success.
+class SarvamSpeechToText:
+    """Sarvam AI Speech-to-Text (`saaras:v3`), REST `/speech-to-text`.
+
+    Built 2026-11-18 as an alternative to GoogleSpeechToText above, after real calls
+    repeatedly showed Google returning an empty transcript on audio our own VAD
+    confirmed was genuine, clearly-loud speech (see app.voice.media_stream's VAD
+    stats logging) - a failure mode with no further diagnosis possible without
+    Google's own raw (undocumented) empty-result reason, and no fix confirmed on
+    Google's side. Uses a separate API key from TTS (app.speech.runtime.
+    EffectiveSpeech.stt_api_key / migration 0041) since this is a different provider
+    account, not just a different model from the same one.
+
+    Per Sarvam's own REST API docs (docs.sarvam.ai/api-reference-docs/api-guides-
+    tutorials/speech-to-text/rest-api): POST https://api.sarvam.ai/speech-to-text,
+    multipart/form-data, header `api-subscription-key`, form fields `file` (audio),
+    `model` (`saaras:v3` is the current default/recommended model), `mode`
+    (`transcribe`). Response JSON has a `transcript` string field. Max 30s of audio
+    per request (synchronous endpoint) - this app's own UtteranceDetector already
+    caps one utterance at max_utterance_ms=15_000 (see app.voice.media_stream), so a
+    single utterance always fits without needing the separate Batch API. WAV
+    (16-bit PCM) is the documented preferred format, hence _make_wav_header above;
+    8kHz and 16kHz are both supported per Sarvam's docs, so this does not depend on
+    which of the two platform_speech_settings.sample_rate_hz allows.
+
+    No `language_code` request field is documented for the `saaras:v3` model (unlike
+    the older/legacy `saarika` models) - it auto-detects the spoken language instead
+    and reports it back in the response's own `language_code` field, which is not
+    otherwise used here: this app's reply language is decided separately by
+    app.voice.service/app.agent, not by what language the caller's speech was in.
     """
 
     name = "sarvam"
 
+    def __init__(self, http: ExternalHttp, api_key: str) -> None:
+        self._http = http
+        self._key = api_key
+
     async def transcribe(self, pcm16_audio: bytes, sample_rate_hz: int, language: str) -> SttResult:
-        logger.error("sarvam STT selected but not implemented; VERIFY in DECISIONS.md")
-        return SttResult("", None)
+        if not pcm16_audio:
+            return SttResult("", None)
+        wav_bytes = _make_wav_header(pcm16_audio, sample_rate_hz)
+        try:
+            response = await self._http.request(
+                "POST",
+                "https://api.sarvam.ai/speech-to-text",
+                operation="stt_recognize",
+                headers={"api-subscription-key": self._key},
+                data={"model": "saaras:v3", "mode": "transcribe"},
+                files={"file": ("audio.wav", wav_bytes, "audio/wav")},
+            )
+        except UpstreamError:
+            return SttResult("", None)
+        if response.status_code != 200:
+            # Same rationale as GoogleSpeechToText.transcribe's matching log line:
+            # log the exact failure reason from the provider's own error body instead
+            # of guessing again on the next bad call.
+            logger.error(
+                "sarvam STT non-200: status=%d body=%s",
+                response.status_code,
+                response.text[:1000],
+            )
+            return SttResult("", None)
+        try:
+            data = response.json()
+        except ValueError:
+            return SttResult("", None)
+        transcript = str(data.get("transcript") or "").strip()
+        # Sarvam's documented saaras:v3 response does not include a per-result
+        # confidence score (unlike Google's `alternatives[0].confidence` above) -
+        # VERIFY if Sarvam adds one later; None is passed through unchanged exactly
+        # like Google's own "no confidence present" case already handles.
+        return SttResult(transcript, None)
 
 
 class DisabledTextToSpeech:
@@ -253,7 +341,9 @@ class FakeTextToSpeech:
 def make_stt(provider: str, http: ExternalHttp, api_key: str) -> SpeechToText:
     if provider == "google":
         return GoogleSpeechToText(http, api_key)
-    return DisabledSpeechToText()
+    if provider == "sarvam":
+        return SarvamSpeechToText(http, api_key)
+    raise ValueError(f"unknown stt provider: {provider!r}")
 
 
 def make_tts(provider: str, http: ExternalHttp, api_key: str) -> TextToSpeech:
