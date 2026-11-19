@@ -437,10 +437,6 @@ async def run_inbound(
     if isinstance(parsed, PolicyV2):
         from app.agent import runner_v1
 
-        async def _load_v1_state_task() -> None:
-            async with session_scope(factory, tenant_id=tenant_id) as session:
-                await runner_v1.load_v1_state(session, state, tenant_id, conversation_id, parsed)
-
         # PERFORMANCE FIX (2026-11-18): tool_box, v1 state load, and LLM-client creation
         # each only need factory/tenant_id/transport (or an independent DB session) - none
         # of them depends on either of the other two's result - but were previously awaited
@@ -452,9 +448,15 @@ async def run_inbound(
         # roughly the slowest of the three (~2s), saving ~1.3s of pure silence on every
         # live call, at zero infra cost. This only touches the V1 (PolicyV2) path, which is
         # the path real voice calls use - the V0 branch below is untouched.
+        # PERFORMANCE FIX (2026-11-19): runner_v1.load_v1_state now opens its own
+        # tenant-scoped sessions internally (see its own docstring-comment), the same
+        # change already made to _load_state above and app.voice.service._context -
+        # so it takes `factory` directly instead of a single shared session, and the
+        # one-line `_load_v1_state_task` wrapper that used to open that shared session
+        # is no longer needed.
         toolbox, _, llm_client = await asyncio.gather(
             _tool_box(factory, tenant_id, ctx.transport),
-            _load_v1_state_task(),
+            runner_v1.load_v1_state(factory, state, tenant_id, conversation_id, parsed),
             _llm(factory, tenant_id, ctx.transport, fast=inbound.is_live_call),
         )
         logger.info(

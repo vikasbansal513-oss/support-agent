@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import uuid
@@ -49,27 +50,143 @@ class RetryLater(Exception):
     pass
 
 
+async def _v1_fetch_conv_row(
+    factory: Factory, tenant_id: uuid.UUID, conversation_id: uuid.UUID
+) -> convstate.ConvRow:
+    async with session_scope(factory, tenant_id=tenant_id) as session:
+        return await convstate.load(session, conversation_id)
+
+
+async def _v1_fetch_customer_context(
+    factory: Factory,
+    tenant_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    day: date,
+    window_hours: int,
+) -> tuple[int, bool, int, int]:
+    async with session_scope(factory, tenant_id=tenant_id) as session:
+        return await customer_context(session, conversation_id, "refund_create", day, window_hours)
+
+
+async def _v1_fetch_killed(factory: Factory, tenant_id: uuid.UUID) -> dict[str, bool]:
+    # ROOT-CAUSE FIX (2026-11-17): was `{tool: await writes.killed(session, tool) for
+    # tool in WRITE_TOOLS}` - 5 sequential DB round-trips (one per WRITE_TOOLS entry,
+    # each itself issuing 2 queries) measured as a real contributor to a ~3s pre-LLM
+    # delay on a live voice call. killed_many() gets the identical per-tool result in
+    # 2 round-trips total. See app.actions.writes.killed_many for details.
+    async with session_scope(factory, tenant_id=tenant_id) as session:
+        return await writes.killed_many(session, WRITE_TOOLS)
+
+
+async def _v1_fetch_prior_writes(factory: Factory, tenant_id: uuid.UUID) -> Any:
+    async with session_scope(factory, tenant_id=tenant_id) as session:
+        return (
+            await session.execute(
+                text(
+                    "SELECT tool_name, order_ref FROM agent_actions WHERE tool_name IN"
+                    " ('address_update','exchange_request') AND status = ANY(:s)"
+                ),
+                {"s": list(ACTIVE_OR_DONE)},
+            )
+        ).all()
+
+
+async def _v1_fetch_customer_id(
+    factory: Factory, tenant_id: uuid.UUID, conversation_id: uuid.UUID
+) -> uuid.UUID:
+    async with session_scope(factory, tenant_id=tenant_id) as session:
+        return await writes._customer_of(session, conversation_id)
+
+
+async def _v1_fetch_pending_action(
+    factory: Factory, tenant_id: uuid.UUID, action_id: uuid.UUID
+) -> writes.ActionRow | None:
+    async with session_scope(factory, tenant_id=tenant_id) as session:
+        return await writes.get_action(session, action_id)
+
+
+async def _v1_fetch_claims(factory: Factory, tenant_id: uuid.UUID, customer_id: uuid.UUID) -> Any:
+    async with session_scope(factory, tenant_id=tenant_id) as session:
+        return (
+            await session.execute(
+                text(
+                    "SELECT a.tool_name, a.order_ref, a.conversation_id, a.status FROM agent_actions a"
+                    " JOIN conversations c ON c.id = a.conversation_id"
+                    " WHERE c.customer_id = :cu AND a.tool_name IS NOT NULL AND a.status = ANY(:s)"
+                ),
+                {"cu": customer_id, "s": list(ACTIVE_OR_DONE)},
+            )
+        ).all()
+
+
 async def load_v1_state(
-    session: AsyncSession,
+    factory: Factory,
     state: State,
     tenant_id: uuid.UUID,
     conversation_id: uuid.UUID,
     policy: PolicyV2 | None = None,
 ) -> convstate.ConvRow:
-    row = await convstate.load(session, conversation_id)
-    pending: dict[str, Any] | None = None
+    # PERFORMANCE FIX (2026-11-19): a real voice call's logs showed the
+    # "parallel tool_box/v1_state/llm_client" step (app.agent.runner) taking ~2s
+    # end to end, dominated by this function alone (v1_state=2043ms per the
+    # 2026-11-18 PERFORMANCE FIX comment on that call site) - this function was
+    # itself still doing 7 independent reads one after another on a single shared
+    # session (conv row, customer_context, killed_many, prior-writes, customer_of,
+    # plus the two that depend on those: the pending action and the active-claims
+    # lookup). Same pattern as app.agent.runner._load_state and
+    # app.voice.service._context before it: each independent read now opens its own
+    # tenant-scoped session and runs concurrently via asyncio.gather, in two waves -
+    # the first wave has no dependencies on each other; `action` (needs
+    # row.pending_action_id) and `claims` (needs customer_id) both depend only on
+    # first-wave results, not on each other, so they run concurrently with each
+    # other too. The state this function builds (state["conv"], state["gate_ctx"],
+    # state["prior_writes"], state["active_claims"]) and its return value are
+    # unchanged - only the order/concurrency of the reads that produce them changed.
+    # Note: customer_context() already looks up the same customer_id internally
+    # (see app.v1.regate.customer_context) that _v1_fetch_customer_id looks up again
+    # here for the claims query - that duplicate lookup already existed in the
+    # original sequential code (it called writes._customer_of twice too) and is left
+    # as-is rather than restructured, to keep this change to concurrency only.
+    # VERIFY: not exercised against a live DB from here (no app execution/pytest per
+    # this change's own constraints) - only checked with py_compile/ruff/mypy, and
+    # against this function's one caller (app.agent.runner.run_inbound, updated in
+    # the same change). Confirm on the next real voice call's logs that
+    # "run_inbound timing: parallel tool_box/v1_state/llm_client done" drops from
+    # ~2s closer to the slowest of tool_box/llm_client alone (previously ~650ms
+    # each per the 2026-11-18 comment).
+    day: date = timeutil.to_ist(timeutil.utc_now()).date()
+    window_hours = policy.fraud_cluster_window_hours if policy is not None else 24
+    (
+        row,
+        (refunded, recent, brand, recent_claims),
+        killed,
+        prior,
+        customer_id,
+    ) = await asyncio.gather(
+        _v1_fetch_conv_row(factory, tenant_id, conversation_id),
+        _v1_fetch_customer_context(factory, tenant_id, conversation_id, day, window_hours),
+        _v1_fetch_killed(factory, tenant_id),
+        _v1_fetch_prior_writes(factory, tenant_id),
+        _v1_fetch_customer_id(factory, tenant_id, conversation_id),
+    )
+    claims_coro = _v1_fetch_claims(factory, tenant_id, customer_id)
+    action: writes.ActionRow | None = None
     if row.pending_action_id is not None:
-        action = await writes.get_action(session, row.pending_action_id)
-        if action is not None:
-            pending = {
-                "id": str(action.id),
-                "tool": action.tool,
-                "order_ref": action.order_ref,
-                "amount_paise": action.amount_paise,
-                "status": action.status,
-                "expired": action.expires_at is not None
-                and action.expires_at <= timeutil.utc_now(),
-            }
+        action, claims = await asyncio.gather(
+            _v1_fetch_pending_action(factory, tenant_id, row.pending_action_id), claims_coro
+        )
+    else:
+        claims = await claims_coro
+    pending: dict[str, Any] | None = None
+    if action is not None:
+        pending = {
+            "id": str(action.id),
+            "tool": action.tool,
+            "order_ref": action.order_ref,
+            "amount_paise": action.amount_paise,
+            "status": action.status,
+            "expired": action.expires_at is not None and action.expires_at <= timeutil.utc_now(),
+        }
     state["conv"] = {
         "awaiting": row.awaiting,
         "unclear_count": row.unclear_count,
@@ -78,17 +195,6 @@ async def load_v1_state(
         "order_ref": row.context.get("order_ref"),
         "pending": pending,
     }
-    day: date = timeutil.to_ist(timeutil.utc_now()).date()
-    window_hours = policy.fraud_cluster_window_hours if policy is not None else 24
-    refunded, recent, brand, recent_claims = await customer_context(
-        session, conversation_id, "refund_create", day, window_hours
-    )
-    # ROOT-CAUSE FIX (2026-11-17): was `{tool: await writes.killed(session, tool) for
-    # tool in WRITE_TOOLS}` - 5 sequential DB round-trips (one per WRITE_TOOLS entry,
-    # each itself issuing 2 queries) measured as a real contributor to a ~3s pre-LLM
-    # delay on a live voice call. killed_many() gets the identical per-tool result in
-    # 2 round-trips total. See app.actions.writes.killed_many for details.
-    killed = await writes.killed_many(session, WRITE_TOOLS)
     state["gate_ctx"] = {
         "refunded_today": refunded,
         "recent_refund": recent,
@@ -96,15 +202,6 @@ async def load_v1_state(
         "killed": killed,
         "recent_claims": recent_claims,
     }
-    prior = (
-        await session.execute(
-            text(
-                "SELECT tool_name, order_ref FROM agent_actions WHERE tool_name IN"
-                " ('address_update','exchange_request') AND status = ANY(:s)"
-            ),
-            {"s": list(ACTIVE_OR_DONE)},
-        )
-    ).all()
     state["prior_writes"] = [{"tool": r.tool_name, "order_ref": r.order_ref} for r in prior]
     # Omnichannel duplicate guard (app.v1.graph's propose()): every in-flight/done write
     # action this same customer has, on ANY of their conversations/channels - not just this
@@ -113,17 +210,6 @@ async def load_v1_state(
     # WhatsApped the same cancel" once that link exists; before it's learned (e.g. first-ever
     # contact on a second channel), the two conversations still have separate customer rows
     # and this is a no-op, same as today.
-    customer_id = await writes._customer_of(session, conversation_id)
-    claims = (
-        await session.execute(
-            text(
-                "SELECT a.tool_name, a.order_ref, a.conversation_id, a.status FROM agent_actions a"
-                " JOIN conversations c ON c.id = a.conversation_id"
-                " WHERE c.customer_id = :cu AND a.tool_name IS NOT NULL AND a.status = ANY(:s)"
-            ),
-            {"cu": customer_id, "s": list(ACTIVE_OR_DONE)},
-        )
-    ).all()
     state["active_claims"] = [
         {
             "tool": r.tool_name,
