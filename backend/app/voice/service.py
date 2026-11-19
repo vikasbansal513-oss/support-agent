@@ -151,7 +151,9 @@ async def _ctx_fetch_order_ref(session: AsyncSession, conversation_id: uuid.UUID
     ).scalar_one_or_none()
 
 
-async def _ctx_fetch_said(session: AsyncSession, conversation_id: uuid.UUID, started_at: Any) -> Any:
+async def _ctx_fetch_said(
+    session: AsyncSession, conversation_id: uuid.UUID, started_at: Any
+) -> Any:
     return (
         (
             await session.execute(
@@ -167,7 +169,9 @@ async def _ctx_fetch_said(session: AsyncSession, conversation_id: uuid.UUID, sta
     )
 
 
-async def _ctx_fetch_acts(session: AsyncSession, conversation_id: uuid.UUID, started_at: Any) -> Any:
+async def _ctx_fetch_acts(
+    session: AsyncSession, conversation_id: uuid.UUID, started_at: Any
+) -> Any:
     return (
         await session.execute(
             text(
