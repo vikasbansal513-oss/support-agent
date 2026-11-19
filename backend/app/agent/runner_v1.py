@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 import uuid
 from datetime import date
 from typing import Any, cast
@@ -259,6 +260,21 @@ async def run(
     mailer: Mailer,
     fail: Any,
 ) -> None:
+    # TEMPORARY DIAGNOSTIC (2026-11-19): a real voice call's "run_inbound timing"
+    # logs (app.agent.runner) showed "v1 run done" taking ~7-50+ seconds AFTER the
+    # LLM call itself already returned (confirmed via the httpx logger's own
+    # "POST .../chat/completions 200 OK" line, which appears within ~1s of
+    # "parallel tool_box/v1_state/llm_client done") - i.e. the delay is somewhere
+    # in THIS function, after graph.ainvoke(), with zero existing log output to say
+    # which step. Each of _persist/_link_identities_from_order/_load_row/
+    # _handoff/_confirm_yes/_confirm_no/_plain below opens its own DB session(s)
+    # (same session_scope()-per-call pattern already fixed once in
+    # app.agent.runner._load_state and app.voice.service._context for a confirmed
+    # multi-second per-checkout cost on this DB/network path) - there are several
+    # more such checkouts here that weren't touched by that fix. These checkpoints
+    # narrow down which one(s). Remove once identified (then fix the same way, by
+    # consolidating checkouts, rather than leaving this logging in place).
+    _t0 = time.monotonic()
     factory = ctx.factory
     settings = get_settings()
     box = cast(V1ToolBox, toolbox)
@@ -272,6 +288,10 @@ async def run(
     except Exception as exc:
         await fail(factory, tenant_id, run_id, exc)
         raise
+    logger.info(
+        "v1 run timing: graph.ainvoke done elapsed_ms=%d",
+        int((time.monotonic() - _t0) * 1000),
+    )
     decision = DecisionV1.model_validate(final["decision_v1"])
     if decision.reason_code == "LLM_UNAVAILABLE" and ctx.job.attempts < ctx.job.max_attempts:
         await fail(factory, tenant_id, run_id, RetryLater("llm unavailable"))
@@ -288,10 +308,22 @@ async def run(
         mode,
         list(toolbox.calls),
     )
+    logger.info(
+        "v1 run timing: persist done elapsed_ms=%d",
+        int((time.monotonic() - _t0) * 1000),
+    )
     await _link_identities_from_order(factory, tenant_id, final)
+    logger.info(
+        "v1 run timing: link_identities done elapsed_ms=%d",
+        int((time.monotonic() - _t0) * 1000),
+    )
     if decision.action == "skip":
         return
     row = await _load_row(factory, tenant_id, conversation_id)
+    logger.info(
+        "v1 run timing: load_row done elapsed_ms=%d",
+        int((time.monotonic() - _t0) * 1000),
+    )
     if decision.action == "handoff":
         await _handoff(
             factory, senders, mailer, tenant_id, conversation_id, run_id, row, decision, mode
@@ -326,10 +358,18 @@ async def run(
             final,
             mailer,
         )
+    logger.info(
+        "v1 run timing: action done elapsed_ms=%d",
+        int((time.monotonic() - _t0) * 1000),
+    )
     async with session_scope(factory, tenant_id=tenant_id) as session:
         await session.execute(
             text("UPDATE inbound_events SET status = 'processed' WHERE id = :i"), {"i": event_id}
         )
+    logger.info(
+        "v1 run timing: inbound_events updated elapsed_ms=%d",
+        int((time.monotonic() - _t0) * 1000),
+    )
 
 
 async def _load_row(
