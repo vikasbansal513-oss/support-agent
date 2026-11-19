@@ -83,17 +83,29 @@ def mask(phone: str) -> str:
 
 
 async def _tenant_view(session: AsyncSession) -> TenantView:
+    # ROUND-TRIP FIX (2026-11-19): this used to be two separate session.execute() calls
+    # (the tenant row, then a second query for tenant_settings.timezone) - on this app's
+    # cross-region Neon path, real call logs showed every single DB round trip (even a
+    # trivial SELECT, already inside an open session/transaction) costing several hundred
+    # ms, and _start() alone makes ~17 of these sequentially before the greeting can be
+    # spoken (see this function's callers and app.voice.service._start's own comment) -
+    # that's where a real call's measured ~6-7s "agent hasn't said anything yet" gap
+    # mostly comes from, not any single slow query. Folding the timezone lookup into the
+    # tenant row's own query as a scalar subquery (same two tables, same RLS tenant
+    # scoping, same fallback-to-None-then-"Asia/Kolkata" behaviour as before) removes one
+    # of those round trips for every voice call. get_published_policy() and
+    # is_globally_paused() below are left as separate calls - both are shared helpers
+    # used by many other (non-voice) call sites, so folding them in is a bigger, riskier
+    # change not made in this pass.
     tenant = (
         await session.execute(
             text(
-                "SELECT name, status, mode, agent_paused FROM tenants"
-                " WHERE id = app_current_tenant()"
+                "SELECT name, status, mode, agent_paused,"
+                " (SELECT timezone FROM tenant_settings) AS timezone"
+                " FROM tenants WHERE id = app_current_tenant()"
             )
         )
     ).one()
-    zone = (
-        await session.execute(text("SELECT timezone FROM tenant_settings"))
-    ).scalar_one_or_none()
     parsed, _ = await policy_service.get_published_policy(session)
     return TenantView(
         name=str(tenant.name),
@@ -101,7 +113,7 @@ async def _tenant_view(session: AsyncSession) -> TenantView:
         mode=str(tenant.mode),
         paused=bool(tenant.agent_paused) or await is_globally_paused(session),
         policy=parsed if isinstance(parsed, PolicyV2) else None,
-        timezone=str(zone or "Asia/Kolkata"),
+        timezone=str(tenant.timezone or "Asia/Kolkata"),
     )
 
 
@@ -334,18 +346,27 @@ async def _log_message(
 
 
 async def _customer(session: AsyncSession, phone: str) -> uuid.UUID:
-    await session.execute(
-        text(
-            "INSERT INTO customers (phone_e164) VALUES (:v)"
-            " ON CONFLICT (tenant_id, phone_e164) WHERE phone_e164 IS NOT NULL DO NOTHING"
-        ),
-        {"v": phone},
-    )
+    # ROUND-TRIP FIX (2026-11-19): see _tenant_view's comment above for the full context
+    # (why cutting round trips in _start()'s call chain matters). This used to be an
+    # INSERT ... ON CONFLICT DO NOTHING, then a separate SELECT to get the id either way
+    # (DO NOTHING never returns a row on conflict, so the SELECT was unconditionally
+    # needed). Changed to DO UPDATE SET phone_e164 = EXCLUDED.phone_e164 - a no-op write
+    # of the same value on conflict - purely so RETURNING always gives back a row,
+    # whether this phone number is brand new or already existed. Same end result (the
+    # customer's id, row created if missing) in one round trip instead of two. This
+    # function is only used by the voice flow (not WhatsApp/email), so there's no other
+    # caller to affect.
     return uuid.UUID(
         str(
             (
                 await session.execute(
-                    text("SELECT id FROM customers WHERE phone_e164 = :v"), {"v": phone}
+                    text(
+                        "INSERT INTO customers (phone_e164) VALUES (:v)"
+                        " ON CONFLICT (tenant_id, phone_e164) WHERE phone_e164 IS NOT NULL"
+                        " DO UPDATE SET phone_e164 = EXCLUDED.phone_e164"
+                        " RETURNING id"
+                    ),
+                    {"v": phone},
                 )
             ).scalar_one()
         )
@@ -455,6 +476,24 @@ async def _record_latency(factory: Factory, voice: VoiceTenant, call_id: str, ms
 
 
 async def _start(factory: Factory, voice: VoiceTenant, event: VoiceEventIn) -> VoiceReplyOut:
+    # SESSION-MERGE FIX (2026-11-19): this function used to open the database TWICE -
+    # once for all the setup work below (tenant/customer/conversation/consent/order-
+    # memory/insert), then closed that connection, did the pure-Python _eligible() check
+    # and greeting-text lookup, and opened a SECOND, brand-new connection just to log the
+    # one outgoing greeting message. Every session_scope() open pays its own real cost
+    # (pool checkout, pre-ping, BEGIN, the set_config() RLS call) - on this app's
+    # cross-region Neon path that is a real, measured chunk of time, and paying it twice
+    # for one logical "set up this call and speak the greeting" unit of work was pure
+    # waste, proven safe to merge by the exact same pattern already used successfully in
+    # app.agent.runner_v1.load_v1_state and this module's own _context(). Nothing slow or
+    # external (no LLM/TTS call) happens between the old two blocks - _eligible() and
+    # speech.voice_line() are both pure in-memory lookups - so holding one connection
+    # across all of it is safe and doesn't hold it open during any network-bound work.
+    blocked: str | None = None
+    greeting: str | None = None
+    call_id: uuid.UUID | None = None
+    conv_id: uuid.UUID | None = None
+    view: TenantView | None = None
     async with session_scope(factory, tenant_id=voice.tenant_id) as session:
         view = await _tenant_view(session)
         customer_id = await _customer(session, event.from_number)
@@ -492,7 +531,10 @@ async def _start(factory: Factory, voice: VoiceTenant, event: VoiceEventIn) -> V
                 ).scalar_one()
             )
         )
-    blocked = _eligible(view, voice)
+        blocked = _eligible(view, voice)
+        if blocked is None:
+            greeting = speech.voice_line("greeting", "hinglish", brand=view.name)
+            await _log_message(session, conv_id, "out", greeting, None)
     if blocked is not None:
         return await _end_with_human(
             factory,
@@ -506,9 +548,12 @@ async def _start(factory: Factory, voice: VoiceTenant, event: VoiceEventIn) -> V
             event.from_number,
             "hinglish",
         )
-    greeting = speech.voice_line("greeting", "hinglish", brand=view.name)
-    async with session_scope(factory, tenant_id=voice.tenant_id) as session:
-        await _log_message(session, conv_id, "out", greeting, None)
+    if greeting is None:
+        # Unreachable in practice: blocked is None here, and greeting is always set in
+        # the same branch (above) that sets blocked = None. Guarded explicitly (instead
+        # of an assert, which ruff/production code disallows) purely so a future edit
+        # that breaks that invariant fails loudly instead of sending an empty reply.
+        raise RuntimeError("_start: greeting was not set despite call not being blocked")
     return _reply(greeting, "hinglish", barge_in=False)
 
 
@@ -525,24 +570,28 @@ async def _remember_order(
     days = get_settings().voice_order_memory_days
     if days <= 0:
         return None
-    previous = (
+    # ROUND-TRIP FIX (2026-11-19): see _tenant_view's comment above for the full context.
+    # This used to be a SELECT to find the previous order, then a separate UPDATE to copy
+    # it onto this conversation. Folded into one UPDATE ... FROM (subquery) statement -
+    # same lookup (same WHERE/ORDER BY/LIMIT as before) feeding straight into the same
+    # write, same end result (this conversation's active_order_ref set to that previous
+    # order, or left untouched with None returned if there wasn't one) in one round trip
+    # instead of two. Local to the voice flow only - no other caller.
+    updated = (
         await session.execute(
             text(
-                "SELECT active_order_ref FROM conversations WHERE customer_id = :u AND id <> :c"
-                " AND active_order_ref IS NOT NULL"
+                "UPDATE conversations SET active_order_ref = sub.prev"
+                " FROM (SELECT active_order_ref AS prev FROM conversations"
+                " WHERE customer_id = :u AND id <> :c AND active_order_ref IS NOT NULL"
                 " AND last_message_at >= now() - make_interval(days => :d)"
-                " ORDER BY last_message_at DESC LIMIT 1"
+                " ORDER BY last_message_at DESC LIMIT 1) sub"
+                " WHERE conversations.id = :c"
+                " RETURNING sub.prev"
             ),
             {"u": customer_id, "c": conversation_id, "d": days},
         )
     ).scalar_one_or_none()
-    if not previous:
-        return None
-    await session.execute(
-        text("UPDATE conversations SET active_order_ref = :r WHERE id = :c"),
-        {"r": previous, "c": conversation_id},
-    )
-    return str(previous)
+    return str(updated) if updated else None
 
 
 async def _conversation(session: AsyncSession, customer_id: uuid.UUID) -> uuid.UUID:
