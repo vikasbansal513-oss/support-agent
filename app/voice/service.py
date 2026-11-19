@@ -1,8 +1,10 @@
+import asyncio
 import json
 import logging
 import time
 import uuid
 from dataclasses import dataclass, replace
+from typing import Any
 
 import httpx
 from sqlalchemy import text
@@ -132,43 +134,92 @@ class CallContext:
     did: list[str]
 
 
+async def _ctx_fetch_call(session: AsyncSession, call_id: uuid.UUID) -> Any:
+    return (
+        await session.execute(
+            text("SELECT started_at, turn_count FROM voice_calls WHERE id = :i"), {"i": call_id}
+        )
+    ).one()
+
+
+async def _ctx_fetch_order_ref(session: AsyncSession, conversation_id: uuid.UUID) -> Any:
+    return (
+        await session.execute(
+            text("SELECT active_order_ref FROM conversations WHERE id = :c"),
+            {"c": conversation_id},
+        )
+    ).scalar_one_or_none()
+
+
+async def _ctx_fetch_said(
+    session: AsyncSession, conversation_id: uuid.UUID, started_at: Any
+) -> Any:
+    return (
+        (
+            await session.execute(
+                text(
+                    "SELECT content FROM messages WHERE conversation_id = :c AND channel = 'voice'"
+                    " AND direction = 'in' AND created_at >= :s ORDER BY created_at"
+                ),
+                {"c": conversation_id, "s": started_at},
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def _ctx_fetch_acts(
+    session: AsyncSession, conversation_id: uuid.UUID, started_at: Any
+) -> Any:
+    return (
+        await session.execute(
+            text(
+                "SELECT tool_name, status FROM agent_actions WHERE conversation_id = :c"
+                " AND tool_name IS NOT NULL AND created_at >= :s ORDER BY created_at"
+            ),
+            {"c": conversation_id, "s": started_at},
+        )
+    ).all()
+
+
 async def _context(
     factory: Factory, tenant_id: uuid.UUID, call_id: uuid.UUID, conversation_id: uuid.UUID
 ) -> CallContext:
+    # PERFORMANCE FIX (2026-11-19, supersedes the 2026-11-18 fix below it): the
+    # 2026-11-18 change ran these 4 reads concurrently via two asyncio.gather pairs,
+    # each read opening its OWN session_scope. The next real call ("voice turn timed
+    # out", 2026-11-19) showed "_context timing: all 4 queries done" still taking
+    # ~15.3s, with the single "call-row session acquired" checkout alone costing
+    # ~4.5s - i.e. the per-checkout cost (pool checkout + BEGIN + the tenant-context
+    # SET_CONFIG round trip), not the query itself, is what's slow on this DB/network
+    # path right now, and running 4 checkouts concurrently only overlaps that cost,
+    # it doesn't remove it.
+    # FIX: one shared session for the whole function, checked out once, running the
+    # 4 reads one after another on it - `said`/`acts` still wait on `call.started_at`
+    # exactly as before, they just no longer need their own separate connection to
+    # do so.
+    # VERIFY: not run against a live DB from here (no pytest/app execution per this
+    # change's own constraints) - only checked with `python -m py_compile`/ruff.
+    # Confirm on the next real call that this timing drops well below the ~15s seen
+    # on 2026-11-19. If the single checkout itself is STILL several seconds, that's
+    # DB/network latency this app's own code can't remove by restructuring queries -
+    # worth checking next whether DATABASE_URL points at Neon's pooled connection
+    # endpoint (see app.agent.runner._load_state's matching 2026-11-19 comment).
+    _t0 = time.monotonic()
     async with session_scope(factory, tenant_id=tenant_id) as session:
-        call = (
-            await session.execute(
-                text("SELECT started_at, turn_count FROM voice_calls WHERE id = :i"), {"i": call_id}
-            )
-        ).one()
-        order_ref = (
-            await session.execute(
-                text("SELECT active_order_ref FROM conversations WHERE id = :c"),
-                {"c": conversation_id},
-            )
-        ).scalar_one_or_none()
-        said = (
-            (
-                await session.execute(
-                    text(
-                        "SELECT content FROM messages WHERE conversation_id = :c AND channel = 'voice'"
-                        " AND direction = 'in' AND created_at >= :s ORDER BY created_at"
-                    ),
-                    {"c": conversation_id, "s": call.started_at},
-                )
-            )
-            .scalars()
-            .all()
+        logger.info(
+            "_context timing: session acquired elapsed_ms=%d",
+            int((time.monotonic() - _t0) * 1000),
         )
-        acts = (
-            await session.execute(
-                text(
-                    "SELECT tool_name, status FROM agent_actions WHERE conversation_id = :c"
-                    " AND tool_name IS NOT NULL AND created_at >= :s ORDER BY created_at"
-                ),
-                {"c": conversation_id, "s": call.started_at},
-            )
-        ).all()
+        call = await _ctx_fetch_call(session, call_id)
+        order_ref = await _ctx_fetch_order_ref(session, conversation_id)
+        said = await _ctx_fetch_said(session, conversation_id, call.started_at)
+        acts = await _ctx_fetch_acts(session, conversation_id, call.started_at)
+    logger.info(
+        "_context timing: all 4 queries done elapsed_ms=%d",
+        int((time.monotonic() - _t0) * 1000),
+    )
     did = [f"Call par {call.turn_count} baatein hui"]
     did += [f"{a.tool_name}: {a.status}" for a in acts][:8]
     return CallContext(
@@ -220,6 +271,8 @@ WHY = {
     "POLICY_EXCEPTION": "The voice agent isn't enabled for this brand yet, or the request fell"
     " outside policy.",
     "ACTION_FAILED": "A technical issue occurred during the call.",
+    "ACTION_TIMEOUT": "The AI assistant took too long to respond and was cut off to avoid"
+    " leaving the customer in silence.",
     # Section 17.1 consent-capture (see _consent_turn):
     "HUMAN_REQUESTED": "Customer asked to speak with a human right at the start of the call.",
     "CONSENT_DECLINED": "Customer did not consent to speaking with the AI assistant / having the"
@@ -845,44 +898,35 @@ async def _turn(
     event: VoiceEventIn,
     transport: httpx.AsyncBaseTransport | None,
 ) -> VoiceReplyOut:
+    # TEMPORARY DIAGNOSTIC (2026-11-19): a real voice call's STT result ("voice-stream
+    # stt result" in app.voice.media_stream) landed ~8s before this same turn's LLM
+    # call started (app.agent.runner_v1.run's own "v1 run timing: graph.ainvoke done"
+    # checkpoint, backing out its own elapsed_ms) - i.e. ~8s of unaccounted-for time
+    # sits somewhere between STT finishing and graph.ainvoke starting, with no
+    # existing log to say where. This turn's own DB work (the session_scope right
+    # below, and the separate one in _run_agent) is the leading suspect - each one is
+    # its own connection checkout, the same per-checkout cost already confirmed
+    # expensive on this DB/network path and already fixed once elsewhere (see
+    # app.agent.runner_v1.load_v1_state's and this module's _context's own comments)
+    # but never consolidated for _turn/_run_agent themselves. This checkpoint and the
+    # ones in _run_agent below narrow down which segment it actually is. Logging
+    # only, no logic change - remove once identified (then fix by consolidating
+    # checkouts, same as those other two places, rather than leaving this in).
+    _t0 = time.monotonic()
     settings = get_settings()
     async with session_scope(factory, tenant_id=voice.tenant_id) as session:
         call = await _load_call(session, event.call_id)
         view = await _tenant_view(session)
+    logger.info(
+        "voice turn timing: _turn's own session_scope done elapsed_ms=%d",
+        int((time.monotonic() - _t0) * 1000),
+    )
     if call is None:
         return _reply(speech.voice_line("error", "hinglish"), "hinglish", "hangup")
     lang = call.language
     if call.status != "in_progress":
         return _reply("", lang, "hangup")
     utterance = event.speech.strip() or speech.digits_to_text(event.digits)
-
-    if not utterance and event.heard_unclear:
-        # 2026-11-17 fix: the caller WAS speaking (that's the only way the Edesy
-        # audio path ever reaches here with empty speech - see
-        # media_stream._on_utterance's comment) but STT returned no text. Treat this
-        # like any other low-confidence turn ("I couldn't hear that clearly, please
-        # say it again"), not like true silence ("are you still there?") - and hand
-        # off as CONFUSED ("unclear audio"), not SILENCE_NO_RESPONSE ("no response"),
-        # if it keeps happening. True provider-reported silence (heard_unclear=False)
-        # falls through to the unchanged block below.
-        streak = call.low_confidence_streak + 1
-        async with session_scope(factory, tenant_id=voice.tenant_id) as session:
-            await _bump(session, call, low=streak, quiet=0)
-        if streak >= settings.voice_low_confidence_limit:
-            return await _end_with_human(
-                factory,
-                voice,
-                view,
-                call.id,
-                call.conversation_id,
-                None,
-                "CONFUSED",
-                "awaaz saaf nahi",
-                event.from_number,
-                lang,
-            )
-        key = "unclear_confirm" if call.awaiting == "confirm" else "unclear_audio"
-        return _reply(speech.voice_line(key, lang), lang)
 
     if not utterance:
         async with session_scope(factory, tenant_id=voice.tenant_id) as session:
@@ -981,6 +1025,14 @@ async def _run_agent(
     ext: str,
     transport: httpx.AsyncBaseTransport | None,
 ) -> VoiceReplyOut:
+    # TEMPORARY DIAGNOSTIC (2026-11-19) - see _turn's matching comment above. This
+    # function has its own session_scope checkout (right below) AND _senders ->
+    # build_senders opens another one of its own further down - both separate from
+    # _turn's. These checkpoints narrow down whether the ~8s gap is in this function's
+    # DB writes, in _senders/build_senders, or only shows up once inside
+    # runner.run_inbound itself (which already has its own internal timing logs).
+    # Logging only, no logic change - remove once identified.
+    _t0 = time.monotonic()
     async with session_scope(factory, tenant_id=voice.tenant_id) as session:
         done = (
             await session.execute(
@@ -1020,9 +1072,17 @@ async def _run_agent(
             {"c": call.conversation_id},
         )
         await _bump(session, call, turns=1, low=0, quiet=0)
+    logger.info(
+        "voice turn timing: _run_agent's own session_scope done elapsed_ms=%d",
+        int((time.monotonic() - _t0) * 1000),
+    )
 
     capture = CaptureVoiceSender()
     senders = await _senders(factory, voice.tenant_id, capture)
+    logger.info(
+        "voice turn timing: _senders done elapsed_ms=%d",
+        int((time.monotonic() - _t0) * 1000),
+    )
     job = queue.Job(
         id=uuid.uuid4(),
         tenant_id=voice.tenant_id,
@@ -1038,10 +1098,92 @@ async def _run_agent(
         from_phone=event.from_number,
         text=utterance[:2000],
         received_at=timeutil.utc_now(),
+        # ROOT-CAUSE FIX (2026-11-17): tells app.agent.runner._llm to use a short,
+        # no-retry timeout for this run's LLM call instead of the WhatsApp/email
+        # default (see NormalizedInbound.is_live_call's docstring for the full
+        # reasoning/evidence - a real call measured a 99.7s silent gap without this).
+        is_live_call=True,
     )
-    try:
+    # HARD SAFETY NET (2026-11-17): this is on top of (not instead of) the specific
+    # fixes already made for the LLM call (app.agent.runner._llm's fast/no-retry mode)
+    # and TTS (app.webhooks.voice_stream's short TTS timeout). Those targeted two
+    # confirmed slow spots, but a real call also showed a 25-33s gap with no matching
+    # LLM/TTS/STT activity at all - that gap sits *after* run_inbound returns (its
+    # last log line, "v1 run done", is right before the return), i.e. inside
+    # _finish_turn/_handoff_reply/_context below (see their "... timing" diagnostic
+    # logs), which only do DB queries - no external HTTP call to blame it on yet.
+    # There may be other slow paths (DB, a future integration call, etc.) not
+    # discovered yet either. A live phone call cannot tolerate open-ended silence
+    # while every individual cause gets hunted down one at a time - so this wraps
+    # run_inbound AND _finish_turn (the *entire* per-turn pipeline, not just the LLM
+    # part) in one hard ceiling. Whatever is slow, anywhere in that span, the caller
+    # hears SOMETHING (a graceful "connecting you" handoff) within this timeout,
+    # never silence beyond it.
+    #
+    # CORRECTION (2026-11-17): the original 12s budget here assumed "~6s generous
+    # headroom for every DB step" - but a real call's diagnostic logs showed the
+    # pre-LLM DB work ALONE (load_state + _tool_box + runner_v1.load_v1_state) took
+    # 7.3s, more than that entire assumed headroom, before the LLM call even started.
+    # That meant this outer 12s ceiling could fire and hard-cancel the LLM call
+    # mid-flight, *before* its own 6s timeout (LIVE_CALL_LLM_TIMEOUT_S) got a chance
+    # to finish and fail gracefully - the worse of the two outcomes. Root cause of
+    # that DB slowness: _tool_box and load_v1_state's `killed` loop were each doing
+    # 1 DB round-trip per item (9 and 10 round-trips respectively) where 1-2 would
+    # do - now fixed (see app.integrations.service.load_secrets and
+    # app.actions.writes.killed_many). With that fixed, pre-LLM DB work should be
+    # ~1-2s on a normal call, so 16s gives the 6s LLM call room to run AND fail
+    # gracefully inside the ceiling, plus real headroom for finish_turn/
+    # handoff_reply/_context afterward - without the outer net racing the inner one.
+    #
+    # RAISED 16s -> 25s (2026-11-19): a real call ("voice turn timed out") tripped
+    # this ceiling with run_inbound's own "v1 run done" log at ~14.1s and
+    # _context's "all 4 queries done" at ~15.3s AFTER that - i.e. legitimate (if
+    # slow) DB-bound work, not a hang, was still running past 16s. The matching
+    # fix in app.agent.runner._load_state and this module's _context (one shared
+    # session per function instead of several) should bring normal turns back
+    # down well under 16s; this bump is a safety margin on top of that fix, not a
+    # replacement for it, so a call still gets SOME reply within 25s instead of
+    # silence even if a particular turn is still slow for another reason.
+    TURN_TIMEOUT_S = 25.0
+
+    async def _process_and_finish() -> VoiceReplyOut:
+        logger.info(
+            "voice turn timing: about to call run_inbound elapsed_ms=%d",
+            int((time.monotonic() - _t0) * 1000),
+        )
         await runner.run_inbound(
             ctx, voice.tenant_id, event_id, call.conversation_id, message_id, inbound
+        )
+        return await _finish_turn(factory, voice, view, call, event, event_id, utterance, capture)
+
+    try:
+        return await asyncio.wait_for(_process_and_finish(), timeout=TURN_TIMEOUT_S)
+    except TimeoutError:
+        error_id = new_error_id()
+        logger.error(
+            "voice turn timed out",
+            extra={"error_id": error_id, "timeout_s": TURN_TIMEOUT_S},
+        )
+        async with session_scope(factory, tenant_id=voice.tenant_id) as session:
+            await session.execute(
+                text(
+                    "UPDATE inbound_events SET status = 'skipped', skip_reason = 'VOICE_TIMEOUT'"
+                    " WHERE id = :i AND status NOT IN ('processed','skipped')"
+                ),
+                {"i": event_id},
+            )
+        return await _end_with_human(
+            factory,
+            voice,
+            view,
+            call.id,
+            call.conversation_id,
+            None,
+            "ACTION_TIMEOUT",
+            utterance,
+            event.from_number,
+            call.language,
+            spoken_override=speech.voice_line("error", call.language),
         )
     except Exception as exc:
         error_id = new_error_id()
@@ -1069,7 +1211,6 @@ async def _run_agent(
             call.language,
             spoken_override=speech.voice_line("error", call.language),
         )
-    return await _finish_turn(factory, voice, view, call, event, event_id, utterance, capture)
 
 
 async def _finish_turn(
@@ -1082,6 +1223,15 @@ async def _finish_turn(
     utterance: str,
     capture: CaptureVoiceSender,
 ) -> VoiceReplyOut:
+    # TEMPORARY DIAGNOSTIC (2026-11-17): a real call's external_calls rows showed a
+    # ~25s gap with zero HTTP activity (no groq/TTS/STT row) between run_inbound
+    # finishing and the next TTS call - i.e. the delay is somewhere in this function's
+    # own DB work (or app.voice.service._handoff_reply/_context below), not in any
+    # external API. Nothing here was timed before, so there's no way yet to tell DB
+    # query time apart from lock contention apart from a slow Neon connection. These
+    # checkpoints mirror app.agent.runner.run_inbound's existing timing-log style.
+    # Remove once the slow stage is identified.
+    _t0 = time.monotonic()
     async with session_scope(factory, tenant_id=voice.tenant_id) as session:
         lang_row = (
             await session.execute(
@@ -1098,9 +1248,17 @@ async def _finish_turn(
                 {"e": event_id},
             )
         ).first()
+    logger.info(
+        "finish_turn timing: lang/handoff lookup done elapsed_ms=%d",
+        int((time.monotonic() - _t0) * 1000),
+    )
     lang = (lang_row.language if lang_row and lang_row.language else call.language) or "hinglish"
     if handed is not None:
         reply = await _handoff_reply(factory, voice, view, call, handed.reason_code, lang, capture)
+        logger.info(
+            "finish_turn timing: handoff_reply done elapsed_ms=%d",
+            int((time.monotonic() - _t0) * 1000),
+        )
     else:
         lines = [speech.speakable(line, lang) for line in capture.lines] or [
             speech.voice_line("unclear_audio", lang)
@@ -1133,6 +1291,7 @@ async def _finish_turn(
             ),
             {"r": json.dumps({"voice_reply": reply.model_dump(mode="json")}), "i": event_id},
         )
+    logger.info("finish_turn timing: done elapsed_ms=%d", int((time.monotonic() - _t0) * 1000))
     return reply
 
 
@@ -1145,6 +1304,10 @@ async def _handoff_reply(
     lang: str,
     capture: CaptureVoiceSender,
 ) -> VoiceReplyOut:
+    # TEMPORARY DIAGNOSTIC (2026-11-17): see app.voice.service._finish_turn's matching
+    # note - this is the handoff path of the same unexplained ~25s gap, so it gets the
+    # same checkpoints. Remove once the slow stage is identified.
+    _t0 = time.monotonic()
     transfer = voice.transfer_number if voice.transfer_number and _in_hours(view) else None
     if transfer:
         line, status, action = speech.voice_line("transfer", lang), "transferred", "transfer"
@@ -1152,6 +1315,10 @@ async def _handoff_reply(
         key = "callback" if _in_hours(view) else "callback_off_hours"
         line, status, action = speech.voice_line(key, lang), "callback", "hangup"
     ctx = await _context(factory, voice.tenant_id, call.id, call.conversation_id)
+    logger.info(
+        "handoff_reply timing: _context done elapsed_ms=%d",
+        int((time.monotonic() - _t0) * 1000),
+    )
     async with session_scope(factory, tenant_id=voice.tenant_id) as session:
         phone = (
             await session.execute(
@@ -1171,6 +1338,7 @@ async def _handoff_reply(
             ),
             {"s": status, "r": reason[:100], "i": call.id},
         )
+    logger.info("handoff_reply timing: done elapsed_ms=%d", int((time.monotonic() - _t0) * 1000))
     return _reply(
         line,
         lang,
