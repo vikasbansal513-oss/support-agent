@@ -149,107 +149,90 @@ def _label(policy: AnyPolicy | None, tz: str) -> tuple[bool, str | None]:
     return False, local.strftime("%d %b, %I:%M %p")
 
 
-async def _fetch_tenant_row(factory: Factory, tenant_id: uuid.UUID) -> Any:
-    async with session_scope(factory, tenant_id=tenant_id) as session:
-        return (
-            await session.execute(
-                text("SELECT mode, agent_paused, name FROM tenants WHERE id = :t"), {"t": tenant_id}
-            )
-        ).one()
+async def _fetch_tenant_row(session: AsyncSession, tenant_id: uuid.UUID) -> Any:
+    return (
+        await session.execute(
+            text("SELECT mode, agent_paused, name FROM tenants WHERE id = :t"), {"t": tenant_id}
+        )
+    ).one()
 
 
-async def _fetch_policy_row(
-    factory: Factory, tenant_id: uuid.UUID
-) -> tuple[Any | None, int | None]:
-    async with session_scope(factory, tenant_id=tenant_id) as session:
-        return await policy_service.get_published_policy(session)
+async def _fetch_policy_row(session: AsyncSession) -> tuple[Any | None, int | None]:
+    return await policy_service.get_published_policy(session)
 
 
-async def _fetch_conversation_row(
-    factory: Factory, tenant_id: uuid.UUID, conversation_id: uuid.UUID
-) -> Any:
-    async with session_scope(factory, tenant_id=tenant_id) as session:
-        return (
-            await session.execute(
-                text(
-                    "SELECT c.customer_id, c.channel, c.human_active, c.active_order_ref,"
-                    " c.identity_attempts, c.language, cu.phone_e164, cu.email_lower, cu.name"
-                    " FROM conversations c JOIN customers cu ON cu.id = c.customer_id WHERE c.id = :c"
-                ),
-                {"c": conversation_id},
-            )
-        ).one()
+async def _fetch_conversation_row(session: AsyncSession, conversation_id: uuid.UUID) -> Any:
+    return (
+        await session.execute(
+            text(
+                "SELECT c.customer_id, c.channel, c.human_active, c.active_order_ref,"
+                " c.identity_attempts, c.language, cu.phone_e164, cu.email_lower, cu.name"
+                " FROM conversations c JOIN customers cu ON cu.id = c.customer_id WHERE c.id = :c"
+            ),
+            {"c": conversation_id},
+        )
+    ).one()
 
 
-async def _fetch_settings_row(factory: Factory, tenant_id: uuid.UUID) -> Any:
-    async with session_scope(factory, tenant_id=tenant_id) as session:
-        return (await session.execute(text("SELECT timezone FROM tenant_settings"))).first()
+async def _fetch_settings_row(session: AsyncSession) -> Any:
+    return (await session.execute(text("SELECT timezone FROM tenant_settings"))).first()
 
 
 async def _fetch_history_rows(
-    factory: Factory, tenant_id: uuid.UUID, conversation_id: uuid.UUID, message_id: uuid.UUID
+    session: AsyncSession, conversation_id: uuid.UUID, message_id: uuid.UUID
 ) -> Any:
-    async with session_scope(factory, tenant_id=tenant_id) as session:
-        return (
-            await session.execute(
-                text(
-                    "SELECT sender, content FROM messages WHERE conversation_id = :c AND id <> :m"
-                    " AND direction IN ('in','out') AND (action_id IS NULL OR action_id IN"
-                    " (SELECT id FROM agent_actions WHERE status = 'sent'))"
-                    " ORDER BY created_at DESC LIMIT :n"
-                ),
-                {"c": conversation_id, "m": message_id, "n": HISTORY_LIMIT},
-            )
-        ).all()
+    return (
+        await session.execute(
+            text(
+                "SELECT sender, content FROM messages WHERE conversation_id = :c AND id <> :m"
+                " AND direction IN ('in','out') AND (action_id IS NULL OR action_id IN"
+                " (SELECT id FROM agent_actions WHERE status = 'sent'))"
+                " ORDER BY created_at DESC LIMIT :n"
+            ),
+            {"c": conversation_id, "m": message_id, "n": HISTORY_LIMIT},
+        )
+    ).all()
 
 
-async def _fetch_contacted_row(
-    factory: Factory, tenant_id: uuid.UUID, conversation_id: uuid.UUID
-) -> Any:
-    async with session_scope(factory, tenant_id=tenant_id) as session:
-        return (
-            await session.execute(
-                text(
-                    "SELECT 1 FROM messages WHERE conversation_id = :c AND direction = 'out' AND"
-                    " (action_id IS NULL OR action_id IN (SELECT id FROM agent_actions WHERE status = 'sent'))"
-                    " LIMIT 1"
-                ),
-                {"c": conversation_id},
-            )
-        ).first()
+async def _fetch_contacted_row(session: AsyncSession, conversation_id: uuid.UUID) -> Any:
+    return (
+        await session.execute(
+            text(
+                "SELECT 1 FROM messages WHERE conversation_id = :c AND direction = 'out' AND"
+                " (action_id IS NULL OR action_id IN (SELECT id FROM agent_actions WHERE status = 'sent'))"
+                " LIMIT 1"
+            ),
+            {"c": conversation_id},
+        )
+    ).first()
 
 
 async def _fetch_refs_rows(
-    factory: Factory, tenant_id: uuid.UUID, conversation_id: uuid.UUID, run_id: uuid.UUID
+    session: AsyncSession, conversation_id: uuid.UUID, run_id: uuid.UUID
 ) -> Any:
-    async with session_scope(factory, tenant_id=tenant_id) as session:
-        return (
-            await session.execute(
-                text(
-                    "SELECT decision->>'order_ref' AS ref FROM agent_runs WHERE conversation_id = :c"
-                    " AND id <> :r AND status = 'done' AND decision->>'action' = 'reply'"
-                    " AND decision->>'order_ref' IS NOT NULL AND started_at > now() - interval '24 hours'"
-                ),
-                {"c": conversation_id, "r": run_id},
-            )
-        ).all()
+    return (
+        await session.execute(
+            text(
+                "SELECT decision->>'order_ref' AS ref FROM agent_runs WHERE conversation_id = :c"
+                " AND id <> :r AND status = 'done' AND decision->>'action' = 'reply'"
+                " AND decision->>'order_ref' IS NOT NULL AND started_at > now() - interval '24 hours'"
+            ),
+            {"c": conversation_id, "r": run_id},
+        )
+    ).all()
 
 
-async def _fetch_opted_row(
-    factory: Factory, tenant_id: uuid.UUID, customer_id: uuid.UUID, channel: str
-) -> Any:
-    async with session_scope(factory, tenant_id=tenant_id) as session:
-        return (
-            await session.execute(
-                text("SELECT 1 FROM opt_outs WHERE customer_id = :c AND channel = :ch"),
-                {"c": customer_id, "ch": channel},
-            )
-        ).first()
+async def _fetch_opted_row(session: AsyncSession, customer_id: uuid.UUID, channel: str) -> Any:
+    return (
+        await session.execute(
+            text("SELECT 1 FROM opt_outs WHERE customer_id = :c AND channel = :ch"),
+            {"c": customer_id, "ch": channel},
+        )
+    ).first()
 
 
-async def _fetch_global_pause(factory: Factory, tenant_id: uuid.UUID) -> bool:
-    async with session_scope(factory, tenant_id=tenant_id) as session:
-        return await is_globally_paused(session)
+async def _fetch_global_pause(session: AsyncSession) -> bool:
+    return await is_globally_paused(session)
 
 
 async def _load_state(
@@ -261,53 +244,42 @@ async def _load_state(
     inbound: NormalizedInbound,
     run_id: uuid.UUID,
 ) -> tuple[State, str, int | None]:
-    # PERFORMANCE FIX (2026-11-18): this function used to run 8 DB reads one after
-    # another on a single shared session - a real voice call's "run_inbound timing:
-    # load_state done" log showed this step alone taking ~1.9s, which is pure dead
-    # air to a live caller on a phone call (see app.voice.service.TURN_TIMEOUT_S's own
-    # comment on why pre-LLM DB work has to stay small). Of the 8 reads, only `opted`
-    # depends on another read's result (conv.customer_id/channel) - the other 7 are
-    # fully independent of each other and of `opted`, so they now run concurrently,
-    # each on its own connection (same asyncio.gather pattern already used below for
-    # tool_box/v1_state/llm_client), cutting ~7 sequential round trips down to
-    # roughly the slowest single one. `opted` then runs right after `conv` resolves -
-    # one extra round trip, not eight.
-    # This trades one shared transaction for several independent read-only ones,
-    # which is safe here: every query is a plain read, nothing here needs to see the
-    # agent_runs row this same turn just inserted, and none of the 7 need each
-    # other's result.
+    # PERFORMANCE FIX (2026-11-19, supersedes the 2026-11-18 fix below it): the
+    # 2026-11-18 change made these reads run concurrently via asyncio.gather, each
+    # opening its OWN session_scope (own pooled-connection checkout + BEGIN + the
+    # tenant-context SET_CONFIG round trip). That cut the number of *sequential*
+    # round trips, but the next real voice call ("voice turn timed out", 2026-11-19)
+    # still showed "run_inbound timing: load_state done" taking several seconds, and
+    # app.voice.service._context's matching "session acquired" timing log showed why:
+    # on this DB/network path, EACH session_scope() checkout alone was costing
+    # several seconds - gather() running 8 of those checkouts concurrently only
+    # overlaps that per-checkout cost, it does not remove it, and this DB/network
+    # path isn't absorbing that overlap for free. 8 (9 counting `opted`) separate
+    # checkouts meant paying that cost up to 9 times in one turn, pushing the whole
+    # turn close enough to TURN_TIMEOUT_S (16s, see app.voice.service.TURN_TIMEOUT_S)
+    # to trip it.
+    # FIX: back to ONE shared session for this whole function (checked out once),
+    # running the reads one after another on it - same 7 independent reads plus
+    # `opted` (which still depends on `conv.customer_id`/`conv.channel`) as before,
+    # just no longer each opening their own connection to do it.
     # VERIFY: not run against a live DB from here (no pytest/app execution per this
-    # change's own constraints) - only checked with `python -m py_compile` for syntax.
-    # Confirm on the next real call that "run_inbound timing: load_state done" drops
-    # from ~1.9s toward ~0.3-0.5s, and that no tenant/RLS error appears (each helper
-    # opens its own tenant-scoped session via session_scope, same as the existing
-    # concurrent block below). Real end-to-end turn time also depends heavily on DB
-    # *connection* latency (a separate, still-open question - see
-    # app.voice.service._context's own "session acquired" timing log, which has shown
-    # multi-second connection-acquisition times on some calls, most likely Neon
-    # cold-start/region latency rather than anything in this app's code) - this fix
-    # only removes this app's own needless serialization, it does not fix a slow
-    # underlying DB connection.
-    (
-        tenant,
-        (policy, policy_version),
-        conv,
-        settings_row,
-        history_rows,
-        contacted,
-        refs_rows,
-        global_paused,
-    ) = await asyncio.gather(
-        _fetch_tenant_row(factory, tenant_id),
-        _fetch_policy_row(factory, tenant_id),
-        _fetch_conversation_row(factory, tenant_id, conversation_id),
-        _fetch_settings_row(factory, tenant_id),
-        _fetch_history_rows(factory, tenant_id, conversation_id, message_id),
-        _fetch_contacted_row(factory, tenant_id, conversation_id),
-        _fetch_refs_rows(factory, tenant_id, conversation_id, run_id),
-        _fetch_global_pause(factory, tenant_id),
-    )
-    opted = await _fetch_opted_row(factory, tenant_id, conv.customer_id, conv.channel)
+    # change's own constraints) - only checked with `python -m py_compile`/ruff.
+    # Confirm on the next real call that "load_state done" drops well below the
+    # several seconds seen on 2026-11-19. If a single checkout here is STILL taking
+    # multiple seconds, that's DB/network latency this app's own code can't remove by
+    # restructuring queries - worth checking next whether DATABASE_URL points at
+    # Neon's pooled connection endpoint, and how many concurrent sessions are
+    # actually competing for this app's db_pool_size (default 5) at the same moment.
+    async with session_scope(factory, tenant_id=tenant_id) as session:
+        tenant = await _fetch_tenant_row(session, tenant_id)
+        policy, policy_version = await _fetch_policy_row(session)
+        conv = await _fetch_conversation_row(session, conversation_id)
+        settings_row = await _fetch_settings_row(session)
+        history_rows = await _fetch_history_rows(session, conversation_id, message_id)
+        contacted = await _fetch_contacted_row(session, conversation_id)
+        refs_rows = await _fetch_refs_rows(session, conversation_id, run_id)
+        global_paused = await _fetch_global_pause(session)
+        opted = await _fetch_opted_row(session, conv.customer_id, conv.channel)
     tz = settings_row.timezone if settings_row else "Asia/Kolkata"
     inside, opens = _label(policy, tz)
     phone, email = conv.phone_e164, conv.email_lower
@@ -419,10 +391,10 @@ async def run_inbound(
             )
             return
         run_id: uuid.UUID = run.id
-    # PERFORMANCE FIX (2026-11-18): _load_state now opens its own tenant-scoped
-    # sessions concurrently (see its own docstring-comment) instead of sharing this
-    # block's session, so it's called after this `async with` block closes rather
-    # than inside it - it no longer needs (or accepts) this session.
+    # _load_state opens and manages its own single tenant-scoped session internally
+    # (see its own comment, updated 2026-11-19) rather than sharing this block's
+    # session, so it's called after this `async with` block closes rather than
+    # inside it - it no longer needs (or accepts) this session.
     state, mode, policy_version = await _load_state(
         factory, tenant_id, event_id, conversation_id, message_id, inbound, run_id
     )

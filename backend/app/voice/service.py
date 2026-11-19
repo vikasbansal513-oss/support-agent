@@ -134,95 +134,84 @@ class CallContext:
     did: list[str]
 
 
-async def _ctx_fetch_call(factory: Factory, tenant_id: uuid.UUID, call_id: uuid.UUID) -> Any:
-    _t0 = time.monotonic()
-    async with session_scope(factory, tenant_id=tenant_id) as session:
-        logger.info(
-            "_context timing: call-row session acquired elapsed_ms=%d",
-            int((time.monotonic() - _t0) * 1000),
+async def _ctx_fetch_call(session: AsyncSession, call_id: uuid.UUID) -> Any:
+    return (
+        await session.execute(
+            text("SELECT started_at, turn_count FROM voice_calls WHERE id = :i"), {"i": call_id}
         )
-        return (
-            await session.execute(
-                text("SELECT started_at, turn_count FROM voice_calls WHERE id = :i"), {"i": call_id}
-            )
-        ).one()
+    ).one()
 
 
-async def _ctx_fetch_order_ref(
-    factory: Factory, tenant_id: uuid.UUID, conversation_id: uuid.UUID
-) -> Any:
-    async with session_scope(factory, tenant_id=tenant_id) as session:
-        return (
-            await session.execute(
-                text("SELECT active_order_ref FROM conversations WHERE id = :c"),
-                {"c": conversation_id},
-            )
-        ).scalar_one_or_none()
-
-
-async def _ctx_fetch_said(
-    factory: Factory, tenant_id: uuid.UUID, conversation_id: uuid.UUID, started_at: Any
-) -> Any:
-    async with session_scope(factory, tenant_id=tenant_id) as session:
-        return (
-            (
-                await session.execute(
-                    text(
-                        "SELECT content FROM messages WHERE conversation_id = :c AND channel = 'voice'"
-                        " AND direction = 'in' AND created_at >= :s ORDER BY created_at"
-                    ),
-                    {"c": conversation_id, "s": started_at},
-                )
-            )
-            .scalars()
-            .all()
+async def _ctx_fetch_order_ref(session: AsyncSession, conversation_id: uuid.UUID) -> Any:
+    return (
+        await session.execute(
+            text("SELECT active_order_ref FROM conversations WHERE id = :c"),
+            {"c": conversation_id},
         )
+    ).scalar_one_or_none()
 
 
-async def _ctx_fetch_acts(
-    factory: Factory, tenant_id: uuid.UUID, conversation_id: uuid.UUID, started_at: Any
-) -> Any:
-    async with session_scope(factory, tenant_id=tenant_id) as session:
-        return (
+async def _ctx_fetch_said(session: AsyncSession, conversation_id: uuid.UUID, started_at: Any) -> Any:
+    return (
+        (
             await session.execute(
                 text(
-                    "SELECT tool_name, status FROM agent_actions WHERE conversation_id = :c"
-                    " AND tool_name IS NOT NULL AND created_at >= :s ORDER BY created_at"
+                    "SELECT content FROM messages WHERE conversation_id = :c AND channel = 'voice'"
+                    " AND direction = 'in' AND created_at >= :s ORDER BY created_at"
                 ),
                 {"c": conversation_id, "s": started_at},
             )
-        ).all()
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def _ctx_fetch_acts(session: AsyncSession, conversation_id: uuid.UUID, started_at: Any) -> Any:
+    return (
+        await session.execute(
+            text(
+                "SELECT tool_name, status FROM agent_actions WHERE conversation_id = :c"
+                " AND tool_name IS NOT NULL AND created_at >= :s ORDER BY created_at"
+            ),
+            {"c": conversation_id, "s": started_at},
+        )
+    ).all()
 
 
 async def _context(
     factory: Factory, tenant_id: uuid.UUID, call_id: uuid.UUID, conversation_id: uuid.UUID
 ) -> CallContext:
-    # PERFORMANCE FIX (2026-11-18): see app.agent.runner._load_state's matching
-    # comment - same pattern, same reasoning. Of these 4 reads, only `said` and `acts`
-    # depend on another read's result (call.started_at); `order_ref` is independent of
-    # everything. Previously all 4 ran one after another on a single shared session -
-    # a real call's own "_context timing: all 4 queries done" log showed this taking
-    # ~9.8s (with ~4.2s of that just acquiring the first connection - see the
-    # elapsed_ms on the "call-row session acquired" log below). Running `call` and
-    # `order_ref` concurrently, then `said` and `acts` concurrently once
-    # `call.started_at` is known, turns 4 sequential round trips into 2.
+    # PERFORMANCE FIX (2026-11-19, supersedes the 2026-11-18 fix below it): the
+    # 2026-11-18 change ran these 4 reads concurrently via two asyncio.gather pairs,
+    # each read opening its OWN session_scope. The next real call ("voice turn timed
+    # out", 2026-11-19) showed "_context timing: all 4 queries done" still taking
+    # ~15.3s, with the single "call-row session acquired" checkout alone costing
+    # ~4.5s - i.e. the per-checkout cost (pool checkout + BEGIN + the tenant-context
+    # SET_CONFIG round trip), not the query itself, is what's slow on this DB/network
+    # path right now, and running 4 checkouts concurrently only overlaps that cost,
+    # it doesn't remove it.
+    # FIX: one shared session for the whole function, checked out once, running the
+    # 4 reads one after another on it - `said`/`acts` still wait on `call.started_at`
+    # exactly as before, they just no longer need their own separate connection to
+    # do so.
     # VERIFY: not run against a live DB from here (no pytest/app execution per this
-    # change's own constraints) - only checked with `python -m py_compile`/ruff. If
-    # the real bottleneck turns out to be Neon only accepting one new connection at a
-    # time while waking up (rather than per-query latency), this change's benefit
-    # will be smaller than app.agent.runner._load_state's - the next real call's
-    # "_context timing" numbers will show which it is. Either way this does not fix a
-    # slow DB connection itself, only this app's own serialization of independent
-    # reads.
+    # change's own constraints) - only checked with `python -m py_compile`/ruff.
+    # Confirm on the next real call that this timing drops well below the ~15s seen
+    # on 2026-11-19. If the single checkout itself is STILL several seconds, that's
+    # DB/network latency this app's own code can't remove by restructuring queries -
+    # worth checking next whether DATABASE_URL points at Neon's pooled connection
+    # endpoint (see app.agent.runner._load_state's matching 2026-11-19 comment).
     _t0 = time.monotonic()
-    call, order_ref = await asyncio.gather(
-        _ctx_fetch_call(factory, tenant_id, call_id),
-        _ctx_fetch_order_ref(factory, tenant_id, conversation_id),
-    )
-    said, acts = await asyncio.gather(
-        _ctx_fetch_said(factory, tenant_id, conversation_id, call.started_at),
-        _ctx_fetch_acts(factory, tenant_id, conversation_id, call.started_at),
-    )
+    async with session_scope(factory, tenant_id=tenant_id) as session:
+        logger.info(
+            "_context timing: session acquired elapsed_ms=%d",
+            int((time.monotonic() - _t0) * 1000),
+        )
+        call = await _ctx_fetch_call(session, call_id)
+        order_ref = await _ctx_fetch_order_ref(session, conversation_id)
+        said = await _ctx_fetch_said(session, conversation_id, call.started_at)
+        acts = await _ctx_fetch_acts(session, conversation_id, call.started_at)
     logger.info(
         "_context timing: all 4 queries done elapsed_ms=%d",
         int((time.monotonic() - _t0) * 1000),
@@ -1106,7 +1095,17 @@ async def _run_agent(
     # ~1-2s on a normal call, so 16s gives the 6s LLM call room to run AND fail
     # gracefully inside the ceiling, plus real headroom for finish_turn/
     # handoff_reply/_context afterward - without the outer net racing the inner one.
-    TURN_TIMEOUT_S = 16.0
+    #
+    # RAISED 16s -> 25s (2026-11-19): a real call ("voice turn timed out") tripped
+    # this ceiling with run_inbound's own "v1 run done" log at ~14.1s and
+    # _context's "all 4 queries done" at ~15.3s AFTER that - i.e. legitimate (if
+    # slow) DB-bound work, not a hang, was still running past 16s. The matching
+    # fix in app.agent.runner._load_state and this module's _context (one shared
+    # session per function instead of several) should bring normal turns back
+    # down well under 16s; this bump is a safety margin on top of that fix, not a
+    # replacement for it, so a call still gets SOME reply within 25s instead of
+    # silence even if a particular turn is still slow for another reason.
+    TURN_TIMEOUT_S = 25.0
 
     async def _process_and_finish() -> VoiceReplyOut:
         await runner.run_inbound(
