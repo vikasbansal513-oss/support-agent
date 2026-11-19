@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Protocol
 
+import httpx
+
 from app.core.config import get_settings
 from app.integrations.http import ExternalHttp, UpstreamError
 
@@ -94,19 +96,37 @@ class OpenAICompatProvider:
         base_url: str,
         name: str = "openai_compatible",
         limit_field: str = "max_tokens",
+        json_mode: bool = False,
     ) -> None:
         self._http = http
         self._key = api_key
         self._url = f"{base_url.strip().rstrip('/')}/chat/completions"
         self._limit_field = limit_field
+        self._json_mode = json_mode
         self.name = name
         self.model = model
 
-    async def complete(self, system: str, user: str, max_tokens: int) -> RawCompletion:
-        if not self._key:
-            raise ProviderError("auth_error")
+    def _payload(
+        self, system: str, user: str, max_tokens: int, *, json_mode: bool
+    ) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "model": self.model,
+            self._limit_field: max_tokens,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        }
+        if json_mode:
+            # See make_provider's comment: this method's one caller
+            # (app.llm.client.complete_json) always expects a JSON object back
+            # already, so there is no non-JSON use of this provider to protect.
+            payload["response_format"] = {"type": "json_object"}
+        return payload
+
+    async def _post(self, payload: dict[str, object]) -> httpx.Response:
         try:
-            response = await self._http.request(
+            return await self._http.request(
                 "POST",
                 self._url,
                 operation="chat_completions",
@@ -114,19 +134,36 @@ class OpenAICompatProvider:
                     "authorization": f"Bearer {self._key}",
                     "content-type": "application/json",
                 },
-                json={
-                    "model": self.model,
-                    self._limit_field: max_tokens,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                },
+                json=payload,
             )
         except UpstreamError as exc:
             if exc.kind == "timeout":
                 raise ProviderTimeout() from exc
             raise ProviderError(exc.kind) from exc
+
+    async def complete(self, system: str, user: str, max_tokens: int) -> RawCompletion:
+        if not self._key:
+            raise ProviderError("auth_error")
+        response = await self._post(
+            self._payload(system, user, max_tokens, json_mode=self._json_mode)
+        )
+        if self._json_mode and response.status_code == 400:
+            # LATENCY FIX (2026-11-19) follow-up: json_mode is on for every
+            # OpenAI-compatible provider now, including a tenant's own custom
+            # "openai_compatible" base_url and whatever model they pick on the
+            # dashboard (app/api/admin_llm_settings.py) - not every model a tenant
+            # could choose is guaranteed to accept response_format: json_object (some
+            # reject an unrecognized field with a hard 400 instead of just ignoring
+            # it, unlike the groq/openai models this was verified against - see
+            # make_provider's comment). A 400 is the one case worth a one-time,
+            # same-call retry without response_format, since otherwise a tenant
+            # switching providers could turn this latency optimization into a total
+            # outage for that provider. Any other status (200, 401/403, 5xx, etc.)
+            # falls through unchanged - this never retries a plain bad-request from
+            # the model itself (e.g. a tenant with an oversized max_tokens setting
+            # would still get a 400 even without response_format, and the retry below
+            # would just reproduce the identical failure).
+            response = await self._post(self._payload(system, user, max_tokens, json_mode=False))
         if response.status_code in (401, 403):
             raise ProviderError("auth_error")
         if response.status_code != 200:
@@ -175,6 +212,49 @@ def make_provider(
         url,
         provider,
         "max_completion_tokens" if provider == "openai" else "max_tokens",
+        # LATENCY FIX (2026-11-19): a real tenant's llm_calls history showed 5 of the
+        # last 10 "plan" purpose calls (the only caller of LlmProvider.complete - see
+        # app.llm.client.complete_json, which is this method's one call site) coming
+        # back as outcome="invalid_json" - complete_json's own retry loop
+        # (for attempt in range(2)) then re-runs the *entire* LLM call a second time,
+        # roughly doubling that turn's latency (observed ~8s of a live voice call's
+        # ~12.5s "v1 run" step was this single LLM round trip, on a turn that hit this
+        # retry). Forcing the provider's native JSON mode makes the model's own output
+        # valid JSON far more often, instead of relying only on the prompt's text
+        # instructions - this should cut most of those invalid_json retries, not just
+        # reduce how long each individual call takes. Originally restricted to "groq"
+        # and "openai" only (the two confirmed by this tenant's own llm_calls rows at
+        # the time: provider=groq, model in {llama-3.3-70b-versatile,
+        # openai/gpt-oss-20b}) - widened (2026-11-19, same day) to every
+        # OpenAI-compatible provider ("openrouter" and a tenant's own custom
+        # "openai_compatible" base_url included), per this tenant's own requirement
+        # that the fix not be tied to one provider, since tenants pick their provider
+        # and model freely on the dashboard (app/api/admin_llm_settings.py). The risk
+        # this raises - a model that rejects an unrecognized response_format field
+        # outright (a hard 400) rather than merely returning imperfect JSON - is
+        # handled in OpenAICompatProvider.complete itself: a 400 while json_mode is on
+        # triggers one same-call retry without response_format before this is treated
+        # as a real failure, so a provider/model that does not support this mode falls
+        # back to today's exact behavior (prompt-only JSON instructions) automatically,
+        # at the cost of one extra round trip only on that first such call per model
+        # (every call after that still pays it again - this provider has no per-model
+        # memory of a prior 400 - but never anything worse than before this change).
+        # complete_json's two callers (plan_node's "plan" prompt and
+        # classify_confirmation_llm's "confirm" prompt - see app/prompts/plan.v1.md and
+        # app/prompts/confirm.v1.md) already instruct the model to answer in JSON and
+        # already say "json" in the prompt text, which is this mode's own requirement
+        # to be accepted on OpenAI-compatible APIs generally - no prompt change needed.
+        # VERIFY: not exercised against any live provider from here (no app
+        # execution/pytest per this change's own constraints) - only checked with
+        # py_compile/ruff/mypy and against the two prompt files above, and the 400-retry
+        # path has no automated test covering it yet. Confirm on the next few real
+        # calls' llm_calls rows that invalid_json outcomes for purpose='plan' drop (the
+        # SQL used to find this: SELECT purpose, outcome, latency_ms, created_at FROM
+        # llm_calls WHERE purpose = 'plan' ORDER BY created_at DESC LIMIT 10) - and if a
+        # tenant is on a provider/model that doesn't support this mode, watch for its
+        # latency instead going up slightly (one extra round trip every call) rather
+        # than down.
+        json_mode=True,
     )
 
 
