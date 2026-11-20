@@ -829,15 +829,16 @@ async def _consent_turn(
     event: VoiceEventIn,
     utterance: str,
     lang: str,
-) -> VoiceReplyOut:
+) -> VoiceReplyOut | None:
     """Decision Framework Section 17.1: the greeting discloses AI + recording and ends with
     an explicit yes/no question. This handles the reply to that question - the very first
     real turn of the call - before any normal eligibility/step-limit/agent processing runs.
 
-    Returns a VoiceReplyOut to end the turn here (human-request/explicit-no/literal-yes/
-    reask/escalation) - never None. A customer who explicitly asks for a human still skips
-    straight to a handoff (checked first, below), but any other non-"no" answer now has to
-    be a clear "yes": see the ROOT-CAUSE FIX comment on the "unclear" branch below for why.
+    Returns a VoiceReplyOut to end the turn here (human-request/explicit-no/reask/
+    escalation), or None to record implicit consent and let the caller (_turn) fall
+    through and process this same utterance as the customer's real request - see the
+    ROOT-CAUSE FIX (2026-11-20, revised) comment below for why "unclear" from
+    parse_confirmation() is NOT, on its own, treated as "didn't hear clearly".
     """
     if "human" in keywords.detect_flags(utterance):
         return await _end_with_human(
@@ -852,6 +853,47 @@ async def _consent_turn(
             event.from_number,
             lang,
         )
+    # ROOT-CAUSE FIX (2026-11-20, revised): a first version of this fix treated
+    # parse_confirmation()'s "unclear" result as "didn't hear clearly" and reasked/
+    # escalated on it - but parse_confirmation() is a yes/no KEYWORD matcher (see
+    # app/v1/confirm.py), not an audio-quality check: it reads "mera order 1001 kahan
+    # hai" as "unclear" too, simply because those words aren't in its yes/no list. That
+    # first version broke the normal, common case of a customer skipping this question
+    # and stating their real need directly (caught by this codebase's own test suite,
+    # tests/voice/test_voice_calls.py, immediately after deploy - every one of those
+    # tests regressed). The customer-reported bug ("agent khud se assume kar liya haan,
+    # maine kuch nahi bola" / "agent ne meri baat dhyan se nahi suni") is really about
+    # whether the agent genuinely HEARD the answer clearly, which this codebase already
+    # tracks as event.confidence (the STT's own confidence score) - the exact same
+    # signal app.voice.service._turn() already uses, further down, for "awaaz saaf
+    # nahi" reasks/escalation on every other turn of the call. So this question now
+    # uses that real signal too, instead of overloading the yes/no keyword matcher as
+    # an audio-quality check:
+    #   - low STT confidence (agent didn't hear clearly) -> reask, then escalate to a
+    #     human after repeated low-confidence turns (same low_confidence_streak
+    #     counter/threshold/"CONFUSED" handoff pattern as the rest of the call).
+    #   - STT heard the words clearly (confidence OK, or no confidence score reported
+    #     by this provider) -> fall through to the keyword check below as before.
+    settings = get_settings()
+    threshold = settings.voice_confirm_confidence
+    if event.confidence is not None and event.confidence < threshold:
+        streak = call.low_confidence_streak + 1
+        async with session_scope(factory, tenant_id=voice.tenant_id) as session:
+            await _bump(session, call, low=streak)
+        if streak >= settings.voice_low_confidence_limit:
+            return await _end_with_human(
+                factory,
+                voice,
+                view,
+                call.id,
+                call.conversation_id,
+                None,
+                "CONFUSED",
+                utterance,
+                event.from_number,
+                lang,
+            )
+        return _reply(speech.voice_line("consent_reask", lang), lang)
     answer = parse_confirmation(utterance)
     if answer == "no":
         async with session_scope(factory, tenant_id=voice.tenant_id) as session:
@@ -874,43 +916,10 @@ async def _consent_turn(
             event.from_number,
             lang,
         )
-    if answer == "unclear":
-        # ROOT-CAUSE FIX (2026-11-20): this branch used to fall through and treat ANY
-        # non-"no" answer (including a genuinely unclear/garbled one, not just a real
-        # "yes") as implicit consent - a real call showed a customer whose answer here
-        # was not a clear yes/no get silently recorded as consent_response='yes' and
-        # waved straight into the rest of the call, which read to them as "the agent
-        # just assumed yes without listening" (user-reported, 2026-11-20). Per user
-        # decision (asked directly): an unclear answer to this specific yes/no consent
-        # question now always reasks ("consent_reask" - already existed in
-        # app/voice/speech.py but was never referenced from here) rather than being
-        # silently accepted, and escalates to a human after repeated unclear answers -
-        # reusing the exact same low_confidence_streak counter/threshold/"CONFUSED"
-        # handoff pattern app.voice.service._turn() already uses for low-STT-confidence
-        # turns elsewhere in the call, instead of inventing a new counter/reason code.
-        # Deliberate scope narrowing from the previous behaviour: a customer who skips
-        # this question and states their real need directly (e.g. "order 1001 cancel
-        # kar do") no longer gets waved through as implicit consent either - every
-        # non-"no"/non-human-request answer to this one question must now be a clear
-        # "yes". VERIFY: not yet exercised against a real call since this change.
-        settings = get_settings()
-        streak = call.low_confidence_streak + 1
-        async with session_scope(factory, tenant_id=voice.tenant_id) as session:
-            await _bump(session, call, low=streak)
-        if streak >= settings.voice_low_confidence_limit:
-            return await _end_with_human(
-                factory,
-                voice,
-                view,
-                call.id,
-                call.conversation_id,
-                None,
-                "CONFUSED",
-                utterance,
-                event.from_number,
-                lang,
-            )
-        return _reply(speech.voice_line("consent_reask", lang), lang)
+    # "yes" or keyword-"unclear" (but clearly heard, per the confidence check above):
+    # both mean the call continues - record implicit/explicit consent and return None
+    # so _turn() processes this same utterance as the customer's real request too,
+    # same as before this whole fix (restores pre-existing, test-covered behaviour).
     async with session_scope(factory, tenant_id=voice.tenant_id) as session:
         await session.execute(
             text(
@@ -919,8 +928,8 @@ async def _consent_turn(
             ),
             {"i": call.id},
         )
-        await _bump(session, call, turns=1, low=0)
-    return _reply(speech.voice_line("consent_ack", lang), lang)
+        await _bump(session, call, low=0)
+    return None
 
 
 async def _turn(
@@ -963,11 +972,16 @@ async def _turn(
         return _reply(speech.voice_line("silence", lang), lang)
 
     if call.consent_response is None:
-        # 2026-11-20: _consent_turn() now always returns a reply (reask/handoff/ack) -
-        # see its own ROOT-CAUSE FIX comment for why it no longer has an implicit-yes
-        # fall-through case - so this always ends the turn here while consent is
-        # unresolved; it never falls through to the rest of this function.
-        return await _consent_turn(factory, voice, view, call, event, utterance, lang)
+        # 2026-11-20 (revised): _consent_turn() ends the turn here (reask/handoff) only
+        # when the STT genuinely didn't hear the answer clearly (low event.confidence)
+        # or the customer explicitly said "no" / asked for a human - see its own
+        # ROOT-CAUSE FIX comment. Otherwise it records implicit/explicit consent and
+        # returns None, and this same utterance falls through to the rest of this
+        # function exactly as before, so a customer who states their real need
+        # straight away (no separate "yes") still gets it handled in that same turn.
+        consent_reply = await _consent_turn(factory, voice, view, call, event, utterance, lang)
+        if consent_reply is not None:
+            return consent_reply
 
     ext = event.turn_id or f"{event.call_id}:{call.turn_count + 1}"
     blocked = _eligible(view, voice)
