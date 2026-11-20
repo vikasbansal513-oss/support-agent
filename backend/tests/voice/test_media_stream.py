@@ -159,7 +159,10 @@ async def test_hangup_action_sends_disconnect_control(env: AgentEnv) -> None:
     out = await session.handle_metadata(metadata_frame(to_number=voice.called_number))
     marks = [o for o in out if o.kind == "control" and o.data.get("type") == "mark"]
     assert marks, "hangup reply should still send a mark for its own audio"
-    assert session.pending_disconnect_mark == marks[-1].data["name"]
+    # the wire frame nests the mark name under "data" (Edesy's documented
+    # {"type":"mark","data":{"name":...}} shape - see media_stream.py's _speak()),
+    # not flat on the control message itself.
+    assert session.pending_disconnect_mark == marks[-1].data["data"]["name"]
     assert not any(o.kind == "control" and o.data.get("type") == "disconnect" for o in out)
 
 
