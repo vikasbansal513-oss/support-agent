@@ -414,6 +414,22 @@ class EdesyStreamSession:
         # real time 1:1. Decremented in handle_audio_chunk as incoming audio drains it.
         self._mute_bytes_remaining = 0
         self._last_reply: VoiceReplyOut | None = None
+        # ROOT-CAUSE FIX (2026-11-20): Edesy's own protocol docs (edesy.in/docs/sip-trunk-
+        # for-ai-voice-agents/connect/websocket-streaming) document a "mark" control message
+        # specifically for this - the agent sends {"type":"mark","data":{"name":...}} and
+        # Edesy echoes it back with "event":"playout" once that point in the queued audio
+        # has actually been played to the caller. This is the only playout acknowledgment
+        # the protocol documents; before this fix this app never sent one, so it had no way
+        # to know whether a reply's audio was actually heard - only its own send-side byte
+        # counts/timings (see _speak's docstring for a real call where that assumption was
+        # the only evidence, and turned out to be unconfirmed). _mark_counter names each
+        # reply's mark uniquely; pending_disconnect_mark, set only for a hangup/transfer
+        # reply, tells app.webhooks.voice_stream (the only coroutine allowed to call
+        # websocket.receive(), so the only place that can safely wait for the echo) which
+        # mark name to wait for before it is allowed to send {"type":"disconnect"} - see
+        # that module's handling of this attribute.
+        self._mark_counter = 0
+        self.pending_disconnect_mark: str | None = None
 
     async def handle_metadata(
         self,
@@ -761,9 +777,27 @@ class EdesyStreamSession:
         # not at the (unreliable) moment this coroutine happens to return.
         self._mute_bytes_remaining += total_pcm_bytes
         logger.info("voice-stream tts output: pcm_bytes=%d", total_pcm_bytes)
+        # ROOT-CAUSE FIX (2026-11-20): send a "mark" after every reply (not just
+        # hangup/transfer) - see pending_disconnect_mark's docstring in __init__ for the
+        # full reasoning. For an ordinary "continue" reply this is purely informational:
+        # app.webhooks.voice_stream logs Edesy's "event":"playout" echo for it (proof the
+        # reply was actually heard, or a clear "it never echoed" if not) without blocking
+        # anything. Costs nothing either way - the mark is a small TEXT frame, not audio.
+        self._mark_counter += 1
+        mark_name = f"reply-{self._mark_counter}"
+        await _emit([OutMessage("control", {"type": "mark", "data": {"name": mark_name}})])
         if reply.action == "hangup":
             self._ended = True
-            await _emit([OutMessage("control", {"type": "disconnect"})])
+            # ROOT-CAUSE FIX (2026-11-20): this used to send {"type":"disconnect"} right
+            # here, immediately after only queuing (not confirming playout of) this
+            # reply's own audio - Edesy's playback is a queue, not a direct passthrough
+            # (see pending_disconnect_mark's docstring), so a disconnect sent this early
+            # could reach Edesy before the closing/handoff line this reply exists to
+            # deliver has actually played to the caller, cutting it off. Setting this
+            # attribute instead of sending disconnect directly hands the decision to
+            # app.webhooks.voice_stream, which waits (bounded) for this mark's playout
+            # echo before sending disconnect itself.
+            self.pending_disconnect_mark = mark_name
         elif reply.action == "transfer":
             # Edesy's Media Streams protocol (as documented) has no bot->platform
             # "bridge this call to another number" control message - only killAudio
@@ -773,7 +807,7 @@ class EdesyStreamSession:
             # and disconnect, same as the "callback" outcome on the text-based path.
             # VERIFY: confirm with Edesy whether Media Streams supports live transfer.
             self._ended = True
-            await _emit([OutMessage("control", {"type": "disconnect"})])
+            self.pending_disconnect_mark = mark_name
         return out
 
     async def handle_disconnect(self) -> None:

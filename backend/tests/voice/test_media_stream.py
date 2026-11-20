@@ -148,11 +148,19 @@ async def test_audio_is_muted_for_our_own_reply_duration_even_if_delivered_late(
 
 
 async def test_hangup_action_sends_disconnect_control(env: AgentEnv) -> None:
+    # 2026-11-20: a hangup reply no longer sends {"type":"disconnect"} directly from
+    # _speak() - it now sends a "mark" and defers disconnect to app.webhooks.voice_stream,
+    # which waits for that mark's Edesy playout echo first (see pending_disconnect_mark's
+    # docstring in app.voice.media_stream.EdesyStreamSession.__init__ for why: sending
+    # disconnect before confirming playout could cut off the very reply it is closing with).
     await setup(env, "auto")
     voice = await configure_edesy(env, enabled=False)
     session, _stt, _tts = _session(env, voice)
     out = await session.handle_metadata(metadata_frame(to_number=voice.called_number))
-    assert any(o.kind == "control" and o.data.get("type") == "disconnect" for o in out)
+    marks = [o for o in out if o.kind == "control" and o.data.get("type") == "mark"]
+    assert marks, "hangup reply should still send a mark for its own audio"
+    assert session.pending_disconnect_mark == marks[-1].data["name"]
+    assert not any(o.kind == "control" and o.data.get("type") == "disconnect" for o in out)
 
 
 async def test_disconnect_flushes_a_pending_utterance_and_records_end(env: AgentEnv) -> None:

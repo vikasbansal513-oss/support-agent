@@ -829,18 +829,16 @@ async def _consent_turn(
     event: VoiceEventIn,
     utterance: str,
     lang: str,
-) -> VoiceReplyOut | None:
+) -> VoiceReplyOut:
     """Decision Framework Section 17.1: the greeting discloses AI + recording and ends with
     an explicit yes/no question. This handles the reply to that question - the very first
     real turn of the call - before any normal eligibility/step-limit/agent processing runs.
 
-    Returns a VoiceReplyOut to end the turn here (human-request/explicit-no/literal-yes),
-    or None to mean "treat this same utterance as the first real turn" - a customer who
-    skips the question and states their need directly ("order 1001 cancel kar do") is not
-    an explicit decline, so it is handled as implicit consent rather than trapped in a
-    reprompt loop; _turn()'s existing low-confidence/step-limit/eligibility checks already
-    cover a genuinely unclear or garbled utterance on this turn exactly as they do on every
-    other turn, so no separate "unclear" handling is needed here."""
+    Returns a VoiceReplyOut to end the turn here (human-request/explicit-no/literal-yes/
+    reask/escalation) - never None. A customer who explicitly asks for a human still skips
+    straight to a handoff (checked first, below), but any other non-"no" answer now has to
+    be a clear "yes": see the ROOT-CAUSE FIX comment on the "unclear" branch below for why.
+    """
     if "human" in keywords.detect_flags(utterance):
         return await _end_with_human(
             factory,
@@ -876,6 +874,43 @@ async def _consent_turn(
             event.from_number,
             lang,
         )
+    if answer == "unclear":
+        # ROOT-CAUSE FIX (2026-11-20): this branch used to fall through and treat ANY
+        # non-"no" answer (including a genuinely unclear/garbled one, not just a real
+        # "yes") as implicit consent - a real call showed a customer whose answer here
+        # was not a clear yes/no get silently recorded as consent_response='yes' and
+        # waved straight into the rest of the call, which read to them as "the agent
+        # just assumed yes without listening" (user-reported, 2026-11-20). Per user
+        # decision (asked directly): an unclear answer to this specific yes/no consent
+        # question now always reasks ("consent_reask" - already existed in
+        # app/voice/speech.py but was never referenced from here) rather than being
+        # silently accepted, and escalates to a human after repeated unclear answers -
+        # reusing the exact same low_confidence_streak counter/threshold/"CONFUSED"
+        # handoff pattern app.voice.service._turn() already uses for low-STT-confidence
+        # turns elsewhere in the call, instead of inventing a new counter/reason code.
+        # Deliberate scope narrowing from the previous behaviour: a customer who skips
+        # this question and states their real need directly (e.g. "order 1001 cancel
+        # kar do") no longer gets waved through as implicit consent either - every
+        # non-"no"/non-human-request answer to this one question must now be a clear
+        # "yes". VERIFY: not yet exercised against a real call since this change.
+        settings = get_settings()
+        streak = call.low_confidence_streak + 1
+        async with session_scope(factory, tenant_id=voice.tenant_id) as session:
+            await _bump(session, call, low=streak)
+        if streak >= settings.voice_low_confidence_limit:
+            return await _end_with_human(
+                factory,
+                voice,
+                view,
+                call.id,
+                call.conversation_id,
+                None,
+                "CONFUSED",
+                utterance,
+                event.from_number,
+                lang,
+            )
+        return _reply(speech.voice_line("consent_reask", lang), lang)
     async with session_scope(factory, tenant_id=voice.tenant_id) as session:
         await session.execute(
             text(
@@ -884,12 +919,8 @@ async def _consent_turn(
             ),
             {"i": call.id},
         )
-    if answer == "yes":
-        async with session_scope(factory, tenant_id=voice.tenant_id) as session:
-            await _bump(session, call, turns=1)
-        return _reply(speech.voice_line("consent_ack", lang), lang)
-    call.consent_response = "yes"
-    return None
+        await _bump(session, call, turns=1, low=0)
+    return _reply(speech.voice_line("consent_ack", lang), lang)
 
 
 async def _turn(
@@ -932,12 +963,11 @@ async def _turn(
         return _reply(speech.voice_line("silence", lang), lang)
 
     if call.consent_response is None:
-        reply = await _consent_turn(factory, voice, view, call, event, utterance, lang)
-        if reply is not None:
-            return reply
-        # Implicit consent granted (customer went straight into a request instead of a
-        # literal yes/no) - fall through and process this same utterance as the first
-        # real turn, instead of discarding it.
+        # 2026-11-20: _consent_turn() now always returns a reply (reask/handoff/ack) -
+        # see its own ROOT-CAUSE FIX comment for why it no longer has an implicit-yes
+        # fall-through case - so this always ends the turn here while consent is
+        # unresolved; it never falls through to the rest of this function.
+        return await _consent_turn(factory, voice, view, call, event, utterance, lang)
 
     ext = event.turn_id or f"{event.call_id}:{call.turn_count + 1}"
     blocked = _eligible(view, voice)
@@ -1213,7 +1243,25 @@ async def _finish_turn(
         "finish_turn timing: lang/handoff lookup done elapsed_ms=%d",
         int((time.monotonic() - _t0) * 1000),
     )
-    lang = (lang_row.language if lang_row and lang_row.language else call.language) or "hinglish"
+    # ROOT-CAUSE FIX (2026-11-20): a real call's logs showed the handoff/closing line
+    # spoken in English (lang=en-IN) mid-call even though the caller had been speaking
+    # Hindi the whole time and the agent's own earlier replies that same call were in
+    # Hindi. `lang_row.language` here is a *fresh* read of conversations.language,
+    # which app.agent.runner._persist_run/runner_v1 overwrite every turn from that
+    # single turn's own language classification - so one noisy/partially-captured
+    # utterance (confirmed from this call's own VAD stats: loud_ratio as low as 0.03-
+    # 0.09, i.e. most of what STT heard was non-speech) getting misclassified as "en"
+    # was enough to flip the language for the call's closing message, overriding every
+    # earlier turn. `call.language` (loaded once per turn, before this turn's own
+    # classification runs - see _turn()'s single _load_call() call site) reflects the
+    # language already established by prior turns in *this* call, so it is preferred
+    # here; lang_row is now only a fallback for the first turn of a call (before
+    # call.language itself has ever been set from a real classification). VERIFY: this
+    # makes voice-call language "sticky" once established, which is deliberately safer
+    # for a closing/handoff line (it was never reached by a genuine language-switching
+    # caller in the logs available during this fix) but has not been tested against a
+    # caller who deliberately switches from Hindi to English mid-call.
+    lang = (call.language or (lang_row.language if lang_row else None)) or "hinglish"
     if handed is not None:
         reply = await _handoff_reply(factory, voice, view, call, handed.reason_code, lang, capture)
         logger.info(

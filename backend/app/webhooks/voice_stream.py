@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
@@ -43,6 +44,16 @@ FIRST_FRAME_TIMEOUT_S = 15
 # effectively dead), kept separate from FIRST_FRAME_TIMEOUT_S in case the two ever need
 # different tuning.
 INTER_FRAME_TIMEOUT_S = 30
+# ROOT-CAUSE FIX (2026-11-20): how long to wait for Edesy's "mark" playout-echo (see
+# app.voice.media_stream.EdesyStreamSession.pending_disconnect_mark's docstring) before
+# sending {"type":"disconnect"} for a hangup/transfer reply anyway. Bounded so a call never
+# hangs forever if Edesy's echo never arrives (unconfirmed behaviour - this protocol feature
+# was found in Edesy's own docs, not yet exercised against a real account) - a few seconds
+# longer than this app's own longest observed single-reply TTS+send time (the ~13s greeting
+# gap flagged in _speak's docstring was the pre-2026-11-18 unfixed case; a closing/handoff
+# line is also typically much shorter than a greeting). VERIFY: real-call confirmation that
+# the echo actually arrives at all, and well within this window.
+MARK_PLAYOUT_WAIT_S = 8.0
 
 
 async def _send(websocket: WebSocket, out: OutMessage, sample_rate_hz: int) -> bool:
@@ -231,6 +242,54 @@ async def voice_stream_webhook(
                 keep_going = sent and keep_going
             if not keep_going:
                 break
+            if session.pending_disconnect_mark is not None:
+                # ROOT-CAUSE FIX (2026-11-20): a hangup/transfer reply just queued its
+                # closing line's audio and a matching "mark" (see pending_disconnect_mark's
+                # docstring) instead of sending {"type":"disconnect"} itself. This is the
+                # only coroutine allowed to call websocket.receive() (the main loop above is
+                # the single sequential reader), so waiting for Edesy's playout echo has to
+                # happen here, bounded by MARK_PLAYOUT_WAIT_S so a missing/unconfirmed echo
+                # can never hang the call forever. Any other frame arriving during this short
+                # wait (late caller audio, an earlier reply's own mark echo) is ignored - the
+                # call is ending either way.
+                mark_name = session.pending_disconnect_mark
+                confirmed = False
+                deadline = time.monotonic() + MARK_PLAYOUT_WAIT_S
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    try:
+                        wait_msg = await asyncio.wait_for(websocket.receive(), timeout=remaining)
+                    except TimeoutError:
+                        break
+                    if wait_msg.get("type") == "websocket.disconnect":
+                        break
+                    wait_text = wait_msg.get("text")
+                    if wait_text is not None:
+                        try:
+                            wait_frame = json.loads(wait_text)
+                        except ValueError:
+                            wait_frame = None
+                        if (
+                            isinstance(wait_frame, dict)
+                            and wait_frame.get("type") == "mark"
+                            and (wait_frame.get("data") or {}).get("name") == mark_name
+                            and (wait_frame.get("data") or {}).get("event") == "playout"
+                        ):
+                            confirmed = True
+                            break
+                logger.info(
+                    "voice-stream: closing reply playout %s (mark=%s, waited up to %.1fs)",
+                    "confirmed" if confirmed else "NOT confirmed - timed out",
+                    mark_name,
+                    MARK_PLAYOUT_WAIT_S,
+                )
+                try:
+                    await websocket.send_text(json.dumps({"type": "disconnect"}))
+                except (RuntimeError, WebSocketDisconnect):
+                    pass
+                break
     except WebSocketDisconnect:
         logger.info("voice-stream: WebSocketDisconnect after %d frame(s)", frame_count)
     except Exception:
@@ -268,6 +327,19 @@ async def _handle_text(
         # normally: _send raises on a closed/broken socket same as it would from the
         # main loop below.
         return await session.handle_metadata(frame, on_early=send_batch, on_chunk=send_batch)
+    if frame.get("type") == "mark":
+        # ROOT-CAUSE FIX (2026-11-20): Edesy's playout-acknowledgment echo for a "mark"
+        # this app now sends after every reply (see app.voice.media_stream.EdesyStreamSession
+        # ._speak and pending_disconnect_mark's docstring). For an ordinary "continue" reply
+        # this echo isn't waited on anywhere (only a hangup/transfer reply's final mark is,
+        # in the main loop below) - it is only logged here, so the next real call's logs
+        # finally show, for every reply, whether Edesy actually played it to the caller or
+        # not, instead of just this app's own send-side byte counts/timings.
+        data = frame.get("data") or {}
+        logger.info(
+            "voice-stream mark event: name=%s event=%s", data.get("name"), data.get("event")
+        )
+        return []
     logger.warning(
         "voice-stream text frame had none of from/callSid/call_sid keys: %s", sorted(frame.keys())
     )
