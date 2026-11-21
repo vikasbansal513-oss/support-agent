@@ -193,11 +193,27 @@ async def load_v1_state(
     return row
 
 
-async def _link_identities_from_order(factory: Factory, tenant_id: uuid.UUID, final: State) -> None:
+async def _link_identities_from_order(session: AsyncSession, final: State) -> None:
     """Best-effort omnichannel identity link (see app.channels.identity): if this turn
     looked up a Shopify order, use its own phone+email to fold any separate per-channel
     `customers` rows for them into one. Never raises - this is an enrichment, not something
-    that should fail an otherwise-successful agent turn."""
+    that should fail an otherwise-successful agent turn.
+
+    PERFORMANCE FIX (2026-11-21): was `async with session_scope(factory, tenant_id=tenant_id)`
+    - its own separate DB checkout, on top of the ones `_persist` and `_load_row` already
+    open right before/after it in `run()`, on a DB/network path where each checkout alone
+    has been measured costing several hundred ms to multiple seconds (see `load_v1_state`'s
+    comment) - a real contributor to a live voice call never getting a reply before the
+    caller hung up. Now takes the SAME session `run()` already has open for `_persist` and
+    `_load_row`, cutting 3 checkouts here down to 1. Runs in its own SAVEPOINT
+    (`session.begin_nested()`), not directly in the shared transaction, so this function's
+    own "never raises, never fails the turn" guarantee still holds exactly as before: a
+    failure here only rolls back this savepoint, leaving `_persist`'s already-written rows
+    and the shared session itself healthy for `_load_row` (and anything else in `run()`)
+    right after. VERIFY: not exercised against a live DB from here (no app execution/pytest
+    per this change's own constraints) - only checked with py_compile/ruff. Confirm on the
+    next real voice call's logs that "persist"/"link_identities"/"load_row" timings collapse
+    close together (one checkout's cost instead of three)."""
     order_raw = (final.get("tool_results") or {}).get("order")
     if not order_raw:
         return
@@ -206,7 +222,7 @@ async def _link_identities_from_order(factory: Factory, tenant_id: uuid.UUID, fi
     if not phone and not email:
         return
     try:
-        async with session_scope(factory, tenant_id=tenant_id) as session:
+        async with session.begin_nested():
             await identity.link_customer_identities(session, phone, email)
             await identity.link_customer_name(session, phone, email, name)
     except Exception:
@@ -266,34 +282,50 @@ async def run(
     if decision.reason_code == "LLM_UNAVAILABLE" and ctx.job.attempts < ctx.job.max_attempts:
         await fail(factory, tenant_id, run_id, RetryLater("llm unavailable"))
         raise RetryLater("llm unavailable")
-    await _persist(
-        factory,
-        tenant_id,
-        run_id,
-        event_id,
-        conversation_id,
-        final,
-        decision,
-        policy_version,
-        mode,
-        list(toolbox.calls),
-    )
-    logger.info(
-        "v1 run timing: persist done elapsed_ms=%d",
-        int((time.monotonic() - _t0) * 1000),
-    )
-    await _link_identities_from_order(factory, tenant_id, final)
-    logger.info(
-        "v1 run timing: link_identities done elapsed_ms=%d",
-        int((time.monotonic() - _t0) * 1000),
-    )
-    if decision.action == "skip":
-        return
-    row = await _load_row(factory, tenant_id, conversation_id)
-    logger.info(
-        "v1 run timing: load_row done elapsed_ms=%d",
-        int((time.monotonic() - _t0) * 1000),
-    )
+    # PERFORMANCE FIX (2026-11-21): _persist, _link_identities_from_order and _load_row
+    # each used to open their OWN session_scope() - 3 separate DB checkouts back-to-back,
+    # on top of every other checkout already in this function's path (run_inbound's own
+    # insert, _load_state, tool_box/v1_state/llm_client, graph.ainvoke's tool calls, the
+    # action branch below, and the final inbound_events update), on a DB/network path
+    # where each checkout alone has been measured costing several hundred ms to multiple
+    # seconds (see load_v1_state's comment - already fixed there and in
+    # app.agent.runner._load_state/app.voice.service._context the same way). This was the
+    # one place left un-fixed in THIS function. One shared session for these 3 steps only
+    # (not merged with the action branch below, which calls out to Shopify/email and needs
+    # its own short-lived sessions so a connection is never held idle through a slow
+    # external call) cuts 3 checkouts down to 1 here.
+    # VERIFY: not exercised against a live DB from here (no app execution/pytest per this
+    # change's own constraints) - only checked with py_compile/ruff. Confirm on the next
+    # real voice call's logs that "persist"/"link_identities"/"load_row" timings collapse
+    # close together instead of each costing its own multi-second gap.
+    async with session_scope(factory, tenant_id=tenant_id) as session:
+        await _persist(
+            session,
+            run_id,
+            event_id,
+            conversation_id,
+            final,
+            decision,
+            policy_version,
+            mode,
+            list(toolbox.calls),
+        )
+        logger.info(
+            "v1 run timing: persist done elapsed_ms=%d",
+            int((time.monotonic() - _t0) * 1000),
+        )
+        await _link_identities_from_order(session, final)
+        logger.info(
+            "v1 run timing: link_identities done elapsed_ms=%d",
+            int((time.monotonic() - _t0) * 1000),
+        )
+        if decision.action == "skip":
+            return
+        row = await _load_row(session, conversation_id)
+        logger.info(
+            "v1 run timing: load_row done elapsed_ms=%d",
+            int((time.monotonic() - _t0) * 1000),
+        )
     if decision.action == "handoff":
         await _handoff(
             factory, senders, mailer, tenant_id, conversation_id, run_id, row, decision, mode
@@ -342,11 +374,12 @@ async def run(
     )
 
 
-async def _load_row(
-    factory: Factory, tenant_id: uuid.UUID, conversation_id: uuid.UUID
-) -> convstate.ConvRow:
-    async with session_scope(factory, tenant_id=tenant_id) as session:
-        return await convstate.load(session, conversation_id)
+async def _load_row(session: AsyncSession, conversation_id: uuid.UUID) -> convstate.ConvRow:
+    # PERFORMANCE FIX (2026-11-21): was its own session_scope() checkout - see run()'s
+    # comment where this is now called with the same shared session as _persist and
+    # _link_identities_from_order. Still used standalone nowhere else (verified: no other
+    # caller in app/ or tests/), so this signature change is self-contained to this file.
+    return await convstate.load(session, conversation_id)
 
 
 async def _save(
@@ -636,8 +669,7 @@ def _versions(plan: dict[str, Any], final: State) -> dict[str, str]:
 
 
 async def _persist(
-    factory: Factory,
-    tenant_id: uuid.UUID,
+    session: AsyncSession,
     run_id: uuid.UUID,
     event_id: uuid.UUID,
     conversation_id: uuid.UUID,
@@ -647,52 +679,55 @@ async def _persist(
     mode: str,
     tool_calls: list[dict[str, Any]],
 ) -> None:
+    # PERFORMANCE FIX (2026-11-21): was its own session_scope() checkout - see run()'s
+    # comment where this now shares one session with _link_identities_from_order and
+    # _load_row right after it (3 checkouts collapsed to 1 on a DB/network path where each
+    # checkout alone has been measured costing several hundred ms to multiple seconds).
+    # Still used standalone nowhere else (verified: no other caller in app/ or tests/), so
+    # this signature change is self-contained to this file.
     identity = final.get("identity", {})
     plan = final.get("plan") or {}
     stored = decision.model_dump(mode="json")
     stored["order_ref"] = identity.get("order_ref") if identity.get("verified") else None
     stored["intent"] = plan.get("intent")
     skipped = decision.action == "skip"
-    async with session_scope(factory, tenant_id=tenant_id) as session:
+    await session.execute(
+        text(
+            "UPDATE agent_runs SET decision = CAST(:d AS jsonb), trace = CAST(:t AS jsonb),"
+            " status = :s, policy_version = :p, mode = :m, graph_version = :g,"
+            " plan = CAST(:pl AS jsonb), prompt_versions = CAST(:pv AS jsonb), reply_attempts = :ra,"
+            " finished_at = now() WHERE id = :i"
+        ),
+        {
+            "d": json.dumps(stored, default=str),
+            "t": json.dumps(final.get("trace", []), default=str),
+            "s": "skipped" if skipped else "done",
+            "p": policy_version,
+            "m": mode,
+            "g": GRAPH_VERSION_V1,
+            "pl": json.dumps(plan) if plan else None,
+            "pv": json.dumps(_versions(plan, final)),
+            "ra": int(final.get("reply_attempts", 0)),
+            "i": run_id,
+        },
+    )
+    await engine.record_tool_calls(session, run_id, conversation_id, tool_calls)
+    await session.execute(
+        text(
+            "UPDATE conversations SET identity_attempts = :a,"
+            " active_order_ref = CASE WHEN :v THEN :ref ELSE active_order_ref END,"
+            " language = COALESCE(CAST(:lang AS text), language) WHERE id = :c"
+        ),
+        {
+            "a": int(identity.get("attempts", 0)),
+            "v": bool(identity.get("verified")),
+            "ref": identity.get("order_ref"),
+            "lang": plan.get("language"),
+            "c": conversation_id,
+        },
+    )
+    if skipped:
         await session.execute(
-            text(
-                "UPDATE agent_runs SET decision = CAST(:d AS jsonb), trace = CAST(:t AS jsonb),"
-                " status = :s, policy_version = :p, mode = :m, graph_version = :g,"
-                " plan = CAST(:pl AS jsonb), prompt_versions = CAST(:pv AS jsonb), reply_attempts = :ra,"
-                " finished_at = now() WHERE id = :i"
-            ),
-            {
-                "d": json.dumps(stored, default=str),
-                "t": json.dumps(final.get("trace", []), default=str),
-                "s": "skipped" if skipped else "done",
-                "p": policy_version,
-                "m": mode,
-                "g": GRAPH_VERSION_V1,
-                "pl": json.dumps(plan) if plan else None,
-                "pv": json.dumps(_versions(plan, final)),
-                "ra": int(final.get("reply_attempts", 0)),
-                "i": run_id,
-            },
+            text("UPDATE inbound_events SET status = 'skipped', skip_reason = :r WHERE id = :i"),
+            {"r": decision.reason_code, "i": event_id},
         )
-        await engine.record_tool_calls(session, run_id, conversation_id, tool_calls)
-        await session.execute(
-            text(
-                "UPDATE conversations SET identity_attempts = :a,"
-                " active_order_ref = CASE WHEN :v THEN :ref ELSE active_order_ref END,"
-                " language = COALESCE(CAST(:lang AS text), language) WHERE id = :c"
-            ),
-            {
-                "a": int(identity.get("attempts", 0)),
-                "v": bool(identity.get("verified")),
-                "ref": identity.get("order_ref"),
-                "lang": plan.get("language"),
-                "c": conversation_id,
-            },
-        )
-        if skipped:
-            await session.execute(
-                text(
-                    "UPDATE inbound_events SET status = 'skipped', skip_reason = :r WHERE id = :i"
-                ),
-                {"r": decision.reason_code, "i": event_id},
-            )

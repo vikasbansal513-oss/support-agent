@@ -108,7 +108,22 @@ async def _tool_box(factory: Factory, tenant_id: uuid.UUID, transport: Any) -> T
 # NormalizedInbound.is_live_call is True (set exclusively by app.voice.service),
 # so WhatsApp/email keep the original defaults unchanged.
 LIVE_CALL_LLM_TIMEOUT_S = 6.0
-LIVE_CALL_LLM_MAX_ATTEMPTS = 1
+# ROOT-CAUSE FIX (2026-11-20): a real live call went completely silent because the
+# LLM call hit Groq's 429 (tokens-per-minute) limit, and with MAX_ATTEMPTS fixed at
+# 1 (above) there was no retry at all - the turn had nothing to say and the caller
+# hung up before any fallback reply was ready. Groq's own 429 body said the real
+# wait needed was only 637.5ms ("Please try again in 637.5ms"), nowhere near the
+# ~100s worst case the 2026-11-17 fix above was guarding against. Raising this to 2
+# allows exactly one retry, and LIVE_CALL_LLM_MAX_RETRY_DELAY_S below caps that
+# retry's wait (whether from Groq's Retry-After or the exponential-backoff
+# fallback in ExternalHttp._delay) well under a second, so the worst case this adds
+# to a live call is roughly one extra LLM round trip plus well under 1s of wait -
+# not another 100s silent gap. VERIFY: not exercised against a live provider from
+# here (no app execution/pytest per this change's own constraints) - only checked
+# with ast.parse/ruff. Confirm on the next live call that hits a 429 that the retry
+# actually recovers a reply instead of today's silent failure.
+LIVE_CALL_LLM_MAX_ATTEMPTS = 2
+LIVE_CALL_LLM_MAX_RETRY_DELAY_S = 0.8
 
 
 async def _llm(
@@ -128,6 +143,7 @@ async def _llm(
     if fast:
         http_kwargs["timeout"] = LIVE_CALL_LLM_TIMEOUT_S
         http_kwargs["max_attempts"] = LIVE_CALL_LLM_MAX_ATTEMPTS
+        http_kwargs["max_retry_delay_s"] = LIVE_CALL_LLM_MAX_RETRY_DELAY_S
     http = ExternalHttp(chosen.provider, **http_kwargs)
     provider = make_provider(http, chosen.provider, chosen.model, chosen.api_key, chosen.base_url)
     return LlmClient(provider, LlmRecorder(factory))

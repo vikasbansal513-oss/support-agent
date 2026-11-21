@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from datetime import timedelta
@@ -16,6 +17,46 @@ from app.v1.contracts import DecisionV1
 from app.v1.policy import AnyPolicy
 
 logger = logging.getLogger("app.handoffs")
+
+# ROOT-CAUSE FIX (2026-11-20): a real live voice call went silent for ~19s between
+# the customer finishing speaking and them hanging up. Log timing showed a ~4.7s
+# gap inside app.agent.runner_v1's "action" step - between "load_row done" and
+# "action done" - with nothing else happening in between except this module's
+# create_handoff()/_alert() being awaited. _alert() calls send_safely() (a real
+# Brevo HTTP email API call, app.core.mail.BrevoMailer, timeout=10s) and, if
+# WhatsApp alerts are on, senders.whatsapp.send_text() too - both real network
+# round trips to notify STAFF, not the customer. create_handoff() awaited _alert()
+# to finish before returning, so app.agent.runner_v1._handoff() could not compose
+# or send the CUSTOMER's own reply (the handoff reference-number message) until
+# the staff notification email/WhatsApp had already gone out - on a live phone
+# call, the caller was made to sit in silence for someone else's email to send.
+# Keeping a module-level set of the fire-and-forget tasks is required, not
+# cosmetic: asyncio only holds a weak reference to a task object, and a task with
+# no strong reference anywhere can be garbage-collected mid-flight, silently
+# cancelling the alert before it sends (see asyncio.create_task's own docs on
+# this). _alert_in_background wraps the real work in its own try/except so a
+# background failure is logged, not swallowed into an unhandled "Task exception
+# was never retrieved" warning. VERIFY: not exercised against a live provider
+# from here (no app execution/pytest per this change's own constraints) - only
+# checked with ast.parse/ruff. Confirm on the next live handoff that the
+# customer's reference-number reply now goes out immediately and that the staff
+# email/WhatsApp alert still arrives moments later in the logs/inbox.
+_background_tasks: set[asyncio.Task[None]] = set()
+
+
+async def _alert_in_background(
+    mailer: Mailer,
+    senders: Senders,
+    settings: Any,
+    decision: DecisionOut | DecisionV1,
+    handoff_id: uuid.UUID,
+) -> None:
+    try:
+        await _alert(mailer, senders, settings, decision, handoff_id)
+    except Exception as exc:
+        logger.error("handoff alert failed", extra={"error_class": type(exc).__name__})
+
+
 Factory = async_sessionmaker[AsyncSession]
 
 
@@ -106,7 +147,15 @@ async def create_handoff(
                 "l": f"/handoffs/{handoff_id}",
             },
         )
-    await _alert(mailer, senders, settings, decision, handoff_id)
+    # ROOT-CAUSE FIX (2026-11-20): see the module-level comment above
+    # _background_tasks - this used to be `await _alert(...)`, which blocked the
+    # customer's own reply (sent later in app.agent.runner_v1._handoff(), after
+    # create_handoff() returns) on a staff notification email/WhatsApp send.
+    task = asyncio.create_task(
+        _alert_in_background(mailer, senders, settings, decision, handoff_id)
+    )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
     return handoff_id
 
 
@@ -184,6 +233,23 @@ async def escalate_urgent(
             )
         ).first()
     if settings is not None:
+        # ROOT-CAUSE FIX (2026-11-20): same issue as create_handoff()/_alert() above
+        # (see the module-level comment on _background_tasks) - this function is
+        # called directly from app.voice.service on a live call (twice, for failed
+        # transfers), so the same synchronous email/WhatsApp send here blocked the
+        # live call on a staff notification exactly like the handoff path did.
+        task = asyncio.create_task(
+            _send_urgent_alert_in_background(mailer, senders, settings, title, body)
+        )
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+    return handoff_id is not None
+
+
+async def _send_urgent_alert_in_background(
+    mailer: Mailer, senders: Senders, settings: Any, title: str, body: str
+) -> None:
+    try:
         if settings.notify_email_enabled and settings.notify_email:
             await send_safely(mailer, settings.notify_email, f"[Support] {title}", body)
         if (
@@ -191,8 +257,6 @@ async def escalate_urgent(
             and settings.alert_phone
             and senders.whatsapp is not None
         ):
-            try:
-                await senders.whatsapp.send_text(settings.alert_phone, f"{title}: {body}")
-            except Exception as exc:
-                logger.error("whatsapp alert failed", extra={"error_class": type(exc).__name__})
-    return handoff_id is not None
+            await senders.whatsapp.send_text(settings.alert_phone, f"{title}: {body}")
+    except Exception as exc:
+        logger.error("urgent alert failed", extra={"error_class": type(exc).__name__})

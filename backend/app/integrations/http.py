@@ -93,6 +93,21 @@ class ExternalHttp:
         timeout: float = 10.0,
         max_attempts: int = 3,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        # ROOT-CAUSE FIX (2026-11-20): a live voice call hit Groq's 429 (tokens-
+        # per-minute) limit and got zero reply - app.agent.runner's LIVE_CALL_LLM_
+        # MAX_ATTEMPTS=1 means a live call never retries at all today, by design
+        # (the default 3-attempt/up-to-30s-backoff policy below was itself a past
+        # root cause of ~100s of dead air on a call - see that constant's own
+        # comment). Groq's 429 body told us the real wait needed was only 637.5ms
+        # ("Please try again in 637.5ms") - far short of the 30s cap this class
+        # otherwise allows. This optional override lets a caller (just the live
+        # voice path, via LIVE_CALL_LLM_MAX_RETRY_DELAY_S in app.agent.runner) keep
+        # the existing exponential-backoff/Retry-After logic in _delay() below but
+        # cap it to a small ceiling, so a single short, cheap retry stays possible
+        # without reopening the old 100s-silence failure mode. None (the default)
+        # keeps every existing caller's behavior (anthropic/openai/groq non-voice
+        # calls, Sarvam, Google TTS, etc.) byte-for-byte unchanged.
+        max_retry_delay_s: float | None = None,
     ) -> None:
         self.provider = provider
         self._recorder = recorder
@@ -100,6 +115,9 @@ class ExternalHttp:
         self._timeout = timeout
         self._max_attempts = max_attempts
         self._sleep = sleep
+        self._max_retry_delay = (
+            max_retry_delay_s if max_retry_delay_s is not None else MAX_RETRY_AFTER
+        )
 
     async def request(
         self,
@@ -191,13 +209,23 @@ class ExternalHttp:
                     await self._sleep(delay)
         raise last_error or UpstreamError("network_error")
 
-    @staticmethod
-    def _delay(response: httpx.Response | None, attempt: int) -> float:
+    def _delay(self, response: httpx.Response | None, attempt: int) -> float:
         if response is not None and response.status_code == 429:
             raw = response.headers.get("retry-after", "")
-            if raw.isdigit():
-                return float(min(float(raw), MAX_RETRY_AFTER))
-        return float(min(0.5 * (2 ** (attempt - 1)), MAX_RETRY_AFTER))
+            # ROOT-CAUSE FIX (2026-11-20): was raw.isdigit(), which only matches a
+            # whole-number-of-seconds header (e.g. "1") - Groq's actual 429 for this
+            # tenant asked for a sub-second wait ("Please try again in 637.5ms"), and
+            # a provider that echoes that precision in the header (e.g. "0.6375")
+            # would fail isdigit() and fall through to the slower exponential-backoff
+            # branch below instead of the short wait the provider itself asked for.
+            # float() accepts both "1" and "0.6375"; a header that isn't a number at
+            # all (missing, or some non-numeric value) still falls through safely.
+            if raw:
+                try:
+                    return float(min(float(raw), self._max_retry_delay))
+                except ValueError:
+                    pass
+        return float(min(0.5 * (2 ** (attempt - 1)), self._max_retry_delay))
 
     async def _record(
         self,
