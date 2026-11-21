@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from uuid import UUID
@@ -168,8 +169,19 @@ async def session_scope(
         tenancy.current_super_admin.set(super_admin),
         tenancy.current_user.set(user_id),
     )
+    # DIAGNOSTIC TIMING (2026-11-21): logging-only, no behavior/query/transaction change.
+    # Added to pin down exactly where the multi-second-per-DB-touch cost (seen repeatedly,
+    # across many different functions, over many past sessions - see PROGRESS.md/
+    # DECISIONS.md history) actually goes: acquiring a connection from the pool and
+    # opening a transaction (checkout_and_begin_ms), vs. the first real round-trip query
+    # sent over that connection (set_config_ms). Two already-ruled-out causes this turn:
+    # DATABASE_URL already points at Neon's pooled (-pooler) endpoint, and the engine/pool
+    # is a process-level singleton (get_session_factory), not recreated per call. Safe to
+    # remove once a real call's logs have answered this.
+    _t0 = time.monotonic()
     try:
         async with use_factory() as session, session.begin():
+            _t_begin = time.monotonic()
             await session.execute(
                 text(
                     "SELECT set_config('app.tenant_id', :t, true),"
@@ -181,6 +193,12 @@ async def session_scope(
                     "s": "on" if super_admin else "off",
                     "u": str(user_id) if user_id else "",
                 },
+            )
+            _t_setcfg = time.monotonic()
+            logger.info(
+                "session_scope timing: checkout_and_begin_ms=%d set_config_ms=%d",
+                int((_t_begin - _t0) * 1000),
+                int((_t_setcfg - _t_begin) * 1000),
             )
             yield session
     finally:

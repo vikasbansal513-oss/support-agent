@@ -135,8 +135,18 @@ T: dict[str, dict[str, str]] = {
         "hi": "कृपया थोड़ा और बताइए, आप क्या करवाना चाहते हैं?",
     },
     "ask_order_ref_write": {
-        lang: "Happy to help with this. Please share your order number (for example *#1001*)."
-        for lang in ("en", "hinglish", "hi")
+        # BUGFIX (2026-11-21): this used to be the same English sentence copy-pasted into
+        # all three language keys (a dict-comprehension shortcut that was never actually
+        # translated) - every other template in this file has distinct hinglish/en/hi text,
+        # this one was the one exception. On a voice call this is picked via pick_language()
+        # reading the call's own established language (call.language, see Decision
+        # Framework / P20 notes), so a Hindi-speaking caller was being read this line in
+        # English by the TTS - confirmed via a real production call (2026-11-21, tenant
+        # pranjal-project) where the customer heard an English ask-for-order-number line
+        # mid-Hindi-call and never supplied an order number, so the order lookup never ran.
+        "hinglish": "Khushi hogi aapki madad karke. Kripya apna order number bataiye (jaise *#1001*).",
+        "en": "Happy to help with this. Please share your order number (for example *#1001*).",
+        "hi": "आपकी मदद करके खुशी होगी। कृपया अपना ऑर्डर नंबर बताएं (जैसे *#1001*)।",
     },
     "ask_line_item": {
         "hinglish": "Order *{order}* me kaunsa item badalna hai aur kis size ya variant me?",
