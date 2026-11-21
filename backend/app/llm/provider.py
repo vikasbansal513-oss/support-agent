@@ -103,6 +103,10 @@ class OpenAICompatProvider:
         self._url = f"{base_url.strip().rstrip('/')}/chat/completions"
         self._limit_field = limit_field
         self._json_mode = json_mode
+        # ROOT-CAUSE FIX (2026-11-20): whether response_format:json_object has
+        # already been proven unsupported by this model, on this provider
+        # instance. See the note on this flag's use in complete() below.
+        self._json_mode_unsupported = False
         self.name = name
         self.model = model
 
@@ -144,10 +148,36 @@ class OpenAICompatProvider:
     async def complete(self, system: str, user: str, max_tokens: int) -> RawCompletion:
         if not self._key:
             raise ProviderError("auth_error")
+        # ROOT-CAUSE FIX (2026-11-20): a live voice call on groq/openai/gpt-oss-20b
+        # went completely silent because this one turn sent THREE sequential HTTP
+        # requests to Groq within ~3.3 seconds: (1) json_mode=True -> 400 Bad
+        # Request (this model rejects response_format), (2) the same-call retry
+        # below with json_mode=False -> 200 OK, but the model's free-text reply
+        # didn't parse as valid JSON, so app.llm.client.complete_json's own
+        # invalid_json retry ran this complete() method a SECOND time on the same
+        # LlmClient/provider instance (see app.agent.runner._llm - one provider is
+        # built per turn and reused across complete_json's attempts), which tried
+        # json_mode=True AGAIN from scratch (no memory of the first 400) -> (3)
+        # Groq's rate limiter kicked in from the rapid-fire requests and returned
+        # 429 Too Many Requests, so the turn never got a usable reply before the
+        # caller hung up. Once a 400 proves response_format is unsupported on this
+        # provider instance, remember it for the rest of this instance's life (one
+        # instance = one turn, per _llm()) so every later complete() call on this
+        # same instance - including complete_json's own retry - skips straight to
+        # json_mode=False and never repeats the doomed request. This cuts the
+        # worst case from 2 HTTP calls on every complete() to 2 calls only once
+        # per turn, then 1 call on every call after - for every OpenAI-compatible
+        # provider/model that doesn't support response_format, not just this one.
+        # VERIFY: not exercised against a live provider from here (no app
+        # execution/pytest per this change's own constraints) - only checked with
+        # ast.parse/ruff. Confirm on the next live call against this tenant's
+        # groq/openai/gpt-oss-20b setup that llm_calls no longer shows a 400
+        # followed immediately by a 429 for the same run_id.
+        use_json_mode = self._json_mode and not self._json_mode_unsupported
         response = await self._post(
-            self._payload(system, user, max_tokens, json_mode=self._json_mode)
+            self._payload(system, user, max_tokens, json_mode=use_json_mode)
         )
-        if self._json_mode and response.status_code == 400:
+        if use_json_mode and response.status_code == 400:
             # LATENCY FIX (2026-11-19) follow-up: json_mode is on for every
             # OpenAI-compatible provider now, including a tenant's own custom
             # "openai_compatible" base_url and whatever model they pick on the
@@ -163,6 +193,7 @@ class OpenAICompatProvider:
             # the model itself (e.g. a tenant with an oversized max_tokens setting
             # would still get a 400 even without response_format, and the retry below
             # would just reproduce the identical failure).
+            self._json_mode_unsupported = True
             response = await self._post(self._payload(system, user, max_tokens, json_mode=False))
         if response.status_code in (401, 403):
             raise ProviderError("auth_error")

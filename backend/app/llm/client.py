@@ -20,7 +20,28 @@ PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
 T = TypeVar("T", bound=BaseModel)
 Factory = async_sessionmaker[AsyncSession]
 _JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
-MAX_TOKENS = 600
+# TRUNCATION FIX (2026-11-19, flagged unverified - not exercised against a live
+# provider from here, no app execution per this change's own constraints): this
+# tenant's own Groq request logs showed every observed 400 "json_validate_failed"
+# response (OpenAICompatProvider.complete's json_mode branch in app.llm.provider)
+# had output_tokens exactly 600 - the old MAX_TOKENS ceiling - while the successful
+# 200 responses alongside them had fewer (396, 475). That pattern (failure always at
+# exactly the cap, success always under it) is consistent with the model's JSON
+# output being cut off mid-structure when it hits the token limit, which produces
+# syntactically invalid JSON and a 400 from Groq's own json_object-mode validator -
+# though this is inferred from a handful of log rows, not confirmed by reproducing
+# it. Raising the ceiling gives the model more room to finish its JSON before being
+# cut off. This also doubles as a (likely secondary, less certain) contributor to
+# the 429 TPM rate-limit this tenant hit separately: every 400 of this kind already
+# triggers an immediate same-call retry (OpenAICompatProvider.complete, existing
+# behavior, unchanged here) that resends the same ~2500 input tokens a second time
+# within the same minute - fewer 400s should mean fewer of these doubled-up calls
+# competing for the same per-minute token budget. VERIFY: watch this tenant's
+# llm_calls/Groq dashboard rows after deploy - purpose='plan'/'confirm' outcome
+# counts for invalid_json (app side) and 400/json_validate_failed (Groq side) should
+# both drop; if 400s at the new ceiling still appear, the ceiling needs raising
+# further or the real cause isn't truncation.
+MAX_TOKENS = 900
 
 
 class LlmUnavailable(Exception):
